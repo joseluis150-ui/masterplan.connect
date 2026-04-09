@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__list_projects",
+      "Bash(npm --version)",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__list_organizations",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__get_cost",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__confirm_cost",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__create_project",
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --use-npm --turbopack)",
+      "Bash(npx create-next-app@latest masterplan-budget --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --use-npm --turbopack)",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__get_project_url",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__get_publishable_keys",
+      "Bash(rm -rf \"/Users/jl/Masterplan Connect.v2/masterplan-budget\")",
+      "Bash(npm cache:*)",
+      "Bash(npm config:*)",
+      "Bash(export npm_config_cache=\"/tmp/npm-cache-masterplan\")",
+      "Bash(shopt -s dotglob)",
+      "Bash(mv masterplan-budget/* .)",
+      "Bash(mv masterplan-budget/.* .)",
+      "Bash(rmdir masterplan-budget:*)",
+      "Bash(npm install:*)",
+      "Bash(npx shadcn@latest init -d)"
+    ]
+  }
+}
