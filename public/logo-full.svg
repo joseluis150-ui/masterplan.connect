@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 60" width="400" height="60">
+  <!-- MasterPlan Connect - Logo Principal -->
+  
+  <!-- Isotipo: cuadrado negro con 3 barras blancas -->
+  <rect x="0" y="0" width="60" height="60" rx="10" fill="#0F0F0F"/>
+  <rect x="14" y="14" width="8" height="32" rx="1" fill="#FFFFFF"/>
+  <rect x="26" y="14" width="8" height="32" rx="1" fill="#FFFFFF"/>
+  <rect x="38" y="14" width="8" height="32" rx="1" fill="#FFFFFF"/>
+  
+  <!-- Texto principal -->
+  <text x="75" y="28" font-family="Space Grotesk, Arial, sans-serif" font-size="24" font-weight="600" fill="#0F0F0F">MasterPlan</text>
+  <text x="227" y="28" font-family="Space Grotesk, Arial, sans-serif" font-size="24" font-weight="600" fill="#1E3A8A">Connect</text>
+  
+  <!-- Tagline -->
+  <text x="75" y="48" font-family="Space Grotesk, Arial, sans-serif" font-size="11" font-weight="500" letter-spacing="2" fill="#525252">CONSTRUCTION MANAGEMENT</text>
+</svg>

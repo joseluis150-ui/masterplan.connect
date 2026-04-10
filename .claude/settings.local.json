@@ -20,7 +20,23 @@
       "Bash(mv masterplan-budget/.* .)",
       "Bash(rmdir masterplan-budget:*)",
       "Bash(npm install:*)",
-      "Bash(npx shadcn@latest init -d)"
+      "Bash(npx shadcn@latest init -d)",
+      "Bash(npx shadcn@latest add input label select dialog dropdown-menu table card badge separator sheet tabs tooltip command popover form textarea scroll-area sidebar breadcrumb sonner collapsible switch checkbox -y)",
+      "Bash(npx next:*)",
+      "mcp__Claude_Preview__preview_start",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__apply_migration",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__list_tables",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__search_docs",
+      "mcp__cb0daa5c-9ba4-48b2-ad0b-adbc62d06743__execute_sql",
+      "Bash(cp \"/Users/jl/Downloads/files/favicon_final.svg\" \"/Users/jl/Masterplan Connect.v2/public/favicon.svg\")",
+      "Bash(cp \"/Users/jl/Downloads/files/logo_sidebar_final.svg\" \"/Users/jl/Masterplan Connect.v2/public/logo-sidebar.svg\")",
+      "Bash(cp \"/Users/jl/Downloads/files/isotipo_barras_blancas.svg\" \"/Users/jl/Masterplan Connect.v2/public/isotipo-white.svg\")",
+      "Bash(cp \"/Users/jl/Downloads/files/isotipo_azul.svg\" \"/Users/jl/Masterplan Connect.v2/public/isotipo-blue.svg\")",
+      "Bash(cp \"/Users/jl/Downloads/files/isotipo_negro.svg\" \"/Users/jl/Masterplan Connect.v2/public/isotipo-black.svg\")",
+      "Bash(node -e ':*)",
+      "Bash(npm run:*)",
+      "Bash(sudo npm:*)",
+      "Bash(npx vercel:*)"
     ]
   }
 }
