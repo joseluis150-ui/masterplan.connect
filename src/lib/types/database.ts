@@ -89,6 +89,7 @@ export interface Insumo {
   currency_input: CurrencyInput | null;
   comment: string | null;
   reference: string | null;
+  needs_review: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -114,6 +115,7 @@ export interface Articulo {
   unit: string;
   profit_pct: number;
   comment: string | null;
+  needs_review: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -142,6 +144,7 @@ export interface QuantificationLine {
   comment: string | null;
   import_batch: string | null;
   import_batch_date: string | null;
+  needs_review: boolean;
   created_at: string;
   updated_at: string;
   articulo?: Articulo;
@@ -193,6 +196,7 @@ export interface ProcurementLine {
   id: string;
   package_id: string;
   insumo_id: string;
+  composition_id: string | null;
   quantity: number;
   need_date: string | null;
   subcategory_origin: string | null;

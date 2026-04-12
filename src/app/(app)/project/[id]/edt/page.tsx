@@ -134,6 +134,18 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
     })));
   }
 
+  async function deleteAllEdt() {
+    if (!confirm("¿Estás seguro de eliminar TODA la estructura EDT?\nEsto eliminará todas las categorías y subcategorías del proyecto.\n\nEsta acción no se puede deshacer.")) return;
+    // Delete subcategories first, then categories
+    const catIds = categories.map((c) => c.id);
+    if (catIds.length > 0) {
+      await supabase.from("edt_subcategories").delete().in("category_id", catIds);
+      await supabase.from("edt_categories").delete().eq("project_id", projectId);
+    }
+    setCategories([]);
+    toast.success("EDT eliminado por completo");
+  }
+
   async function moveCategory(catIdx: number, direction: "up" | "down") {
     const newIdx = direction === "up" ? catIdx - 1 : catIdx + 1;
     if (newIdx < 0 || newIdx >= categories.length) return;
@@ -264,6 +276,11 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
           <p className="text-muted-foreground">Paso 2: Define categorías y subcategorías</p>
         </div>
         <div className="flex gap-2">
+          {categories.length > 0 && (
+            <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={deleteAllEdt}>
+              <Trash2 className="h-4 w-4 mr-1" /> Eliminar EDT
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
             <Download className="h-4 w-4 mr-1" /> Plantilla
           </Button>

@@ -9,7 +9,6 @@ import {
   Package,
   Puzzle,
   Calculator,
-  DollarSign,
   Calendar,
   Truck,
   BarChart3,
@@ -24,10 +23,9 @@ const NAV_ITEMS = [
   { label: "Insumos", href: "insumos", icon: Package, step: 3 },
   { label: "Artículos (APU)", href: "articulos", icon: Puzzle, step: 4 },
   { label: "Cuantificación", href: "cuantificacion", icon: Calculator, step: 5 },
-  { label: "Presupuesto", href: "presupuesto", icon: DollarSign, step: 6 },
-  { label: "Cronograma", href: "cronograma", icon: Calendar, step: 7 },
-  { label: "Paquetes", href: "paquetes", icon: Truck, step: 8 },
-  { label: "Reportes", href: "reportes", icon: BarChart3, step: 9 },
+  { label: "Cronograma", href: "cronograma", icon: Calendar, step: 6 },
+  { label: "Paquetes", href: "paquetes", icon: Truck, step: 7 },
+  { label: "Consultas", href: "consultas", icon: BarChart3, step: 8 },
 ];
 
 interface ProjectSidebarProps {

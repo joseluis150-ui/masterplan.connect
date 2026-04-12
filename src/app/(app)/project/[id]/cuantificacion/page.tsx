@@ -18,7 +18,10 @@ import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
 import type { Articulo, EdtCategory, EdtSubcategory, Sector } from "@/lib/types/database";
-import { Plus, Trash2, Calculator, Upload, Download } from "lucide-react";
+import { Plus, Trash2, Calculator, Upload, Download, Flag, X } from "lucide-react";
+import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
+
+type SortConfig = { key: string; dir: SortDirection };
 import { toast } from "sonner";
 
 // Batch colors for import tracking
@@ -39,6 +42,7 @@ interface QuantLine {
   comment: string | null;
   import_batch: string | null;
   import_batch_date: string | null;
+  needs_review: boolean;
   // enriched
   articulo_desc: string;
   articulo_unit: string;
@@ -53,9 +57,13 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [subcategories, setSubcategories] = useState<EdtSubcategory[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterCategory, setFilterCategory] = useState("all");
-  const [filterSector, setFilterSector] = useState("all");
-  const [filterBatch, setFilterBatch] = useState("all");
+  const [filterArticulo, setFilterArticulo] = useState<Set<string>>(new Set());
+  const [filterUnit, setFilterUnit] = useState<Set<string>>(new Set());
+  const [filterCategory, setFilterCategory] = useState<Set<string>>(new Set());
+  const [filterSubcategory, setFilterSubcategory] = useState<Set<string>>(new Set());
+  const [filterSector, setFilterSector] = useState<Set<string>>(new Set());
+  const [filterReview, setFilterReview] = useState<string>("all");
+  const [sort, setSort] = useState<SortConfig>({ key: "", dir: null });
   const [artPUs, setArtPUs] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -64,12 +72,14 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
-    const [linesRes, artsRes, catsRes, subsRes, sectorsRes] = await Promise.all([
+    // All 6 queries in parallel — single round trip
+    const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes] = await Promise.all([
       supabase.from("quantification_lines").select("*").eq("project_id", projectId).order("line_number"),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("edt_categories").select("*").eq("project_id", projectId).order("order"),
       supabase.from("edt_subcategories").select("*").eq("project_id", projectId).order("order"),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
+      supabase.rpc("get_project_articulo_totals", { p_project_id: projectId }),
     ]);
 
     const arts = artsRes.data || [];
@@ -77,10 +87,10 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     const subs = subsRes.data || [];
     const sects = sectorsRes.data || [];
 
+    // Build PU map from single batch query (was N+1 sequential calls before)
     const pus: Record<string, number> = {};
-    for (const art of arts) {
-      const { data } = await supabase.rpc("get_articulo_totals", { p_articulo_id: art.id });
-      if (data && data[0]) pus[art.id] = Number(data[0].pu_costo);
+    for (const row of (puRes.data || [])) {
+      pus[row.articulo_id] = Number(row.pu_costo);
     }
 
     const enriched: QuantLine[] = (linesRes.data || []).map((line) => {
@@ -109,14 +119,84 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const batchColorMap = new Map<string, string>();
   batchList.forEach((b, i) => batchColorMap.set(b, BATCH_COLORS[i % BATCH_COLORS.length]));
 
+  const reviewCount = lines.filter((l) => l.needs_review).length;
+
+  // Unique values for column filters
+  const uniqueArticulos = Array.from(new Set(lines.map((l) => l.articulo_desc || "(Sin artículo)")));
+  const uniqueUnits = Array.from(new Set(lines.map((l) => l.articulo_unit || "(Vacío)")));
+  const uniqueCategories = Array.from(new Set(lines.map((l) => {
+    const cat = categories.find((c) => c.id === l.category_id);
+    return cat ? `${cat.code} ${cat.name}` : "(Vacío)";
+  })));
+  const uniqueSubcategories = Array.from(new Set(lines.map((l) => {
+    const sub = subcategories.find((s) => s.id === l.subcategory_id);
+    return sub ? `${sub.code} ${sub.name}` : "(Vacío)";
+  })));
+  const uniqueSectors = Array.from(new Set(lines.map((l) => {
+    const sec = sectors.find((s) => s.id === l.sector_id);
+    return sec?.name || "(Vacío)";
+  })));
+
+  const hasAnyColumnFilter = filterArticulo.size > 0 || filterUnit.size > 0 || filterCategory.size > 0 || filterSubcategory.size > 0 || filterSector.size > 0 || filterReview !== "all";
+
   const filtered = lines.filter((l) => {
-    const matchCat = filterCategory === "all" || l.category_id === filterCategory;
-    const matchSector = filterSector === "all" || l.sector_id === filterSector;
-    const matchBatch = filterBatch === "all" || (filterBatch === "manual" ? !l.import_batch : l.import_batch === filterBatch);
-    return matchCat && matchSector && matchBatch;
+    const artLabel = l.articulo_desc || "(Sin artículo)";
+    const unitLabel = l.articulo_unit || "(Vacío)";
+    const catLabel = (() => { const c = categories.find((c) => c.id === l.category_id); return c ? `${c.code} ${c.name}` : "(Vacío)"; })();
+    const subLabel = (() => { const s = subcategories.find((s) => s.id === l.subcategory_id); return s ? `${s.code} ${s.name}` : "(Vacío)"; })();
+    const secLabel = (() => { const s = sectors.find((s) => s.id === l.sector_id); return s?.name || "(Vacío)"; })();
+
+    const matchArt = filterArticulo.size === 0 || filterArticulo.has(artLabel);
+    const matchUnit = filterUnit.size === 0 || filterUnit.has(unitLabel);
+    const matchCat = filterCategory.size === 0 || filterCategory.has(catLabel);
+    const matchSub = filterSubcategory.size === 0 || filterSubcategory.has(subLabel);
+    const matchSector = filterSector.size === 0 || filterSector.has(secLabel);
+    const matchReview = filterReview === "all" || (filterReview === "review" ? l.needs_review : !l.needs_review);
+    return matchArt && matchUnit && matchCat && matchSub && matchSector && matchReview;
   });
 
   const grandTotal = filtered.reduce((sum, l) => sum + (Number(l.quantity) || 0) * l.articulo_pu, 0);
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sort.dir || !sort.key) return 0;
+    const mult = sort.dir === "asc" ? 1 : -1;
+    switch (sort.key) {
+      case "articulo": return mult * a.articulo_desc.localeCompare(b.articulo_desc, "es");
+      case "unit": return mult * a.articulo_unit.localeCompare(b.articulo_unit, "es");
+      case "pu": return mult * (a.articulo_pu - b.articulo_pu);
+      case "quantity": return mult * ((Number(a.quantity) || 0) - (Number(b.quantity) || 0));
+      case "total": return mult * (((Number(a.quantity) || 0) * a.articulo_pu) - ((Number(b.quantity) || 0) * b.articulo_pu));
+      case "category": {
+        const catA = categories.find((c) => c.id === a.category_id);
+        const catB = categories.find((c) => c.id === b.category_id);
+        return mult * (catA?.name || "").localeCompare(catB?.name || "", "es");
+      }
+      case "subcategory": {
+        const subA = subcategories.find((s) => s.id === a.subcategory_id);
+        const subB = subcategories.find((s) => s.id === b.subcategory_id);
+        return mult * (subA?.name || "").localeCompare(subB?.name || "", "es");
+      }
+      case "sector": {
+        const secA = sectors.find((s) => s.id === a.sector_id);
+        const secB = sectors.find((s) => s.id === b.sector_id);
+        return mult * (secA?.name || "").localeCompare(secB?.name || "", "es");
+      }
+      default: return 0;
+    }
+  });
+
+  function handleSort(key: string) {
+    return (dir: SortDirection) => setSort(dir ? { key, dir } : { key: "", dir: null });
+  }
+
+  async function toggleLineReview(lineId: string) {
+    const line = lines.find((l) => l.id === lineId);
+    if (!line) return;
+    const newVal = !line.needs_review;
+    await supabase.from("quantification_lines").update({ needs_review: newVal }).eq("id", lineId);
+    setLines((prev) => prev.map((l) => l.id === lineId ? { ...l, needs_review: newVal } : l));
+    toast.success(newVal ? "Marcado para revisión" : "Revisión completada");
+  }
 
   async function addNewLine() {
     const lineNumber = lines.length + 1;
@@ -353,9 +433,9 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
         artIdMap.set(art.number, art.id);
       }
 
-      // Step 4: Insert quantification lines
-      let count = 0;
+      // Step 4: Insert quantification lines in batch
       const baseLineNum = lines.length;
+      const rowsToInsert = [];
       for (let i = 0; i < importResult.valid.length; i++) {
         const row = importResult.valid[i];
         const catKey = row.cat_code || row.cat_name.toLowerCase();
@@ -367,7 +447,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
 
         if (!catId || !subId || !sectorId) continue;
 
-        await supabase.from("quantification_lines").insert({
+        rowsToInsert.push({
           project_id: projectId,
           articulo_id: artId,
           quantity: row.cantidad,
@@ -380,8 +460,14 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
           import_batch: batchId,
           import_batch_date: batchDate,
         });
-        count++;
       }
+
+      // Insert in batches of 500 rows
+      for (let i = 0; i < rowsToInsert.length; i += 500) {
+        const batch = rowsToInsert.slice(i, i + 500);
+        await supabase.from("quantification_lines").insert(batch);
+      }
+      const count = rowsToInsert.length;
 
       toast.success(`Importadas ${count} líneas de cuantificación`);
     } catch (err) {
@@ -425,45 +511,33 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Summary bar */}
       <div className="flex gap-4 items-center flex-wrap">
-        <SearchableSelect
-          options={[
-            { value: "all", label: "Todas las categorías" },
-            ...categories.map((c) => ({ value: c.id, label: `${c.code} ${c.name}` })),
-          ]}
-          value={filterCategory}
-          onChange={setFilterCategory}
-          placeholder="Categoría"
-          className="w-48"
-        />
-        <SearchableSelect
-          options={[
-            { value: "all", label: "Todos los sectores" },
-            ...sectors.map((s) => ({ value: s.id, label: s.name })),
-          ]}
-          value={filterSector}
-          onChange={setFilterSector}
-          placeholder="Sector"
-          className="w-48"
-        />
-        {batchList.length > 0 && (
-          <SearchableSelect
-            options={[
-              { value: "all", label: "Todas las fuentes" },
-              { value: "manual", label: "Ingreso manual" },
-              ...batchList.map((b, i) => ({
-                value: b,
-                label: `Importación ${i + 1} (${new Date(lines.find((l) => l.import_batch === b)?.import_batch_date || "").toLocaleDateString("es")})`,
-              })),
-            ]}
-            value={filterBatch}
-            onChange={setFilterBatch}
-            placeholder="Fuente"
-            className="w-56"
-          />
-        )}
         <span className="text-sm text-muted-foreground">{filtered.length} líneas</span>
+        {reviewCount > 0 && (
+          <Button
+            variant={filterReview === "review" ? "default" : "outline"}
+            size="sm"
+            className={filterReview === "review" ? "text-xs bg-amber-500 hover:bg-amber-600 text-white" : "text-xs text-amber-600 border-amber-300 hover:bg-amber-50"}
+            onClick={() => setFilterReview(filterReview === "review" ? "all" : "review")}
+          >
+            <Flag className="h-3 w-3 mr-1" /> {reviewCount} por revisar
+          </Button>
+        )}
+        {hasAnyColumnFilter && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-destructive hover:text-destructive"
+            onClick={() => {
+              setFilterArticulo(new Set()); setFilterUnit(new Set());
+              setFilterCategory(new Set()); setFilterSubcategory(new Set());
+              setFilterSector(new Set()); setFilterReview("all");
+            }}
+          >
+            <X className="h-3 w-3 mr-1" /> Limpiar filtros
+          </Button>
+        )}
         <span className="text-sm font-medium ml-auto">Total: {formatNumber(grandTotal)} USD</span>
       </div>
 
@@ -495,16 +569,34 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                     className="h-3.5 w-3.5 rounded cursor-pointer accent-[#1E3A8A]"
                   />
                 </th>
-                <th className="px-1 py-2 text-center" title="Origen"></th>
-                <th className="px-2 py-2 text-left">#</th>
-                <th className="px-2 py-2 text-left">Artículo</th>
-                <th className="px-2 py-2 text-center">Und</th>
-                <th className="px-2 py-2 text-right">PU USD</th>
-                <th className="px-2 py-2 text-right">Cantidad</th>
-                <th className="px-2 py-2 text-right">Total USD</th>
-                <th className="px-2 py-2 text-left">Categoría</th>
-                <th className="px-2 py-2 text-left">Subcategoría</th>
-                <th className="px-2 py-2 text-left">Sector</th>
+                <th className="px-1 py-2 text-center" title="Marcador de revisión">
+                  <Flag className="h-3 w-3 mx-auto text-muted-foreground/50" />
+                </th>
+                <th className="px-2 py-2 text-left uppercase text-[11px] font-semibold tracking-wider">#</th>
+                <th className="px-2 py-2">
+                  <ColumnFilter label="Artículo" values={uniqueArticulos} activeValues={filterArticulo} onChange={setFilterArticulo} sortDirection={sort.key === "articulo" ? sort.dir : null} onSort={handleSort("articulo")} />
+                </th>
+                <th className="px-2 py-2">
+                  <ColumnFilter label="Und" values={uniqueUnits} activeValues={filterUnit} onChange={setFilterUnit} align="center" sortDirection={sort.key === "unit" ? sort.dir : null} onSort={handleSort("unit")} />
+                </th>
+                <th className="px-2 py-2">
+                  <ColumnFilter label="PU USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu" ? sort.dir : null} onSort={handleSort("pu")} />
+                </th>
+                <th className="px-2 py-2">
+                  <ColumnFilter label="Cantidad" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "quantity" ? sort.dir : null} onSort={handleSort("quantity")} />
+                </th>
+                <th className="px-2 py-2">
+                  <ColumnFilter label="Total USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "total" ? sort.dir : null} onSort={handleSort("total")} />
+                </th>
+                <th className="px-2 py-2">
+                  <ColumnFilter label="Categoría" values={uniqueCategories} activeValues={filterCategory} onChange={setFilterCategory} sortDirection={sort.key === "category" ? sort.dir : null} onSort={handleSort("category")} />
+                </th>
+                <th className="px-2 py-2">
+                  <ColumnFilter label="Subcat." values={uniqueSubcategories} activeValues={filterSubcategory} onChange={setFilterSubcategory} sortDirection={sort.key === "subcategory" ? sort.dir : null} onSort={handleSort("subcategory")} />
+                </th>
+                <th className="px-2 py-2">
+                  <ColumnFilter label="Sector" values={uniqueSectors} activeValues={filterSector} onChange={setFilterSector} sortDirection={sort.key === "sector" ? sort.dir : null} onSort={handleSort("sector")} />
+                </th>
                 <th className="px-2 py-2"></th>
               </tr>
             </thead>
@@ -518,7 +610,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                   </td>
                 </tr>
               ) : (
-                filtered.map((line, idx) => (
+                sorted.map((line, idx) => (
                   <tr key={line.id} style={{ borderBottom: "1px solid #F1F5F9", background: selected.has(line.id) ? "#EFF6FF" : undefined }}>
                     <td className="px-1 py-1 text-center">
                       <input
@@ -529,15 +621,20 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                       />
                     </td>
                     <td className="px-1 py-1 text-center">
-                      {line.import_batch ? (
-                        <div
-                          className="w-3 h-3 rounded-full mx-auto"
-                          style={{ background: batchColorMap.get(line.import_batch) || "#94A3B8" }}
-                          title={`Importación ${batchList.indexOf(line.import_batch) + 1} — ${new Date(line.import_batch_date || "").toLocaleDateString("es")}`}
+                      <button
+                        type="button"
+                        onClick={() => toggleLineReview(line.id)}
+                        className="cursor-pointer hover:scale-110 transition-transform"
+                        title={line.needs_review ? "Quitar marca de revisión" : "Marcar para revisión"}
+                      >
+                        <Flag
+                          className={`h-3.5 w-3.5 mx-auto transition-colors ${
+                            line.needs_review
+                              ? "text-amber-500 fill-amber-500"
+                              : "text-gray-200 hover:text-amber-300"
+                          }`}
                         />
-                      ) : (
-                        <div className="w-3 h-3 rounded-full mx-auto border-2" style={{ borderColor: "#CBD5E1" }} title="Ingreso manual" />
-                      )}
+                      </button>
                     </td>
                     <td className="px-2 py-1 font-mono text-xs text-muted-foreground">{idx + 1}</td>
                     <td className="px-2 py-1">

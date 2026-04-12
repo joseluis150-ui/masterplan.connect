@@ -31,10 +31,13 @@ import {
 import { DEFAULT_UNITS, DEFAULT_INSUMO_TYPES } from "@/lib/constants/units";
 import { evaluateFormula, formatNumber, convertCurrency } from "@/lib/utils/formula";
 import type { Insumo, Project, InsumoPriceHistory } from "@/lib/types/database";
-import { Plus, Trash2, Package, History, Pencil, Search, Upload, Download, FileSpreadsheet } from "lucide-react";
+import { Plus, Trash2, Package, History, Pencil, Search, Upload, Download, FileSpreadsheet, X, Flag } from "lucide-react";
 import { toast } from "sonner";
 import { generateInsumoTemplate, parseInsumoExcel, downloadBlob } from "@/lib/utils/excel";
 import type { InsumoImportResult } from "@/lib/utils/excel";
+import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
+
+type SortConfig = { key: string; dir: SortDirection };
 
 export default function InsumosPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: projectId } = use(params);
@@ -42,7 +45,13 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortConfig>({ key: "", dir: null });
   const [filterType, setFilterType] = useState<string>("all");
+  // Column filters (empty Set = all, non-empty = only those values)
+  const [filterFamily, setFilterFamily] = useState<Set<string>>(new Set());
+  const [filterTypeCol, setFilterTypeCol] = useState<Set<string>>(new Set());
+  const [filterUnit, setFilterUnit] = useState<Set<string>>(new Set());
+  const [filterReview, setFilterReview] = useState<string>("all"); // "all" | "review" | "ok"
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [editingInsumo, setEditingInsumo] = useState<Partial<Insumo> | null>(null);
@@ -66,11 +75,62 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  const typeBadgeColor = (type: string) => {
+    switch (type) {
+      case "material": return "default";
+      case "mano_de_obra": return "secondary";
+      case "servicio": return "outline";
+      default: return "destructive";
+    }
+  };
+
+  const typeLabel = (type: string) => DEFAULT_INSUMO_TYPES.find((t) => t.value === type)?.label || type;
+
+  // Extract unique values for column filters
+  const uniqueFamilies = Array.from(new Set(insumos.map((i) => i.family || "(Vacío)")));
+  const uniqueTypes = Array.from(new Set(insumos.map((i) => typeLabel(i.type))));
+  const uniqueUnits = Array.from(new Set(insumos.map((i) => i.unit)));
+
+  const hasAnyColumnFilter = filterFamily.size > 0 || filterTypeCol.size > 0 || filterUnit.size > 0 || filterReview !== "all";
+
+  const reviewCount = insumos.filter((i) => i.needs_review).length;
+
   const filtered = insumos.filter((i) => {
     const matchSearch = !search || i.description.toLowerCase().includes(search.toLowerCase()) || (i.family || "").toLowerCase().includes(search.toLowerCase());
     const matchType = filterType === "all" || i.type === filterType;
-    return matchSearch && matchType;
+    const matchFamilyCol = filterFamily.size === 0 || filterFamily.has(i.family || "(Vacío)");
+    const matchTypeCol = filterTypeCol.size === 0 || filterTypeCol.has(typeLabel(i.type));
+    const matchUnitCol = filterUnit.size === 0 || filterUnit.has(i.unit);
+    const matchReview = filterReview === "all" || (filterReview === "review" ? i.needs_review : !i.needs_review);
+    return matchSearch && matchType && matchFamilyCol && matchTypeCol && matchUnitCol && matchReview;
   });
+
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sort.dir || !sort.key) return 0;
+    const mult = sort.dir === "asc" ? 1 : -1;
+    switch (sort.key) {
+      case "code": return mult * (a.code - b.code);
+      case "family": return mult * (a.family || "").localeCompare(b.family || "", "es");
+      case "type": return mult * typeLabel(a.type).localeCompare(typeLabel(b.type), "es");
+      case "description": return mult * a.description.localeCompare(b.description, "es");
+      case "unit": return mult * a.unit.localeCompare(b.unit, "es");
+      case "pu_usd": return mult * (Number(a.pu_usd || 0) - Number(b.pu_usd || 0));
+      case "pu_local": return mult * (Number(a.pu_local || 0) - Number(b.pu_local || 0));
+      default: return 0;
+    }
+  });
+
+  function handleSort(key: string) {
+    return (dir: SortDirection) => setSort(dir ? { key, dir } : { key: "", dir: null });
+  }
+
+  async function toggleReview(insumo: Insumo) {
+    const newVal = !insumo.needs_review;
+    await supabase.from("insumos").update({ needs_review: newVal }).eq("id", insumo.id);
+    setInsumos((prev) => prev.map((i) => i.id === insumo.id ? { ...i, needs_review: newVal } : i));
+    toast.success(newVal ? "Marcado para revisión" : "Revisión completada");
+  }
 
   function openNew() {
     setEditingInsumo({
@@ -291,16 +351,7 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
     toast.success("Insumos exportados");
   }
 
-  const typeBadgeColor = (type: string) => {
-    switch (type) {
-      case "material": return "default";
-      case "mano_de_obra": return "secondary";
-      case "servicio": return "outline";
-      default: return "destructive";
-    }
-  };
-
-  const typeLabel = (type: string) => DEFAULT_INSUMO_TYPES.find((t) => t.value === type)?.label || type;
+  // (typeBadgeColor and typeLabel moved above filtered)
 
   if (loading) return <div className="animate-pulse h-96 bg-muted rounded-lg" />;
 
@@ -349,6 +400,26 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
           </SelectContent>
         </Select>
         <span className="text-sm text-muted-foreground">{filtered.length} insumos</span>
+        {reviewCount > 0 && (
+          <Button
+            variant={filterReview === "review" ? "default" : "outline"}
+            size="sm"
+            className={filterReview === "review" ? "text-xs bg-amber-500 hover:bg-amber-600 text-white" : "text-xs text-amber-600 border-amber-300 hover:bg-amber-50"}
+            onClick={() => setFilterReview(filterReview === "review" ? "all" : "review")}
+          >
+            <Flag className="h-3 w-3 mr-1" /> {reviewCount} por revisar
+          </Button>
+        )}
+        {hasAnyColumnFilter && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-destructive hover:text-destructive"
+            onClick={() => { setFilterFamily(new Set()); setFilterTypeCol(new Set()); setFilterUnit(new Set()); setFilterReview("all"); }}
+          >
+            <X className="h-3 w-3 mr-1" /> Limpiar filtros
+          </Button>
+        )}
       </div>
 
       {/* Table */}
@@ -366,6 +437,7 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
           <div className="overflow-x-auto">
             <table className="brand-table w-full text-sm" style={{ tableLayout: "fixed" }}>
               <colgroup>
+                <col style={{ width: "28px" }} />
                 <col style={{ width: "45px" }} />
                 <col style={{ width: "95px" }} />
                 <col style={{ width: "85px" }} />
@@ -377,19 +449,52 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
               </colgroup>
               <thead>
                 <tr>
-                  <th className="px-2 py-2 text-left">#</th>
-                  <th className="px-2 py-2 text-left">Familia</th>
-                  <th className="px-2 py-2 text-left">Tipo</th>
-                  <th className="px-2 py-2 text-left">Descripción</th>
-                  <th className="px-2 py-2 text-center">Und</th>
-                  <th className="px-2 py-2 text-right">PU USD</th>
-                  <th className="px-2 py-2 text-right">PU {project?.local_currency}</th>
-                  <th className="px-2 py-2 text-center">Acc.</th>
+                  <th className="px-1 py-2 text-center" title="Marcador de revisión">
+                    <Flag className="h-3 w-3 mx-auto text-muted-foreground/50" />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="#" values={[]} activeValues={new Set()} onChange={() => {}} sortDirection={sort.key === "code" ? sort.dir : null} onSort={handleSort("code")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Familia" values={uniqueFamilies} activeValues={filterFamily} onChange={setFilterFamily} sortDirection={sort.key === "family" ? sort.dir : null} onSort={handleSort("family")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Tipo" values={uniqueTypes} activeValues={filterTypeCol} onChange={setFilterTypeCol} sortDirection={sort.key === "type" ? sort.dir : null} onSort={handleSort("type")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Descripción" values={[]} activeValues={new Set()} onChange={() => {}} sortDirection={sort.key === "description" ? sort.dir : null} onSort={handleSort("description")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Und" values={uniqueUnits} activeValues={filterUnit} onChange={setFilterUnit} align="center" sortDirection={sort.key === "unit" ? sort.dir : null} onSort={handleSort("unit")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="PU USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_usd" ? sort.dir : null} onSort={handleSort("pu_usd")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label={"PU " + (project?.local_currency || "Local")} values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_local" ? sort.dir : null} onSort={handleSort("pu_local")} />
+                  </th>
+                  <th className="px-2 py-2 text-center uppercase text-[11px] font-semibold tracking-wider">Acc.</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((insumo) => (
+                {sorted.map((insumo) => (
                   <tr key={insumo.id} className="cursor-pointer" style={{ borderBottom: "1px solid #F1F5F9" }} onDoubleClick={() => openEdit(insumo)}>
+                    <td className="px-1 py-1.5 text-center">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleReview(insumo); }}
+                        className="cursor-pointer hover:scale-110 transition-transform"
+                        title={insumo.needs_review ? "Quitar marca de revisión" : "Marcar para revisión"}
+                      >
+                        <Flag
+                          className={`h-3.5 w-3.5 mx-auto transition-colors ${
+                            insumo.needs_review
+                              ? "text-amber-500 fill-amber-500"
+                              : "text-gray-200 hover:text-amber-300"
+                          }`}
+                        />
+                      </button>
+                    </td>
                     <td className="px-2 py-1.5 font-mono text-xs" style={{ color: "#525252" }}>{insumo.code}</td>
                     <td className="px-2 py-1.5 text-xs overflow-hidden text-ellipsis whitespace-nowrap" style={{ color: "#525252" }}>{insumo.family || "—"}</td>
                     <td className="px-2 py-1.5">

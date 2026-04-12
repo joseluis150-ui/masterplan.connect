@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, use } from "react";
+import React, { useEffect, useState, useCallback, use } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,9 +39,12 @@ import { formatNumber, evaluateFormula, convertCurrency } from "@/lib/utils/form
 import { SearchableSelect } from "@/components/shared/searchable-select";
 import { FormulaInput } from "@/components/shared/formula-input";
 import type { Articulo, ArticuloComposition, Insumo, Project } from "@/lib/types/database";
-import { Plus, Trash2, Puzzle, Search, Copy, ChevronDown, ChevronRight, Upload, Download } from "lucide-react";
+import { Plus, Trash2, Puzzle, Search, Copy, ChevronDown, ChevronRight, Upload, Download, Pencil, X, Flag, FolderInput, Check } from "lucide-react";
 import { parseArticuloExcel, downloadBlob } from "@/lib/utils/excel";
 import type { ArticuloImportResult } from "@/lib/utils/excel";
+import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
+
+type SortConfig = { key: string; dir: SortDirection };
 import { toast } from "sonner";
 
 interface ArticuloWithComps extends Articulo {
@@ -74,6 +77,9 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [filterUnit, setFilterUnit] = useState<Set<string>>(new Set());
+  const [filterReview, setFilterReview] = useState<string>("all");
+  const [sort, setSort] = useState<SortConfig>({ key: "", dir: null });
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingArticulo, setEditingArticulo] = useState<Partial<Articulo> | null>(null);
   const [addCompDialogOpen, setAddCompDialogOpen] = useState(false);
@@ -82,6 +88,15 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importResult, setImportResult] = useState<ArticuloImportResult | null>(null);
   const [importing, setImporting] = useState(false);
+  // Import from project
+  const [importProjectDialogOpen, setImportProjectDialogOpen] = useState(false);
+  const [importProjects, setImportProjects] = useState<{ id: string; name: string }[]>([]);
+  const [selectedSourceProject, setSelectedSourceProject] = useState<string>("");
+  const [sourceArticulos, setSourceArticulos] = useState<(Articulo & { compositions: (ArticuloComposition & { insumo: Insumo })[] })[]>([]);
+  const [sourceSearch, setSourceSearch] = useState("");
+  const [selectedSourceArts, setSelectedSourceArts] = useState<Set<string>>(new Set());
+  const [importingFromProject, setImportingFromProject] = useState(false);
+  const [loadingSourceArts, setLoadingSourceArts] = useState(false);
   // Insumo edit with impact
   const [insumoEditOpen, setInsumoEditOpen] = useState(false);
   const [editInsumo, setEditInsumo] = useState<Insumo | null>(null);
@@ -130,7 +145,43 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const filtered = articulos.filter((a) => !search || a.description.toLowerCase().includes(search.toLowerCase()));
+  const uniqueUnits = Array.from(new Set(articulos.map((a) => a.unit)));
+  const hasColumnFilter = filterUnit.size > 0 || filterReview !== "all";
+  const reviewCount = articulos.filter((a) => a.needs_review).length;
+
+  const filtered = articulos.filter((a) => {
+    const matchSearch = !search || a.description.toLowerCase().includes(search.toLowerCase());
+    const matchUnit = filterUnit.size === 0 || filterUnit.has(a.unit);
+    const matchReview = filterReview === "all" || (filterReview === "review" ? a.needs_review : !a.needs_review);
+    return matchSearch && matchUnit && matchReview;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sort.dir || !sort.key) return 0;
+    const mult = sort.dir === "asc" ? 1 : -1;
+    switch (sort.key) {
+      case "number": return mult * (a.number - b.number);
+      case "description": return mult * a.description.localeCompare(b.description, "es");
+      case "unit": return mult * a.unit.localeCompare(b.unit, "es");
+      case "pu_mat": return mult * (a.pu_mat - b.pu_mat);
+      case "pu_mo": return mult * (a.pu_mo - b.pu_mo);
+      case "pu_glo": return mult * (a.pu_glo - b.pu_glo);
+      case "pu_costo": return mult * (a.pu_costo - b.pu_costo);
+      case "pu_venta": return mult * (a.pu_venta - b.pu_venta);
+      default: return 0;
+    }
+  });
+
+  function handleSort(key: string) {
+    return (dir: SortDirection) => setSort(dir ? { key, dir } : { key: "", dir: null });
+  }
+
+  async function toggleArticuloReview(art: ArticuloWithComps) {
+    const newVal = !art.needs_review;
+    await supabase.from("articulos").update({ needs_review: newVal }).eq("id", art.id);
+    setArticulos((prev) => prev.map((a) => a.id === art.id ? { ...a, needs_review: newVal } : a));
+    toast.success(newVal ? "Marcado para revisión" : "Revisión completada");
+  }
 
   function openNew() {
     setEditingArticulo({ description: "", unit: "U", profit_pct: 0, comment: "" });
@@ -211,6 +262,197 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   async function deleteComposition(compId: string) {
     await supabase.from("articulo_compositions").delete().eq("id", compId);
     toast.success("Línea eliminada");
+    loadData();
+  }
+
+  /* ── Import from other project ── */
+  async function openImportFromProject() {
+    // Load all other projects
+    const { data: projects } = await supabase
+      .from("projects")
+      .select("id, name")
+      .neq("id", projectId)
+      .order("name");
+    setImportProjects(projects || []);
+    setSelectedSourceProject("");
+    setSourceArticulos([]);
+    setSourceSearch("");
+    setSelectedSourceArts(new Set());
+    setImportProjectDialogOpen(true);
+  }
+
+  async function loadSourceArticulos(sourceProjectId: string) {
+    setSelectedSourceProject(sourceProjectId);
+    setLoadingSourceArts(true);
+    setSelectedSourceArts(new Set());
+    setSourceSearch("");
+
+    const [artRes] = await Promise.all([
+      supabase.from("articulos").select("*").eq("project_id", sourceProjectId).order("number"),
+    ]);
+    const arts = (artRes.data || []) as Articulo[];
+    const artIds = arts.map((a) => a.id);
+
+    let allComps: (ArticuloComposition & { insumo: Insumo })[] = [];
+    if (artIds.length > 0) {
+      const { data } = await supabase
+        .from("articulo_compositions")
+        .select("*, insumo:insumos(*)")
+        .in("articulo_id", artIds);
+      allComps = (data || []) as (ArticuloComposition & { insumo: Insumo })[];
+    }
+
+    const artsWithComps = arts.map((art) => ({
+      ...art,
+      compositions: allComps.filter((c) => c.articulo_id === art.id),
+    }));
+
+    setSourceArticulos(artsWithComps);
+    setLoadingSourceArts(false);
+  }
+
+  function toggleSourceArt(artId: string) {
+    setSelectedSourceArts((prev) => {
+      const next = new Set(prev);
+      if (next.has(artId)) next.delete(artId);
+      else next.add(artId);
+      return next;
+    });
+  }
+
+  function toggleAllSourceArts() {
+    const filteredIds = filteredSourceArts.map((a) => a.id);
+    const allSelected = filteredIds.every((id) => selectedSourceArts.has(id));
+    if (allSelected) {
+      setSelectedSourceArts((prev) => {
+        const next = new Set(prev);
+        for (const id of filteredIds) next.delete(id);
+        return next;
+      });
+    } else {
+      setSelectedSourceArts((prev) => {
+        const next = new Set(prev);
+        for (const id of filteredIds) next.add(id);
+        return next;
+      });
+    }
+  }
+
+  const filteredSourceArts = sourceArticulos.filter((a) =>
+    !sourceSearch || a.description.toLowerCase().includes(sourceSearch.toLowerCase())
+  );
+
+  async function executeImportFromProject() {
+    if (selectedSourceArts.size === 0) return;
+    setImportingFromProject(true);
+
+    try {
+      const tc = Number(project?.exchange_rate || 1);
+
+      // Get existing insumos in current project by description (for dedup)
+      const { data: existingInsumos } = await supabase
+        .from("insumos")
+        .select("id, description")
+        .eq("project_id", projectId);
+      const existingMap = new Map<string, string>();
+      for (const ins of existingInsumos || []) {
+        existingMap.set(ins.description.toLowerCase().trim(), ins.id);
+      }
+
+      // Map: source insumo_id → target insumo_id
+      const insumoIdMap = new Map<string, string>();
+
+      const selectedArts = sourceArticulos.filter((a) => selectedSourceArts.has(a.id));
+
+      // Collect all unique insumos needed
+      const neededInsumos = new Map<string, Insumo>();
+      for (const art of selectedArts) {
+        for (const comp of art.compositions) {
+          if (comp.insumo && !insumoIdMap.has(comp.insumo_id)) {
+            neededInsumos.set(comp.insumo_id, comp.insumo);
+          }
+        }
+      }
+
+      // Create or map insumos
+      let newInsumoCount = 0;
+      for (const [sourceId, ins] of neededInsumos) {
+        const key = ins.description.toLowerCase().trim();
+        if (existingMap.has(key)) {
+          insumoIdMap.set(sourceId, existingMap.get(key)!);
+        } else {
+          const { data: newIns } = await supabase
+            .from("insumos")
+            .insert({
+              project_id: projectId,
+              description: ins.description,
+              unit: ins.unit,
+              type: ins.type,
+              family: ins.family || null,
+              pu_usd: ins.pu_usd,
+              pu_local: ins.pu_local,
+              tc_used: ins.tc_used || tc,
+              currency_input: ins.currency_input || "USD",
+              code: ins.code,
+              reference: ins.reference,
+            })
+            .select("id")
+            .single();
+          if (newIns) {
+            insumoIdMap.set(sourceId, newIns.id);
+            existingMap.set(key, newIns.id);
+            newInsumoCount++;
+          }
+        }
+      }
+
+      // Create articulos and compositions
+      let artCount = 0;
+      let compCount = 0;
+      for (const art of selectedArts) {
+        const { data: newArt } = await supabase
+          .from("articulos")
+          .insert({
+            project_id: projectId,
+            description: art.description,
+            unit: art.unit,
+            profit_pct: art.profit_pct,
+            comment: art.comment,
+          })
+          .select("id")
+          .single();
+
+        if (newArt) {
+          artCount++;
+          const comps = art.compositions
+            .map((c) => {
+              const targetInsumoId = insumoIdMap.get(c.insumo_id);
+              if (!targetInsumoId) return null;
+              return {
+                articulo_id: newArt.id,
+                insumo_id: targetInsumoId,
+                quantity: c.quantity,
+                waste_pct: c.waste_pct,
+                margin_pct: c.margin_pct,
+              };
+            })
+            .filter(Boolean);
+
+          if (comps.length > 0) {
+            await supabase.from("articulo_compositions").insert(comps);
+            compCount += comps.length;
+          }
+        }
+      }
+
+      toast.success(`Importados: ${artCount} artículos, ${compCount} composiciones, ${newInsumoCount} insumos nuevos`);
+    } catch (err) {
+      toast.error("Error durante la importación");
+      console.error(err);
+    }
+
+    setImportProjectDialogOpen(false);
+    setImportingFromProject(false);
     loadData();
   }
 
@@ -470,6 +712,9 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
           <p className="text-muted-foreground">Paso 4: Crea artículos compuestos por insumos</p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={openImportFromProject}>
+            <FolderInput className="h-4 w-4 mr-1" /> Importar de Proyecto
+          </Button>
           <Button variant="outline" size="sm" onClick={() => document.getElementById("articulo-file-input")?.click()}>
             <Upload className="h-4 w-4 mr-1" /> Importar Excel
           </Button>
@@ -484,6 +729,21 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar artículos..." className="pl-9" />
         </div>
         <span className="text-sm text-muted-foreground">{filtered.length} artículos</span>
+        {reviewCount > 0 && (
+          <Button
+            variant={filterReview === "review" ? "default" : "outline"}
+            size="sm"
+            className={filterReview === "review" ? "text-xs bg-amber-500 hover:bg-amber-600 text-white" : "text-xs text-amber-600 border-amber-300 hover:bg-amber-50"}
+            onClick={() => setFilterReview(filterReview === "review" ? "all" : "review")}
+          >
+            <Flag className="h-3 w-3 mr-1" /> {reviewCount} por revisar
+          </Button>
+        )}
+        {hasColumnFilter && (
+          <Button variant="ghost" size="sm" className="text-xs text-destructive hover:text-destructive" onClick={() => { setFilterUnit(new Set()); setFilterReview("all"); }}>
+            <X className="h-3 w-3 mr-1" /> Limpiar filtros
+          </Button>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -495,108 +755,200 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2">
-          {filtered.map((art) => (
-            <Card key={art.id}>
-              <Collapsible open={expanded.has(art.id)} onOpenChange={() => toggleExpanded(art.id)}>
-                <div
-                  className="flex items-center gap-3 px-4 py-3 hover:bg-muted/50 cursor-pointer"
-                  onClick={() => toggleExpanded(art.id)}
-                >
-                  {expanded.has(art.id) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                  <span className="font-mono text-sm font-bold text-primary">#{art.number}</span>
-                  <span className="flex-1 text-left font-medium">{art.description}</span>
-                  <Badge variant="outline">{art.unit}</Badge>
-                  <span className="font-mono text-sm">{formatNumber(art.pu_costo)} USD</span>
-                  {isVenta && <span className="font-mono text-sm text-green-600">{formatNumber(art.pu_venta)} USD ({Number(art.profit_pct)}%)</span>}
-                  <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(art)}><Search className="h-3.5 w-3.5" /></Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => duplicateArticulo(art)}><Copy className="h-3.5 w-3.5" /></Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deleteArticulo(art.id)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
-                  </div>
-                </div>
-                <CollapsibleContent>
-                  <Separator />
-                  <div className="p-4">
-                    <div className="flex gap-4 mb-3 text-xs">
-                      <span>MAT: <strong>{formatNumber(art.pu_mat)}</strong></span>
-                      <span>MO: <strong>{formatNumber(art.pu_mo)}</strong></span>
-                      <span>GLO: <strong>{formatNumber(art.pu_glo)}</strong></span>
-                    </div>
-                    {art.compositions.length > 0 ? (
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Tipo</TableHead>
-                            <TableHead>Insumo</TableHead>
-                            <TableHead>Unidad</TableHead>
-                            <TableHead className="text-right">Cantidad</TableHead>
-                            <TableHead className="text-right">Desp. %</TableHead>
-                            <TableHead className="text-right">Margen %</TableHead>
-                            <TableHead className="text-right">PU USD</TableHead>
-                            <TableHead className="text-right">Total</TableHead>
-                            <TableHead className="w-10"></TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {art.compositions.map((comp) => {
-                            const qtyTotal = comp.quantity * (1 + comp.waste_pct / 100);
-                            const lineTotal = qtyTotal * Number(comp.insumo.pu_usd || 0) * (1 + comp.margin_pct / 100);
-                            return (
-                              <TableRow key={comp.id}>
-                                <TableCell><Badge variant="secondary" className="text-[10px]">{typeLabel(comp.insumo.type)}</Badge></TableCell>
-                                <TableCell className="text-sm">
-                                  <button
-                                    type="button"
-                                    onClick={() => openInsumoEdit(comp.insumo)}
-                                    className="text-left hover:text-[#1E3A8A] hover:underline transition-colors cursor-pointer"
-                                  >
-                                    {comp.insumo.description}
-                                  </button>
-                                </TableCell>
-                                <TableCell className="text-sm">{comp.insumo.unit}</TableCell>
-                                <TableCell className="text-right">
-                                  <FormulaInput
-                                    value={comp.quantity}
-                                    onValueChange={(v) => updateComposition(comp.id, "quantity", v)}
-                                    className="h-7 w-20 ml-auto"
-                                  />
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <FormulaInput
-                                    value={comp.waste_pct}
-                                    onValueChange={(v) => updateComposition(comp.id, "waste_pct", v)}
-                                    className="h-7 w-16 ml-auto"
-                                    step="0.01"
-                                  />
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <FormulaInput
-                                    value={comp.margin_pct}
-                                    onValueChange={(v) => updateComposition(comp.id, "margin_pct", v)}
-                                    className="h-7 w-16 ml-auto"
-                                    step="0.01"
-                                  />
-                                </TableCell>
-                                <TableCell className="text-right font-mono">{formatNumber(Number(comp.insumo.pu_usd || 0))}</TableCell>
-                                <TableCell className="text-right font-mono font-medium">{formatNumber(lineTotal)}</TableCell>
-                                <TableCell><Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteComposition(comp.id)}><Trash2 className="h-3 w-3 text-destructive" /></Button></TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    ) : (
-                      <p className="text-sm text-muted-foreground text-center py-4">Sin insumos asignados</p>
-                    )}
-                    <Button variant="outline" size="sm" className="mt-3" onClick={() => openAddComp(art.id)}>
-                      <Plus className="h-3.5 w-3.5 mr-1" /> Agregar Insumo
-                    </Button>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            </Card>
-          ))}
+        <div className="border rounded-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="brand-table w-full text-sm" style={{ tableLayout: "fixed" }}>
+              <colgroup>
+                <col style={{ width: "28px" }} />
+                <col style={{ width: "28px" }} />
+                <col style={{ width: "50px" }} />
+                <col />
+                <col style={{ width: "55px" }} />
+                <col style={{ width: "80px" }} />
+                <col style={{ width: "80px" }} />
+                <col style={{ width: "80px" }} />
+                <col style={{ width: "95px" }} />
+                {isVenta && <col style={{ width: "95px" }} />}
+                <col style={{ width: "90px" }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th className="px-1 py-2"></th>
+                  <th className="px-1 py-2 text-center" title="Marcador de revisión">
+                    <Flag className="h-3 w-3 mx-auto text-muted-foreground/50" />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="#" values={[]} activeValues={new Set()} onChange={() => {}} sortDirection={sort.key === "number" ? sort.dir : null} onSort={handleSort("number")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Descripción" values={[]} activeValues={new Set()} onChange={() => {}} sortDirection={sort.key === "description" ? sort.dir : null} onSort={handleSort("description")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Und" values={uniqueUnits} activeValues={filterUnit} onChange={setFilterUnit} align="center" sortDirection={sort.key === "unit" ? sort.dir : null} onSort={handleSort("unit")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="MAT" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_mat" ? sort.dir : null} onSort={handleSort("pu_mat")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="MO" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_mo" ? sort.dir : null} onSort={handleSort("pu_mo")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="GLO" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_glo" ? sort.dir : null} onSort={handleSort("pu_glo")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="PU USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_costo" ? sort.dir : null} onSort={handleSort("pu_costo")} />
+                  </th>
+                  {isVenta && <th className="px-2 py-2">
+                    <ColumnFilter label="PV USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_venta" ? sort.dir : null} onSort={handleSort("pu_venta")} />
+                  </th>}
+                  <th className="px-2 py-2 text-center uppercase text-[11px] font-semibold tracking-wider">Acc.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((art) => (
+                  <React.Fragment key={art.id}>
+                      {/* Main row */}
+                      <tr
+                        className="cursor-pointer hover:bg-muted/50"
+                        style={{ borderBottom: expanded.has(art.id) ? "none" : "1px solid #F1F5F9" }}
+                        onClick={() => toggleExpanded(art.id)}
+                      >
+                        <td className="px-1 py-1.5 text-center">
+                          {expanded.has(art.id) ? <ChevronDown className="h-3.5 w-3.5 mx-auto text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 mx-auto text-muted-foreground" />}
+                        </td>
+                        <td className="px-1 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => toggleArticuloReview(art)}
+                            className="cursor-pointer hover:scale-110 transition-transform"
+                            title={art.needs_review ? "Quitar marca de revisión" : "Marcar para revisión"}
+                          >
+                            <Flag
+                              className={`h-3.5 w-3.5 mx-auto transition-colors ${
+                                art.needs_review
+                                  ? "text-amber-500 fill-amber-500"
+                                  : "text-gray-200 hover:text-amber-300"
+                              }`}
+                            />
+                          </button>
+                        </td>
+                        <td className="px-2 py-1.5 font-mono text-xs font-bold" style={{ color: "#1E3A8A" }}>{art.number}</td>
+                        <td className="px-2 py-1.5 font-medium overflow-hidden text-ellipsis whitespace-nowrap" title={art.description}>{art.description}</td>
+                        <td className="px-2 py-1.5 text-center text-xs">{art.unit}</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_mat)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_mo)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_glo)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap" style={{ fontWeight: 600 }}>{formatNumber(art.pu_costo)}</td>
+                        {isVenta && <td className="px-2 py-1.5 text-right font-mono text-green-600 whitespace-nowrap" style={{ fontWeight: 500 }}>{formatNumber(art.pu_venta)}</td>}
+                        <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex gap-0.5 justify-center">
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEdit(art)}><Pencil className="h-3 w-3" /></Button>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => duplicateArticulo(art)}><Copy className="h-3 w-3" /></Button>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteArticulo(art.id)}><Trash2 className="h-3 w-3 text-destructive" /></Button>
+                          </div>
+                        </td>
+                      </tr>
+                      {/* Expanded composition */}
+                      {expanded.has(art.id) && (
+                        <tr style={{ borderBottom: "1px solid #F1F5F9" }}>
+                          <td colSpan={isVenta ? 11 : 10} className="p-0">
+                            <div className="px-4 py-3" style={{ background: "#FAFAFA" }}>
+                              {art.compositions.length > 0 ? (
+                                <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+                                  <colgroup>
+                                    <col style={{ width: "75px" }} />
+                                    <col />
+                                    <col style={{ width: "50px" }} />
+                                    <col style={{ width: "85px" }} />
+                                    <col style={{ width: "70px" }} />
+                                    <col style={{ width: "70px" }} />
+                                    <col style={{ width: "80px" }} />
+                                    <col style={{ width: "85px" }} />
+                                    <col style={{ width: "32px" }} />
+                                  </colgroup>
+                                  <thead>
+                                    <tr style={{ borderBottom: "1px solid #E5E5E5" }}>
+                                      <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tipo</th>
+                                      <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Insumo</th>
+                                      <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Und</th>
+                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Cantidad</th>
+                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Desp.%</th>
+                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Marg.%</th>
+                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">PU USD</th>
+                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Total</th>
+                                      <th className="px-1 py-1.5"></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {art.compositions.map((comp) => {
+                                      const qtyTotal = comp.quantity * (1 + comp.waste_pct / 100);
+                                      const lineTotal = qtyTotal * Number(comp.insumo.pu_usd || 0) * (1 + comp.margin_pct / 100);
+                                      return (
+                                        <tr key={comp.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                                          <td className="px-2 py-1">
+                                            <Badge variant="secondary" className="text-[10px]">{typeLabel(comp.insumo.type)}</Badge>
+                                          </td>
+                                          <td className="px-2 py-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                                            <button
+                                              type="button"
+                                              onClick={() => openInsumoEdit(comp.insumo)}
+                                              className="text-left hover:text-[#1E3A8A] hover:underline transition-colors cursor-pointer text-xs"
+                                              title={comp.insumo.description}
+                                            >
+                                              {comp.insumo.description}
+                                            </button>
+                                          </td>
+                                          <td className="px-2 py-1 text-center text-xs">{comp.insumo.unit}</td>
+                                          <td className="px-2 py-1 text-right">
+                                            <FormulaInput
+                                              value={comp.quantity}
+                                              onValueChange={(v) => updateComposition(comp.id, "quantity", v)}
+                                              className="h-6 w-full text-xs"
+                                            />
+                                          </td>
+                                          <td className="px-2 py-1 text-right">
+                                            <FormulaInput
+                                              value={comp.waste_pct}
+                                              onValueChange={(v) => updateComposition(comp.id, "waste_pct", v)}
+                                              className="h-6 w-full text-xs"
+                                              step="0.01"
+                                            />
+                                          </td>
+                                          <td className="px-2 py-1 text-right">
+                                            <FormulaInput
+                                              value={comp.margin_pct}
+                                              onValueChange={(v) => updateComposition(comp.id, "margin_pct", v)}
+                                              className="h-6 w-full text-xs"
+                                              step="0.01"
+                                            />
+                                          </td>
+                                          <td className="px-2 py-1 text-right font-mono text-xs">{formatNumber(Number(comp.insumo.pu_usd || 0))}</td>
+                                          <td className="px-2 py-1 text-right font-mono text-xs font-bold">{formatNumber(lineTotal)}</td>
+                                          <td className="px-1 py-1">
+                                            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => deleteComposition(comp.id)}>
+                                              <Trash2 className="h-2.5 w-2.5 text-destructive" />
+                                            </Button>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <p className="text-xs text-muted-foreground text-center py-3">Sin insumos asignados</p>
+                              )}
+                              <Button variant="outline" size="sm" className="mt-2 h-7 text-xs" onClick={() => openAddComp(art.id)}>
+                                <Plus className="h-3 w-3 mr-1" /> Agregar Insumo
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -765,6 +1117,136 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Import from Project Dialog */}
+      <Dialog open={importProjectDialogOpen} onOpenChange={setImportProjectDialogOpen}>
+        <DialogContent className="sm:max-w-[800px] max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Importar Artículos de otro Proyecto</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
+            {/* Project selector */}
+            <div className="space-y-2">
+              <Label>Proyecto origen</Label>
+              <Select value={selectedSourceProject} onValueChange={(v) => v && loadSourceArticulos(v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona un proyecto..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {importProjects.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Source articulos */}
+            {selectedSourceProject && (
+              <>
+                {loadingSourceArts ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2" style={{ borderColor: "#1E3A8A" }} />
+                  </div>
+                ) : sourceArticulos.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">Este proyecto no tiene artículos</p>
+                ) : (
+                  <>
+                    {/* Search + select all */}
+                    <div className="flex items-center gap-3">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Buscar artículo..."
+                          value={sourceSearch}
+                          onChange={(e) => setSourceSearch(e.target.value)}
+                          className="pl-9 h-9"
+                        />
+                      </div>
+                      <Button variant="outline" size="sm" onClick={toggleAllSourceArts}>
+                        <Check className="h-3.5 w-3.5 mr-1" />
+                        {filteredSourceArts.every((a) => selectedSourceArts.has(a.id))
+                          ? "Deseleccionar"
+                          : "Seleccionar todos"}
+                      </Button>
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        {selectedSourceArts.size} de {sourceArticulos.length}
+                      </span>
+                    </div>
+
+                    {/* Articulos list */}
+                    <div className="border rounded-lg overflow-hidden flex-1 min-h-0">
+                      <div className="max-h-[380px] overflow-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-muted/50 sticky top-0 z-10">
+                            <tr>
+                              <th className="px-3 py-2 w-10"></th>
+                              <th className="px-3 py-2 text-left font-medium text-xs uppercase w-12">#</th>
+                              <th className="px-3 py-2 text-left font-medium text-xs uppercase">Artículo</th>
+                              <th className="px-3 py-2 text-center font-medium text-xs uppercase w-14">Und</th>
+                              <th className="px-3 py-2 text-right font-medium text-xs uppercase w-16">Ins.</th>
+                              <th className="px-3 py-2 text-right font-medium text-xs uppercase w-24">PU USD</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredSourceArts.map((art) => {
+                              const totals = calcArticuloTotals(art.compositions, Number(art.profit_pct));
+                              const isSelected = selectedSourceArts.has(art.id);
+                              return (
+                                <tr
+                                  key={art.id}
+                                  className={`border-t cursor-pointer transition-colors ${isSelected ? "bg-[#1E3A8A]/5" : "hover:bg-muted/30"}`}
+                                  onClick={() => toggleSourceArt(art.id)}
+                                >
+                                  <td className="px-3 py-1.5 text-center">
+                                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${isSelected ? "bg-[#1E3A8A] border-[#1E3A8A]" : "border-muted-foreground/30"}`}>
+                                      {isSelected && <Check className="h-3 w-3 text-white" />}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{art.number}</td>
+                                  <td className="px-3 py-1.5 truncate" title={art.description}>{art.description}</td>
+                                  <td className="px-3 py-1.5 text-center text-xs text-muted-foreground">{art.unit}</td>
+                                  <td className="px-3 py-1.5 text-right font-mono text-xs">{art.compositions.length}</td>
+                                  <td className="px-3 py-1.5 text-right font-mono text-xs">{formatNumber(totals.pu_costo)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Summary + actions */}
+                    {selectedSourceArts.size > 0 && (() => {
+                      // Count unique insumos that would be imported
+                      const neededInsumos = new Set<string>();
+                      const existingDescs = new Set(insumos.map((i) => i.description.toLowerCase().trim()));
+                      for (const art of sourceArticulos) {
+                        if (!selectedSourceArts.has(art.id)) continue;
+                        for (const comp of art.compositions) {
+                          if (comp.insumo && !existingDescs.has(comp.insumo.description.toLowerCase().trim())) {
+                            neededInsumos.add(comp.insumo_id);
+                          }
+                        }
+                      }
+                      return (
+                        <div className="flex items-center justify-between pt-1">
+                          <p className="text-xs text-muted-foreground">
+                            <strong>{selectedSourceArts.size}</strong> artículos
+                            {neededInsumos.size > 0 && <> + <strong className="text-amber-600">{neededInsumos.size}</strong> insumos nuevos</>}
+                          </p>
+                          <Button onClick={executeImportFromProject} disabled={importingFromProject}>
+                            {importingFromProject ? "Importando..." : `Importar ${selectedSourceArts.size} artículos`}
+                          </Button>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+              </>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 
