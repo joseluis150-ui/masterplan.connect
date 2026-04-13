@@ -73,9 +73,9 @@ export default function FlujoEfectivoPage({ params }: { params: Promise<{ id: st
   const loadData = useCallback(async () => {
     // Round 1
     const [catsRes, subsRes, qlRes, artsRes, pkgsRes, schedConfigRes] = await Promise.all([
-      supabase.from("edt_categories").select("*").eq("project_id", projectId).order("order"),
-      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).order("order"),
-      supabase.from("quantification_lines").select("*").eq("project_id", projectId).order("line_number"),
+      supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
+      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
+      supabase.from("quantification_lines").select("*").eq("project_id", projectId).is("deleted_at", null).order("line_number"),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("procurement_packages").select("*").eq("project_id", projectId).order("created_at"),
       supabase.from("schedule_config").select("*").eq("project_id", projectId).single(),

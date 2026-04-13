@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronDown,
   ClipboardList,
+  ShoppingCart,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Project } from "@/lib/types/database";
@@ -127,7 +128,11 @@ export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
             </div>
           )}
 
-          {/* 3. Consultas */}
+          {/* 3. Compras (conditional) */}
+          {project.compras_enabled &&
+            renderNavLink({ label: "Compras", href: "compras", icon: ShoppingCart })}
+
+          {/* 4. Consultas */}
           {renderNavLink({ label: "Consultas", href: "consultas", icon: BarChart3 })}
         </nav>
       </ScrollArea>

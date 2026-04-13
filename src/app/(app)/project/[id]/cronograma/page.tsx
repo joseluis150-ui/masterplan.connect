@@ -55,10 +55,10 @@ export default function CronogramaPage({ params }: { params: Promise<{ id: strin
   const loadData = useCallback(async () => {
     const [configRes, linesRes, artsRes, catsRes, subsRes, weeksRes] = await Promise.all([
       supabase.from("schedule_config").select("*").eq("project_id", projectId).single(),
-      supabase.from("quantification_lines").select("*").eq("project_id", projectId).order("line_number"),
+      supabase.from("quantification_lines").select("*").eq("project_id", projectId).is("deleted_at", null).order("line_number"),
       supabase.from("articulos").select("*").eq("project_id", projectId),
-      supabase.from("edt_categories").select("*").eq("project_id", projectId).order("order"),
-      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).order("order"),
+      supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
+      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("schedule_weeks").select("*"),
     ]);
 

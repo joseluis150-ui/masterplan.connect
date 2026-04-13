@@ -3,9 +3,17 @@ export type SectorType = "fisico" | "gastos_generales";
 export type InsumoType = "material" | "mano_de_obra" | "servicio" | "global";
 export type CurrencyInput = "LOCAL" | "USD";
 export type PurchaseType = "directa" | "licitacion";
-export type PackageStatus = "borrador" | "listo" | "en_proceso" | "adjudicado" | "cerrado";
+export type PackageStatus = "borrador" | "aprobado";
 export type DependencyType = "FS" | "SS" | "FF" | "SF";
 export type ProrationCriteria = "area" | "monto";
+
+export type PurchaseRequestStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type PurchaseRequestOrigin = "package" | "manual";
+export type PurchaseOrderStatus = "open" | "closed" | "cancelled";
+export type AdvanceType = "amount" | "percentage";
+export type PaymentType = "advance" | "regular" | "retention_return";
+export type PurchaseDocumentType = "sc" | "oc" | "delivery" | "invoice" | "payment";
+export type InvoiceStatus = "pending" | "paid" | "cancelled";
 
 export interface Project {
   id: string;
@@ -19,6 +27,7 @@ export interface Project {
   responsible: string | null;
   proration_criteria: ProrationCriteria;
   current_version: number;
+  compras_enabled: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -201,4 +210,126 @@ export interface ProcurementLine {
   need_date: string | null;
   subcategory_origin: string | null;
   insumo?: Insumo;
+}
+
+// ─── Módulo Compras ───
+
+export interface PurchaseRequest {
+  id: string;
+  project_id: string;
+  number: string;
+  origin: PurchaseRequestOrigin;
+  package_id: string | null;
+  date: string;
+  status: PurchaseRequestStatus;
+  comment: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  // enriched
+  lines?: PurchaseRequestLine[];
+  package_name?: string;
+}
+
+export interface PurchaseRequestLine {
+  id: string;
+  request_id: string;
+  subcategory_id: string | null;
+  description: string;
+  quantity: number;
+  unit: string;
+  need_date: string | null;
+  created_at: string;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  project_id: string;
+  number: string;
+  request_id: string | null;
+  supplier: string;
+  issue_date: string;
+  status: PurchaseOrderStatus;
+  currency: string;
+  has_advance: boolean;
+  advance_amount: number;
+  advance_type: AdvanceType | null;
+  amortization_pct: number;
+  retention_pct: number;
+  return_condition: string | null;
+  comment: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  // enriched
+  lines?: PurchaseOrderLine[];
+  request_number?: string;
+}
+
+export interface PurchaseOrderLine {
+  id: string;
+  order_id: string;
+  request_line_id: string | null;
+  subcategory_id: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unit_price: number;
+  total: number;
+  created_at: string;
+}
+
+export interface DeliveryNote {
+  id: string;
+  order_line_id: string;
+  date: string;
+  quantity_received: number;
+  unit_price: number;
+  gross_amount: number;
+  amortization_pct: number;
+  amortization_amount: number;
+  retention_pct: number;
+  retention_amount: number;
+  payable_amount: number;
+  comment: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface Invoice {
+  id: string;
+  delivery_note_id: string;
+  invoice_number: string;
+  invoice_date: string;
+  amount: number;
+  status: InvoiceStatus;
+  comment: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface Payment {
+  id: string;
+  project_id: string;
+  invoice_id: string | null;
+  order_id: string | null;
+  type: PaymentType;
+  payment_date: string;
+  amount: number;
+  comment: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface PurchaseAttachment {
+  id: string;
+  project_id: string;
+  document_type: PurchaseDocumentType;
+  document_id: string;
+  file_name: string;
+  file_type: string | null;
+  file_size: number | null;
+  url: string;
+  uploaded_by: string | null;
+  uploaded_at: string;
 }

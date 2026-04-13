@@ -74,10 +74,10 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const loadData = useCallback(async () => {
     // All 6 queries in parallel — single round trip
     const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes] = await Promise.all([
-      supabase.from("quantification_lines").select("*").eq("project_id", projectId).order("line_number"),
+      supabase.from("quantification_lines").select("*").eq("project_id", projectId).is("deleted_at", null).order("line_number"),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
-      supabase.from("edt_categories").select("*").eq("project_id", projectId).order("order"),
-      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).order("order"),
+      supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
+      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.rpc("get_project_articulo_totals", { p_project_id: projectId }),
     ]);
@@ -274,7 +274,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
 
   async function deleteLine(id: string) {
     if (!confirm("¿Eliminar esta línea?")) return;
-    await supabase.from("quantification_lines").delete().eq("id", id);
+    await supabase.from("quantification_lines").update({ deleted_at: new Date().toISOString() }).eq("id", id);
     setLines(lines.filter((l) => l.id !== id));
     setSelected((prev) => { const next = new Set(prev); next.delete(id); return next; });
     toast.success("Línea eliminada");
@@ -282,20 +282,20 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
 
   async function deleteSelected() {
     if (selected.size === 0) return;
-    if (!confirm(`¿Eliminar ${selected.size} líneas seleccionadas?\n\nEsta acción no se puede deshacer.`)) return;
+    if (!confirm(`¿Eliminar ${selected.size} líneas seleccionadas?`)) return;
     const ids = Array.from(selected);
-    await supabase.from("quantification_lines").delete().in("id", ids);
+    await supabase.from("quantification_lines").update({ deleted_at: new Date().toISOString() }).in("id", ids);
     setLines(lines.filter((l) => !selected.has(l.id)));
     setSelected(new Set());
     toast.success(`${ids.length} líneas eliminadas`);
   }
 
   async function deleteAll() {
-    if (!confirm(`¿Eliminar TODAS las ${lines.length} líneas de cuantificación?\n\nEsta acción no se puede deshacer.`)) return;
-    await supabase.from("quantification_lines").delete().eq("project_id", projectId);
+    if (!confirm(`¿Eliminar TODAS las ${lines.length} líneas de cuantificación?\n\nLos datos del cronograma y paquetes asociados se conservarán y podrán restaurarse.`)) return;
+    await supabase.from("quantification_lines").update({ deleted_at: new Date().toISOString() }).eq("project_id", projectId).is("deleted_at", null);
     setLines([]);
     setSelected(new Set());
-    toast.success("Todas las líneas eliminadas");
+    toast.success("Todas las líneas eliminadas (soft-delete)");
   }
 
   function toggleSelect(id: string) {

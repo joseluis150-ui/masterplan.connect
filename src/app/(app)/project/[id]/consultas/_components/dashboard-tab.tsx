@@ -30,7 +30,7 @@ export function DashboardTab({ projectId }: { projectId: string }) {
       supabase.rpc("get_budget_summary", { p_project_id: projectId }),
       supabase.from("insumos").select("id", { count: "exact", head: true }).eq("project_id", projectId),
       supabase.from("articulos").select("id", { count: "exact", head: true }).eq("project_id", projectId),
-      supabase.from("quantification_lines").select("id", { count: "exact", head: true }).eq("project_id", projectId),
+      supabase.from("quantification_lines").select("id", { count: "exact", head: true }).eq("project_id", projectId).is("deleted_at", null),
       supabase.from("procurement_packages").select("id", { count: "exact", head: true }).eq("project_id", projectId),
     ]);
 

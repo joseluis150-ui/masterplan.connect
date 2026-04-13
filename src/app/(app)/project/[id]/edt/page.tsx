@@ -44,8 +44,8 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
 
   const loadData = useCallback(async () => {
     const [catsRes, subsRes] = await Promise.all([
-      supabase.from("edt_categories").select("*").eq("project_id", projectId).order("order"),
-      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).order("order"),
+      supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
+      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
     ]);
     const cats = (catsRes.data || []).map((cat) => ({
       ...cat,
@@ -84,7 +84,13 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
     const cat = categories.find((c) => c.id === catId);
     if (!cat) return;
     if (cat.subcategories.length > 0 && !confirm(`¿Eliminar "${cat.name}"? Tiene ${cat.subcategories.length} subcategoría(s).`)) return;
-    const { error } = await supabase.from("edt_categories").delete().eq("id", catId);
+    const now = new Date().toISOString();
+    // Soft-delete subcategories first, then category
+    const subIds = cat.subcategories.map((s) => s.id);
+    if (subIds.length > 0) {
+      await supabase.from("edt_subcategories").update({ deleted_at: now }).in("id", subIds);
+    }
+    const { error } = await supabase.from("edt_categories").update({ deleted_at: now }).eq("id", catId);
     if (!error) {
       const updated = categories.filter((c) => c.id !== catId);
       await recalculateCodes(updated);
@@ -110,7 +116,7 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
   }
 
   async function deleteSubcategory(catId: string, subId: string) {
-    const { error } = await supabase.from("edt_subcategories").delete().eq("id", subId);
+    const { error } = await supabase.from("edt_subcategories").update({ deleted_at: new Date().toISOString() }).eq("id", subId);
     if (!error) {
       const updated = categories.map((c) => c.id === catId ? { ...c, subcategories: c.subcategories.filter((s) => s.id !== subId) } : c);
       await recalculateCodes(updated);
@@ -135,15 +141,15 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
   }
 
   async function deleteAllEdt() {
-    if (!confirm("¿Estás seguro de eliminar TODA la estructura EDT?\nEsto eliminará todas las categorías y subcategorías del proyecto.\n\nEsta acción no se puede deshacer.")) return;
-    // Delete subcategories first, then categories
+    if (!confirm("¿Estás seguro de eliminar TODA la estructura EDT?\nEsto eliminará todas las categorías y subcategorías del proyecto.\n\nLos datos podrán restaurarse si es necesario.")) return;
+    const now = new Date().toISOString();
     const catIds = categories.map((c) => c.id);
     if (catIds.length > 0) {
-      await supabase.from("edt_subcategories").delete().in("category_id", catIds);
-      await supabase.from("edt_categories").delete().eq("project_id", projectId);
+      await supabase.from("edt_subcategories").update({ deleted_at: now }).in("category_id", catIds);
+      await supabase.from("edt_categories").update({ deleted_at: now }).eq("project_id", projectId).is("deleted_at", null);
     }
     setCategories([]);
-    toast.success("EDT eliminado por completo");
+    toast.success("EDT eliminado (soft-delete)");
   }
 
   async function moveCategory(catIdx: number, direction: "up" | "down") {

@@ -17,8 +17,10 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { CURRENCIES } from "@/lib/constants/units";
 import type { Project, Sector, SectorType, ExchangeRateVersion } from "@/lib/types/database";
-import { Plus, Trash2, GripVertical } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Plus, Trash2, GripVertical, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 
 export default function SettingsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: projectId } = use(params);
@@ -27,6 +29,7 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
   const [tcVersions, setTcVersions] = useState<ExchangeRateVersion[]>([]);
   const [saving, setSaving] = useState(false);
   const supabase = createClient();
+  const router = useRouter();
 
   useEffect(() => {
     loadData();
@@ -54,6 +57,8 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
     if (!error) {
       setProject({ ...project, ...updates });
       toast.success("Proyecto actualizado");
+      // Refresh server components (sidebar) if module toggles changed
+      if ("compras_enabled" in updates) router.refresh();
     } else {
       toast.error("Error al actualizar");
     }
@@ -256,6 +261,33 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
               </div>
             </>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Módulos */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Módulos</CardTitle>
+          <CardDescription>Activa o desactiva módulos adicionales del proyecto</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between p-4 border rounded-lg">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <ShoppingCart className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">Módulo de Compras</p>
+                <p className="text-xs text-muted-foreground">
+                  Solicitudes de compra, órdenes, albaranes, facturas y pagos
+                </p>
+              </div>
+            </div>
+            <Switch
+              checked={project.compras_enabled}
+              onCheckedChange={(checked) => updateProject({ compras_enabled: checked })}
+            />
+          </div>
         </CardContent>
       </Card>
 

@@ -32,7 +32,7 @@ import type {
   PackageStatus,
   PurchaseType,
 } from "@/lib/types/database";
-import { Plus, Trash2, Truck, ChevronDown, ChevronRight, Pencil, Search, X, Filter, Package } from "lucide-react";
+import { Plus, Trash2, Truck, ChevronDown, ChevronRight, Pencil, Search, X, Filter, Package, CheckCircle2, ShoppingCart, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { addWeeks, startOfWeek, format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -121,9 +121,9 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
   const loadData = useCallback(async () => {
     // Round 1
     const [catsRes, subsRes, qlRes, artsRes, pkgsRes, schedConfigRes] = await Promise.all([
-      supabase.from("edt_categories").select("*").eq("project_id", projectId).order("order"),
-      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).order("order"),
-      supabase.from("quantification_lines").select("*").eq("project_id", projectId).order("line_number"),
+      supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
+      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
+      supabase.from("quantification_lines").select("*").eq("project_id", projectId).is("deleted_at", null).order("line_number"),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("procurement_packages").select("*").eq("project_id", projectId).order("created_at", { ascending: false }),
       supabase.from("schedule_config").select("*").eq("project_id", projectId).single(),
@@ -275,6 +275,10 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
 
   /* ── Toggle assignment ── */
   async function toggleAssignment(compositionId: string, insumoId: string, packageId: string, forceValue?: boolean) {
+    // Block editing on approved packages
+    const pkg = packages.find((p) => p.id === packageId);
+    if (pkg?.status === "aprobado") return;
+
     const key = `${compositionId}::${packageId}`;
     const existingId = assignments.get(key);
     const shouldAssign = forceValue !== undefined ? forceValue : !existingId;
@@ -305,6 +309,8 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
 
   /* ── Drag handlers ── */
   function handleMouseDown(compositionId: string, insumoId: string, packageId: string) {
+    const pkg = packages.find((p) => p.id === packageId);
+    if (pkg?.status === "aprobado") return;
     const key = `${compositionId}::${packageId}`;
     const newValue = !assignments.has(key);
     setIsDragging(true);
@@ -371,13 +377,14 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
   }
 
   function openEditPackage(pkg: ProcurementPackage) {
+    if (pkg.status === "aprobado") return; // Approved packages are read-only
     setEditingPkg({ ...pkg });
     setDialogOpen(true);
   }
 
   async function savePackage() {
     if (!editingPkg) return;
-    const record = {
+    const record: Record<string, unknown> = {
       project_id: projectId,
       name: editingPkg.name || "",
       purchase_type: editingPkg.purchase_type || "directa",
@@ -386,7 +393,20 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
       awarded_supplier: editingPkg.awarded_supplier || null,
     };
     if (editingPkg.id) {
+      // Include status on update
+      record.status = editingPkg.status || "borrador";
+
+      // Detect if status is changing TO "aprobado"
+      const oldPkg = packages.find((p) => p.id === editingPkg.id);
+      const isApproving = oldPkg && oldPkg.status !== "aprobado" && editingPkg.status === "aprobado";
+
       await supabase.from("procurement_packages").update(record).eq("id", editingPkg.id);
+
+      // Auto-create SC when approving
+      if (isApproving) {
+        await createSCFromPackage(editingPkg.id, editingPkg.name || "");
+      }
+
       toast.success("Paquete actualizado");
     } else {
       await supabase.from("procurement_packages").insert(record);
@@ -394,6 +414,63 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
     }
     setDialogOpen(false);
     loadData();
+  }
+
+  /** Create a Solicitud de Compra from an approved package's procurement_lines */
+  async function createSCFromPackage(packageId: string, packageName: string) {
+    try {
+      // Fetch lines with insumo info
+      const { data: pLines } = await supabase
+        .from("procurement_lines")
+        .select("*, insumo:insumos(description, unit)")
+        .eq("package_id", packageId);
+
+      if (!pLines || pLines.length === 0) {
+        toast.info("Paquete aprobado sin insumos — no se creó solicitud");
+        return;
+      }
+
+      // Get next SC number
+      const { data: numData } = await supabase.rpc("next_document_number", {
+        p_project_id: projectId,
+        p_doc_type: "SC",
+      });
+      const number = numData || `SC-${new Date().getFullYear()}-???`;
+
+      // Create SC
+      const { data: sc, error: scErr } = await supabase
+        .from("purchase_requests")
+        .insert({
+          project_id: projectId,
+          number,
+          origin: "package",
+          package_id: packageId,
+          status: "pending",
+          comment: `Desde paquete aprobado: ${packageName}`,
+        })
+        .select()
+        .single();
+
+      if (scErr || !sc) {
+        toast.error("Error al crear solicitud desde paquete");
+        return;
+      }
+
+      // Create SC lines from procurement_lines
+      const lines = pLines.map((pl: { id: string; subcategory_origin: string | null; insumo: { description: string; unit: string } | null; quantity: number; need_date: string | null }) => ({
+        request_id: sc.id,
+        subcategory_id: pl.subcategory_origin || null,
+        description: pl.insumo?.description || "Sin descripción",
+        quantity: pl.quantity,
+        unit: pl.insumo?.unit || "U",
+        need_date: pl.need_date || null,
+      }));
+
+      await supabase.from("purchase_request_lines").insert(lines);
+      toast.success(`Solicitud ${number} creada en Compras con ${lines.length} línea(s)`);
+    } catch {
+      toast.error("Error al generar solicitud de compra");
+    }
   }
 
   async function deletePackage() {
@@ -569,6 +646,53 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
 
   const statusLabel = (status: string) =>
     PACKAGE_STATUSES.find((s) => s.value === status)?.label || status;
+
+  /** Inline status selector for the summary list */
+  async function changePackageStatus(pkgId: string, newStatus: string) {
+    const pkg = packages.find((p) => p.id === pkgId);
+    if (!pkg) return;
+    const wasApproved = pkg.status !== "aprobado" && newStatus === "aprobado";
+
+    await supabase.from("procurement_packages").update({ status: newStatus }).eq("id", pkgId);
+
+    if (wasApproved) {
+      await createSCFromPackage(pkgId, pkg.name);
+    }
+
+    toast.success(`Estado actualizado a "${statusLabel(newStatus)}"`);
+    loadData();
+  }
+
+  const inlineStatusSelect = (pkg: ProcurementPackage) => {
+    if (pkg.status === "aprobado") {
+      return (
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+          <Lock className="h-3 w-3" />
+          Aprobado
+        </span>
+      );
+    }
+    return (
+      <Select
+        value={pkg.status}
+        onValueChange={(v) => { if (v) changePackageStatus(pkg.id, v); }}
+      >
+        <SelectTrigger
+          className="h-7 w-[115px] text-[11px] border-0 bg-transparent shadow-none px-1 justify-center gap-1 hover:bg-muted/50 cursor-pointer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {PACKAGE_STATUSES.map((s) => (
+            <SelectItem key={s.value} value={s.value} className="text-xs">
+              {s.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  };
 
   /* ── Filter logic ── */
   const hasActiveFilter = selectedInsumoId !== null || filterTypes.size > 0 || filterAssignment !== "all";
@@ -915,12 +1039,21 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                 </div>
                 {packages.map((pkg) => {
                   const pkgTotal = getPackageTotal(pkg.id);
+                  const isApproved = pkg.status === "aprobado";
                   return (
                     <div
                       key={pkg.id}
-                      className="w-28 shrink-0 border-r px-1.5 py-1 cursor-pointer hover:bg-muted/50 transition-colors"
+                      className={cn(
+                        "w-28 shrink-0 border-r px-1.5 py-1 transition-colors",
+                        isApproved
+                          ? "opacity-60 cursor-default"
+                          : "cursor-pointer hover:bg-muted/50"
+                      )}
                       onClick={() => openEditPackage(pkg)}
-                      title={`${pkg.name} — ${statusLabel(pkg.status)}\n$${formatUsdInt(pkgTotal)} USD\nClick para editar`}
+                      title={isApproved
+                        ? `${pkg.name} — Aprobado (bloqueado)\n$${formatUsdInt(pkgTotal)} USD`
+                        : `${pkg.name} — ${statusLabel(pkg.status)}\n$${formatUsdInt(pkgTotal)} USD\nClick para editar`
+                      }
                     >
                       <div className="text-[10px] font-semibold truncate leading-tight">{pkg.name}</div>
                       <div className="flex items-center gap-1 mt-0.5">
@@ -934,9 +1067,15 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                         >
                           {pkg.purchase_type === "licitacion" ? "LIC" : "CD"}
                         </span>
-                        <span className="text-[9px] text-muted-foreground truncate">
-                          {statusLabel(pkg.status)}
-                        </span>
+                        {isApproved ? (
+                          <span className="text-[9px] text-emerald-600 font-medium flex items-center gap-0.5 truncate">
+                            <Lock className="h-2.5 w-2.5 shrink-0" />Aprobado
+                          </span>
+                        ) : (
+                          <span className="text-[9px] text-muted-foreground truncate">
+                            {statusLabel(pkg.status)}
+                          </span>
+                        )}
                       </div>
                       <div className="text-[9px] font-mono font-semibold text-[#1E3A8A] mt-0.5 truncate">
                         ${formatUsdInt(pkgTotal)}
@@ -1216,7 +1355,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                         {pkg.purchase_type === "licitacion" ? "LIC" : "CD"}
                       </span>
                     </span>
-                    <span className="text-center text-[11px]">{statusLabel(pkg.status)}</span>
+                    <span className="text-center" onClick={(e) => e.stopPropagation()}>{inlineStatusSelect(pkg)}</span>
                     <span className="text-right font-mono">0</span>
                     <span className="text-right">—</span>
                     <span className="text-right font-mono">$0</span>
@@ -1248,7 +1387,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                         {pkg.purchase_type === "licitacion" ? "LIC" : "CD"}
                       </span>
                     </span>
-                    <span className="text-center text-[11px] text-muted-foreground">{statusLabel(pkg.status)}</span>
+                    <span className="text-center" onClick={(e) => e.stopPropagation()}>{inlineStatusSelect(pkg)}</span>
                     <span className="text-right text-xs font-mono">{summaryLines.length}</span>
                     <span className="text-right text-[11px]">{earliestDate}</span>
                     <span className="text-right font-mono font-bold text-sm" style={{ color: "#1E3A8A" }}>${formatUsdInt(pkgTotal)}</span>
@@ -1391,22 +1530,6 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                   />
                 </div>
               </div>
-              {editingPkg.id && (
-                <div className="space-y-2">
-                  <Label>Estado</Label>
-                  <Select
-                    value={editingPkg.status || "borrador"}
-                    onValueChange={(v) => v && setEditingPkg({ ...editingPkg, status: v as PackageStatus })}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {PACKAGE_STATUSES.map((s) => (
-                        <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
               <div className="flex gap-2">
                 <Button onClick={savePackage} className="flex-1" disabled={!editingPkg.name}>
                   {editingPkg.id ? "Actualizar" : "Crear"}

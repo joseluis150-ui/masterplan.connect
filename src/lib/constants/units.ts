@@ -47,8 +47,31 @@ export const CURRENCIES = [
 
 export const PACKAGE_STATUSES = [
   { value: "borrador", label: "Borrador" },
-  { value: "listo", label: "Listo para compra" },
-  { value: "en_proceso", label: "En proceso" },
-  { value: "adjudicado", label: "Adjudicado" },
-  { value: "cerrado", label: "Cerrado" },
+  { value: "aprobado", label: "Aprobado" },
+] as const;
+
+// Módulo Compras
+export const SC_STATUSES = [
+  { value: "pending", label: "Pendiente", color: "#F59E0B" },
+  { value: "in_progress", label: "En proceso", color: "#3B82F6" },
+  { value: "completed", label: "Completada", color: "#10B981" },
+  { value: "cancelled", label: "Cancelada", color: "#EF4444" },
+] as const;
+
+export const OC_STATUSES = [
+  { value: "open", label: "Abierta", color: "#3B82F6" },
+  { value: "closed", label: "Cerrada", color: "#10B981" },
+  { value: "cancelled", label: "Cancelada", color: "#EF4444" },
+] as const;
+
+export const PAYMENT_TYPES = [
+  { value: "advance", label: "Anticipo" },
+  { value: "regular", label: "Regular" },
+  { value: "retention_return", label: "Devolución retención" },
+] as const;
+
+export const INVOICE_STATUSES = [
+  { value: "pending", label: "Pendiente", color: "#F59E0B" },
+  { value: "paid", label: "Pagada", color: "#10B981" },
+  { value: "cancelled", label: "Cancelada", color: "#EF4444" },
 ] as const;
