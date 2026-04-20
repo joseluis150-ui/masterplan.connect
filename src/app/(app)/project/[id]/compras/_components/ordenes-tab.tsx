@@ -1059,11 +1059,11 @@ export function OrdenesTab({ projectId }: Props) {
                   </p>
                 </div>
 
-                {/* Scrollable body */}
-                <div className="flex-1 overflow-auto px-6 py-4 space-y-4">
+                {/* Scrollable body — gray backdrop with two white panel sections */}
+                <div className="flex-1 overflow-auto bg-neutral-50 px-6 py-5 space-y-5">
                   {/* Linked SC */}
                   {linkedSC && (
-                    <div className="flex items-center gap-2 text-xs bg-muted/20 rounded-md px-3 py-2 border border-border/50">
+                    <div className="flex items-center gap-2 text-xs bg-background rounded-md px-3 py-2 border">
                       <LinkIcon className="h-3.5 w-3.5 text-muted-foreground" />
                       <span className="text-muted-foreground">Solicitud vinculada:</span>
                       <span className="font-mono font-semibold">{linkedSC.number}</span>
@@ -1071,6 +1071,16 @@ export function OrdenesTab({ projectId }: Props) {
                       <span className="text-muted-foreground">{linkedSC.lines.length} línea(s) originales</span>
                     </div>
                   )}
+
+                  {/* ══════ SECTION 1 · Información general y desglose ══════ */}
+                  <section className="bg-background rounded-lg border shadow-sm overflow-hidden">
+                    <header className="flex items-center gap-2 px-4 py-2.5 bg-muted/40 border-b">
+                      <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Información general y desglose
+                      </h3>
+                    </header>
+                    <div className="p-4 space-y-4">
 
                   {/* Execution summary */}
                   {(() => {
@@ -1208,7 +1218,11 @@ export function OrdenesTab({ projectId }: Props) {
 
                   {/* Lines table */}
                   {oc.lines.length > 0 && (
-                    <div className="border rounded-md overflow-hidden">
+                    <div className="space-y-2 pt-2 border-t">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
+                        Líneas de la OC
+                      </p>
+                      <div className="border rounded-md overflow-hidden">
                       <div className="grid grid-cols-[1fr_2fr_90px_80px_110px_110px] gap-2 text-[10px] text-muted-foreground font-semibold uppercase tracking-wider px-3 py-2 bg-muted/40 border-b">
                         <span>EDT</span>
                         <span>Descripción</span>
@@ -1244,34 +1258,45 @@ export function OrdenesTab({ projectId }: Props) {
                           {formatMoney(total, oc.currency)}
                         </div>
                       </div>
+                      </div>
                     </div>
                   )}
 
-                  {/* Receptions */}
+                    </div>
+                  </section>
+                  {/* ══════ END SECTION 1 ══════ */}
+
+                  {/* ══════ SECTION 2 · Recepciones y Certificaciones ══════ */}
                   {oc.lines.length > 0 && (
-                    <div className="pt-2">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <PackageCheck className="h-4 w-4" />
-                          <h4 className="text-sm font-semibold">Recepciones ({ocReceptions.length})</h4>
-                          <span className="text-xs text-muted-foreground">
-                            · {totalReceived.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} de {totalOrdered.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} unidades recibidas
-                          </span>
-                        </div>
+                    <section className="bg-background rounded-lg border shadow-sm overflow-hidden">
+                      <header className="flex items-center gap-2 px-4 py-2.5 bg-muted/40 border-b">
+                        <PackageCheck className="h-3.5 w-3.5 text-muted-foreground" />
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          Recepciones y certificaciones
+                        </h3>
+                        <Badge className="text-[10px] bg-background border font-normal">
+                          {ocReceptions.length}
+                        </Badge>
+                        <span className="text-[11px] text-muted-foreground">
+                          · {totalReceived.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} de {totalOrdered.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} unidades recibidas
+                        </span>
+                        <div className="flex-1" />
                         {hasPendingToReceive && oc.status === "open" && (
                           <Button
                             size="sm"
                             variant="outline"
+                            className="h-7 text-xs"
                             onClick={() => { setDetailOCId(null); openReceptionDialog(oc); }}
                           >
-                            <Truck className="h-3.5 w-3.5 mr-1" />
+                            <Truck className="h-3 w-3 mr-1" />
                             Nueva Recepción
                           </Button>
                         )}
-                      </div>
+                      </header>
+                      <div className="p-4">
 
                       {ocReceptions.length === 0 ? (
-                        <p className="text-xs text-muted-foreground italic">
+                        <p className="text-xs text-muted-foreground italic text-center py-4">
                           Sin recepciones registradas. Crea una para habilitar la facturación.
                         </p>
                       ) : (
@@ -1339,8 +1364,10 @@ export function OrdenesTab({ projectId }: Props) {
                           })}
                         </div>
                       )}
-                    </div>
+                      </div>
+                    </section>
                   )}
+                  {/* ══════ END SECTION 2 ══════ */}
                 </div>
 
                 {/* Footer with actions */}
