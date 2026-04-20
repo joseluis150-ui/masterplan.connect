@@ -192,10 +192,7 @@ export function OrdenesTab({ projectId }: Props) {
         toast.error(`Debés ingresar el ${newAdvanceType === "percentage" ? "% del anticipo" : "monto del anticipo"}`);
         return;
       }
-      if (!newAmortPct || newAmortPct <= 0) {
-        toast.error("Debés ingresar el % de amortización del anticipo");
-        return;
-      }
+      // Amortization is optional — OC may have an advance without amortization
     }
 
     // Validate all lines have sector + EDT + insumo + qty/price
@@ -1359,17 +1356,14 @@ export function OrdenesTab({ projectId }: Props) {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="text-[10px] text-muted-foreground">
-                    Amortización % {newHasAdvance && <span className="text-destructive">*</span>}
+                    Amortización % <span className="text-[9px]">(opcional)</span>
                   </label>
                   <Input
-                    className={cn(
-                      "h-8 text-xs mt-0.5",
-                      newHasAdvance && (!newAmortPct || newAmortPct <= 0) && "border-destructive/60 focus-visible:ring-destructive/30"
-                    )}
+                    className="h-8 text-xs mt-0.5"
                     type="number"
                     value={newAmortPct || ""}
                     onChange={(e) => setNewAmortPct(parseFloat(e.target.value) || 0)}
-                    placeholder={newHasAdvance ? "Requerido" : ""}
+                    placeholder="Sin amortización"
                   />
                 </div>
                 <div>

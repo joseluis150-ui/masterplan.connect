@@ -59,7 +59,10 @@
       "Bash(cp \"/Users/jl/Downloads/files 2/03_isotipo_sobre_ambar.svg\" \"/Users/jl/Masterplan Connect.v2/public/isotipo-amber.svg\")",
       "Bash(cp \"/Users/jl/Downloads/files 2/05_logo_horizontal_positivo.svg\" \"/Users/jl/Masterplan Connect.v2/public/logo-horizontal.svg\")",
       "Bash(cp \"/Users/jl/Downloads/files 2/06_logo_horizontal_negativo.svg\" \"/Users/jl/Masterplan Connect.v2/public/logo-horizontal-white.svg\")",
-      "Bash(grep -v \":0$\")"
+      "Bash(grep -v \":0$\")",
+      "Bash(vercel --version)",
+      "Bash(npx --yes vercel@latest ls masterplan-connect)",
+      "Bash(npx --yes vercel@latest --prod --yes)"
     ]
   }
 }

@@ -507,14 +507,11 @@ export function SolicitudesTab({ projectId }: Props) {
       return;
     }
 
-    // If anticipo is enabled, require both advance_amount and amortization %
+    // If anticipo is enabled, require advance_amount (amortization is optional —
+    // an OC may have an advance without amortization, e.g. a deposit returned at close)
     if (ocHasAdvance) {
       if (!ocAdvanceAmount || ocAdvanceAmount <= 0) {
         toast.error(`Debés ingresar el ${ocAdvanceType === "percentage" ? "% del anticipo" : "monto del anticipo"}`);
-        return;
-      }
-      if (!ocAmortPct || ocAmortPct <= 0) {
-        toast.error("Debés ingresar el % de amortización del anticipo");
         return;
       }
     }
@@ -1552,17 +1549,14 @@ export function SolicitudesTab({ projectId }: Props) {
                         <div className="grid grid-cols-2 gap-3 border-t pt-2">
                           <div>
                             <label className="text-xs text-muted-foreground">
-                              Amortización % {ocHasAdvance && <span className="text-destructive">*</span>} <span className="text-[10px]">(por medición)</span>
+                              Amortización % <span className="text-[10px]">(opcional, por medición)</span>
                             </label>
                             <Input
-                              className={cn(
-                                "h-8 text-xs mt-1",
-                                ocHasAdvance && (!ocAmortPct || ocAmortPct <= 0) && "border-destructive/60 focus-visible:ring-destructive/30"
-                              )}
+                              className="h-8 text-xs mt-1"
                               type="number"
                               value={ocAmortPct || ""}
                               onChange={(e) => setOcAmortPct(parseFloat(e.target.value) || 0)}
-                              placeholder={ocHasAdvance ? "Requerido" : ""}
+                              placeholder="Sin amortización"
                             />
                           </div>
                           <div>
