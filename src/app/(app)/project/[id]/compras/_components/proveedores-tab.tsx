@@ -734,15 +734,20 @@ export function ProveedoresTab({ projectId }: Props) {
                           return { oc, total, certificado, facturado, pagado: pagadoInOcCurrency };
                         });
 
-                        // Totals in USD equivalent (so we can sum across mixed-currency OCs)
-                        const totals = rows.reduce(
-                          (acc, r) => ({
-                            total: acc.total + toUsd(r.total, r.oc.currency),
-                            certificado: acc.certificado + toUsd(r.certificado, r.oc.currency),
-                            facturado: acc.facturado + toUsd(r.facturado, r.oc.currency),
-                            pagado: acc.pagado + toUsd(r.pagado, r.oc.currency),
-                          }),
-                          { total: 0, certificado: 0, facturado: 0, pagado: 0 }
+                        // Totals per currency — una fila por moneda presente en la tabla,
+                        // con la suma en su moneda nativa (sin conversión).
+                        const totalsByCurrency = new Map<string, { total: number; certificado: number; facturado: number; pagado: number }>();
+                        for (const r of rows) {
+                          const curr = r.oc.currency;
+                          const prev = totalsByCurrency.get(curr) || { total: 0, certificado: 0, facturado: 0, pagado: 0 };
+                          prev.total += r.total;
+                          prev.certificado += r.certificado;
+                          prev.facturado += r.facturado;
+                          prev.pagado += r.pagado;
+                          totalsByCurrency.set(curr, prev);
+                        }
+                        const totalsEntries = Array.from(totalsByCurrency.entries()).sort(
+                          (a, b) => a[0].localeCompare(b[0])
                         );
 
                         const gridCols = "grid-cols-[130px_100px_100px_70px_130px_130px_130px_130px]";
@@ -784,14 +789,23 @@ export function ProveedoresTab({ projectId }: Props) {
                                 <span className="text-right font-mono text-emerald-700">{pagado > 0 ? fmt(pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
                               </div>
                             ))}
-                            {/* Totals row in USD equivalent (because OCs may be in different currencies) */}
-                            <div className={cn("grid gap-2 text-xs px-3 py-2 items-center bg-muted/40 font-bold border-t-2", gridCols)}>
-                              <span className="col-span-4 text-right">TOTAL (USD eq.)</span>
-                              <span className="text-right font-mono">{fmt(totals.total, 2)}</span>
-                              <span className="text-right font-mono text-[#E87722]">{totals.certificado > 0 ? fmt(totals.certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                              <span className="text-right font-mono text-[#B85A0F]">{totals.facturado > 0 ? fmt(totals.facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                              <span className="text-right font-mono text-emerald-700">{totals.pagado > 0 ? fmt(totals.pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                            </div>
+                            {/* Una fila TOTAL por cada moneda presente, en su moneda nativa */}
+                            {totalsEntries.map(([curr, t], i) => (
+                              <div
+                                key={curr}
+                                className={cn(
+                                  "grid gap-2 text-xs px-3 py-2 items-center bg-muted/40 font-bold",
+                                  i === 0 ? "border-t-2" : "border-t",
+                                  gridCols
+                                )}
+                              >
+                                <span className="col-span-4 text-right">TOTAL ({curr})</span>
+                                <span className="text-right font-mono">{fmt(t.total, 2)}</span>
+                                <span className="text-right font-mono text-[#E87722]">{t.certificado > 0 ? fmt(t.certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-[#B85A0F]">{t.facturado > 0 ? fmt(t.facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-emerald-700">{t.pagado > 0 ? fmt(t.pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                              </div>
+                            ))}
                           </div>
                         );
                       })()}
