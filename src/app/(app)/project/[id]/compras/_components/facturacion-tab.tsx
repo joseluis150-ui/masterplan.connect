@@ -419,24 +419,38 @@ export function FacturacionTab({ projectId }: Props) {
   // split by the currency each payment was made in.
   const localCurrency = project?.local_currency || "PYG";
   const projectRate = Number(project?.exchange_rate || 0);
+
+  // Per-invoice breakdown (for the list rows)
+  const breakdownByInvoice = new Map<string, { local: number; usd: number; usdEq: number }>();
+  for (const p of allPayments) {
+    if (!p.invoice_id) continue;
+    const amt = Number(p.amount || 0);
+    const curr = p.currency || localCurrency;
+    const rate = Number(p.exchange_rate || 0) || projectRate;
+    const prev = breakdownByInvoice.get(p.invoice_id) || { local: 0, usd: 0, usdEq: 0 };
+    if (curr === "USD") {
+      prev.usd += amt;
+      prev.usdEq += amt;
+    } else {
+      prev.local += amt;
+      prev.usdEq += rate > 0 ? amt / rate : 0;
+    }
+    breakdownByInvoice.set(p.invoice_id, prev);
+  }
+
+  // Aggregate totals for the summary card
   const paidInvoiceIds = new Set(
     paidReceptions.map((r) => r.invoice?.id).filter(Boolean) as string[]
   );
   let paidLocalSum = 0;
   let paidUsdSum = 0;
   let paidUsdEquivalent = 0;
-  for (const p of allPayments) {
-    if (!p.invoice_id || !paidInvoiceIds.has(p.invoice_id)) continue;
-    const amt = Number(p.amount || 0);
-    const curr = p.currency || localCurrency;
-    const rate = Number(p.exchange_rate || 0) || projectRate;
-    if (curr === "USD") {
-      paidUsdSum += amt;
-      paidUsdEquivalent += amt;
-    } else {
-      paidLocalSum += amt;
-      paidUsdEquivalent += rate > 0 ? amt / rate : 0;
-    }
+  for (const invId of paidInvoiceIds) {
+    const b = breakdownByInvoice.get(invId);
+    if (!b) continue;
+    paidLocalSum += b.local;
+    paidUsdSum += b.usd;
+    paidUsdEquivalent += b.usdEq;
   }
 
   return (
@@ -557,52 +571,87 @@ export function FacturacionTab({ projectId }: Props) {
         </div>
       ) : visible.length === 0 ? (
         <div className="border rounded-lg overflow-hidden">
-          <div className="grid grid-cols-[140px_140px_1fr_90px_130px_120px_170px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
-            <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
-            <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
-            <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
-            <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
-            <span className="text-right">
-              {view === "pending" ? "Monto a facturar" : view === "invoiced" ? "Saldo pendiente" : "Total pagado"}
-            </span>
-            {view !== "pending" ? (
+          {view === "paid" ? (
+            <div className="grid grid-cols-[140px_140px_1fr_90px_110px_110px_110px_120px_140px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
+              <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
+              <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
+              <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
+              <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
+              <span className="text-right">Local ({localCurrency})</span>
+              <span className="text-right">USD</span>
+              <span className="text-right">Equiv. USD</span>
               <ColumnFilter label="N° Factura" values={allInvoiceNumbers} selected={filterInvoice} onChange={setFilterInvoice} />
-            ) : (
-              <span />
-            )}
-            <span className="text-right">Acción</span>
-          </div>
+              <span className="text-right">Acción</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-[140px_140px_1fr_90px_130px_120px_170px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
+              <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
+              <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
+              <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
+              <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
+              <span className="text-right">
+                {view === "pending" ? "Monto a facturar" : "Saldo pendiente"}
+              </span>
+              {view !== "pending" ? (
+                <ColumnFilter label="N° Factura" values={allInvoiceNumbers} selected={filterInvoice} onChange={setFilterInvoice} />
+              ) : (
+                <span />
+              )}
+              <span className="text-right">Acción</span>
+            </div>
+          )}
           <div className="text-center py-8 text-muted-foreground text-sm">
             Ninguna fila coincide con los filtros aplicados.
           </div>
         </div>
       ) : (
         <div className="border rounded-lg overflow-hidden">
-          <div className="grid grid-cols-[140px_140px_1fr_90px_130px_120px_170px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
-            <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
-            <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
-            <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
-            <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
-            <span className="text-right">
-              {view === "pending" ? "Monto a facturar" : view === "invoiced" ? "Saldo pendiente" : "Total pagado"}
-            </span>
-            {view !== "pending" ? (
+          {view === "paid" ? (
+            <div className="grid grid-cols-[140px_140px_1fr_90px_110px_110px_110px_120px_140px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
+              <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
+              <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
+              <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
+              <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
+              <span className="text-right">Local ({localCurrency})</span>
+              <span className="text-right">USD</span>
+              <span className="text-right">Equiv. USD</span>
               <ColumnFilter label="N° Factura" values={allInvoiceNumbers} selected={filterInvoice} onChange={setFilterInvoice} />
-            ) : (
-              <span />
-            )}
-            <span className="text-right">Acción</span>
-          </div>
+              <span className="text-right">Acción</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-[140px_140px_1fr_90px_130px_120px_170px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
+              <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
+              <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
+              <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
+              <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
+              <span className="text-right">
+                {view === "pending" ? "Monto a facturar" : "Saldo pendiente"}
+              </span>
+              {view !== "pending" ? (
+                <ColumnFilter label="N° Factura" values={allInvoiceNumbers} selected={filterInvoice} onChange={setFilterInvoice} />
+              ) : (
+                <span />
+              )}
+              <span className="text-right">Acción</span>
+            </div>
+          )}
 
           {visible.map((rec) => {
             const payable = rec.lines.reduce((s, l) => s + Number(l.payable_amount || 0), 0);
             const invAmt = rec.invoice ? Number(rec.invoice.amount) : 0;
             const paidSoFar = rec.paidAmount || 0;
             const remaining = invAmt - paidSoFar;
+            const bd = rec.invoice ? breakdownByInvoice.get(rec.invoice.id) : null;
+            const gridCols = view === "paid"
+              ? "grid-cols-[140px_140px_1fr_90px_110px_110px_110px_120px_140px]"
+              : "grid-cols-[140px_140px_1fr_90px_130px_120px_170px]";
             return (
               <div
                 key={rec.id}
-                className="grid grid-cols-[140px_140px_1fr_90px_130px_120px_170px] gap-2 px-4 py-2.5 items-center text-xs border-b last:border-b-0 hover:bg-muted/20"
+                className={cn(
+                  "grid gap-2 px-4 py-2.5 items-center text-xs border-b last:border-b-0 hover:bg-muted/20",
+                  gridCols
+                )}
               >
                 <span className="font-mono font-semibold flex items-center gap-1.5">
                   {rec.order.number}-REC-{String(rec.number).padStart(3, "0")}
@@ -617,20 +666,39 @@ export function FacturacionTab({ projectId }: Props) {
                 <span className="text-center text-muted-foreground">
                   {new Date(rec.date).toLocaleDateString("es")}
                 </span>
-                <span className="text-right font-mono font-semibold" style={{ color: "#E87722" }}>
-                  {view === "pending" && formatMoney(payable, rec.order.currency)}
-                  {view === "invoiced" && (
-                    <span className="flex flex-col items-end leading-tight">
-                      <span className="text-sm">{formatMoney(remaining, rec.order.currency)}</span>
-                      {paidSoFar > 0 && (
-                        <span className="text-[9px] text-muted-foreground font-normal">
-                          {formatMoney(paidSoFar, rec.order.currency)} de {formatMoney(invAmt, rec.order.currency)}
-                        </span>
-                      )}
+                {view === "paid" ? (
+                  <>
+                    <span className="text-right font-mono font-semibold text-emerald-700">
+                      {bd && bd.local > 0
+                        ? bd.local.toLocaleString("es", { maximumFractionDigits: 0 })
+                        : <span className="text-muted-foreground">—</span>}
                     </span>
-                  )}
-                  {view === "paid" && formatMoney(invAmt, rec.order.currency)}
-                </span>
+                    <span className="text-right font-mono font-semibold text-emerald-700">
+                      {bd && bd.usd > 0
+                        ? bd.usd.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : <span className="text-muted-foreground">—</span>}
+                    </span>
+                    <span className="text-right font-mono font-semibold text-emerald-700">
+                      {bd && bd.usdEq > 0
+                        ? bd.usdEq.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : <span className="text-muted-foreground">—</span>}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-right font-mono font-semibold" style={{ color: "#E87722" }}>
+                    {view === "pending" && formatMoney(payable, rec.order.currency)}
+                    {view === "invoiced" && (
+                      <span className="flex flex-col items-end leading-tight">
+                        <span className="text-sm">{formatMoney(remaining, rec.order.currency)}</span>
+                        {paidSoFar > 0 && (
+                          <span className="text-[9px] text-muted-foreground font-normal">
+                            {formatMoney(paidSoFar, rec.order.currency)} de {formatMoney(invAmt, rec.order.currency)}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </span>
+                )}
                 <span className="flex items-center gap-1">
                   {view !== "pending" && rec.invoice?.invoice_number && (
                     <span className="font-mono text-xs">{rec.invoice.invoice_number}</span>
