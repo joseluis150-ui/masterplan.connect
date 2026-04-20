@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { getNumberLocale } from "@/lib/utils/number-format";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -481,7 +482,7 @@ export function OrdenesTab({ projectId }: Props) {
   function formatMoney(amount: number, currency: string) {
     const curr = CURRENCIES.find((c) => c.code === currency);
     const symbol = curr?.symbol || "";
-    return `${symbol} ${amount.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `${symbol} ${amount.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   // ─── Receptions helpers ───
@@ -1070,7 +1071,7 @@ export function OrdenesTab({ projectId }: Props) {
                       >
                         <History className="h-3 w-3" />
                         <span>
-                          Modificada {oc.audit_log.length} {oc.audit_log.length === 1 ? "vez" : "veces"} · última {new Date(oc.audit_log[oc.audit_log.length - 1].at).toLocaleString("es")}
+                          Modificada {oc.audit_log.length} {oc.audit_log.length === 1 ? "vez" : "veces"} · última {new Date(oc.audit_log[oc.audit_log.length - 1].at).toLocaleString(getNumberLocale())}
                         </span>
                         {historyOpen === oc.id ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                       </button>
@@ -1079,7 +1080,7 @@ export function OrdenesTab({ projectId }: Props) {
                           {oc.audit_log.slice().reverse().map((entry, i) => (
                             <div key={i} className="space-y-0.5">
                               <p className="text-[10px] font-medium text-muted-foreground">
-                                {new Date(entry.at).toLocaleString("es")}
+                                {new Date(entry.at).toLocaleString(getNumberLocale())}
                               </p>
                               {entry.changes.map((c, j) => (
                                 <p key={j} className="text-[10px] pl-2">
@@ -1122,7 +1123,7 @@ export function OrdenesTab({ projectId }: Props) {
                       </span>
                       <span className="truncate" title={line.description}>{line.description}</span>
                       <span className="text-right font-mono">
-                        {Number(line.quantity).toLocaleString("es", { maximumFractionDigits: 2 })}
+                        {Number(line.quantity).toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
                       </span>
                       <span className="text-center text-muted-foreground">{line.unit}</span>
                       <span className="text-right font-mono">
@@ -1160,7 +1161,7 @@ export function OrdenesTab({ projectId }: Props) {
                               Recepciones ({ocReceptions.length})
                             </h4>
                             <span className="text-xs text-muted-foreground">
-                              · {totalReceived.toLocaleString("es", { maximumFractionDigits: 2 })} de {totalOrdered.toLocaleString("es", { maximumFractionDigits: 2 })} unidades recibidas
+                              · {totalReceived.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} de {totalOrdered.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} unidades recibidas
                             </span>
                           </div>
                           {hasPendingToReceive && oc.status === "open" && (
@@ -1260,7 +1261,7 @@ export function OrdenesTab({ projectId }: Props) {
                                           ) : "—")}
                                         </span>
                                         <span className="text-right font-mono">
-                                          {Number(rl.quantity_received).toLocaleString("es", { maximumFractionDigits: 2 })}
+                                          {Number(rl.quantity_received).toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
                                         </span>
                                         <span className="text-right font-mono text-muted-foreground">
                                           {formatMoney(Number(rl.unit_price), oc.currency)}
@@ -1844,16 +1845,16 @@ export function OrdenesTab({ projectId }: Props) {
                               {line.description}
                             </span>
                             <span className="text-right font-mono text-muted-foreground">
-                              {ordered.toLocaleString("es", { maximumFractionDigits: 2 })}
+                              {ordered.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
                             </span>
                             <span className="text-right font-mono text-amber-600">
-                              {alreadyReceived.toLocaleString("es", { maximumFractionDigits: 2 })}
+                              {alreadyReceived.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
                             </span>
                             <span className={cn(
                               "text-right font-mono",
                               remaining === 0 ? "text-muted-foreground" : "text-amber-600 font-semibold"
                             )}>
-                              {remaining.toLocaleString("es", { maximumFractionDigits: 2 })}
+                              {remaining.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
                             </span>
                             <span className="text-muted-foreground">{line.unit}</span>
                             <Input

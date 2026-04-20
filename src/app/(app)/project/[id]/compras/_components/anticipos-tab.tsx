@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { getNumberLocale } from "@/lib/utils/number-format";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -294,7 +295,7 @@ export function AnticiposTab({ projectId }: Props) {
   function formatMoney(amount: number, currency: string): string {
     const c = CURRENCIES.find((x) => x.code === currency);
     const symbol = c?.symbol || "";
-    return `${symbol} ${amount.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `${symbol} ${amount.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   function openRetentionReturnDialog(card: OCAdvanceCard) {
@@ -400,7 +401,7 @@ export function AnticiposTab({ projectId }: Props) {
         actionType: "payment_registered",
         entityType: "payment",
         entityId: data.id,
-        description: `Retención devuelta · OC ${dialogCard.oc.number} · ${payAmount.toLocaleString("es")} ${payCurrency}`,
+        description: `Retención devuelta · OC ${dialogCard.oc.number} · ${payAmount.toLocaleString(getNumberLocale())} ${payCurrency}`,
         metadata: {
           paymentId: data.id,
           orderId: dialogCard.oc.id,
@@ -456,7 +457,7 @@ export function AnticiposTab({ projectId }: Props) {
   }
 
   const fmt = (n: number, decimals = 0) =>
-    n > 0 ? n.toLocaleString("es", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : "—";
+    n > 0 ? n.toLocaleString(getNumberLocale(), { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : "—";
 
   return (
     <div className="py-6 space-y-4">
@@ -841,7 +842,7 @@ export function AnticiposTab({ projectId }: Props) {
                         Aplicar tipo de cambio diferente al del proyecto
                       </label>
                       <p className="text-[10px] text-muted-foreground">
-                        TC del proyecto: 1 USD = {projectRate.toLocaleString("es")} {localCurr}
+                        TC del proyecto: 1 USD = {projectRate.toLocaleString(getNumberLocale())} {localCurr}
                       </p>
                     </div>
                   </div>
@@ -863,7 +864,7 @@ export function AnticiposTab({ projectId }: Props) {
                       <DollarSign className="h-3 w-3 inline mr-0.5" />
                       Equivalente USD:{" "}
                       <span className="font-semibold text-foreground">
-                        ${usdEq.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ${usdEq.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                   )}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { getNumberLocale } from "@/lib/utils/number-format";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -311,7 +312,7 @@ export function FacturacionTab({ projectId }: Props) {
         actionType: "payment_registered",
         entityType: "payment",
         entityId: payData.id,
-        description: `Pago de ${payAmount.toLocaleString("es")} ${payCurrency} a ${payingRec.order.supplier} (Factura ${payingRec.invoice.invoice_number})`,
+        description: `Pago de ${payAmount.toLocaleString(getNumberLocale())} ${payCurrency} a ${payingRec.order.supplier} (Factura ${payingRec.invoice.invoice_number})`,
         metadata: {
           paymentId: payData.id,
           invoiceId: payingRec.invoice.id,
@@ -321,7 +322,7 @@ export function FacturacionTab({ projectId }: Props) {
         },
       });
 
-      toast.success(`Pago de ${payAmount.toLocaleString("es")} ${payCurrency} registrado`);
+      toast.success(`Pago de ${payAmount.toLocaleString(getNumberLocale())} ${payCurrency} registrado`);
       setPayingRec(null);
       loadData();
     } finally {
@@ -343,7 +344,7 @@ export function FacturacionTab({ projectId }: Props) {
   function formatMoney(amount: number, currency: string) {
     const curr = CURRENCIES.find((c) => c.code === currency);
     const symbol = curr?.symbol || "";
-    return `${symbol} ${amount.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `${symbol} ${amount.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   if (loading) return <div className="p-6 text-muted-foreground">Cargando facturación...</div>;
@@ -479,7 +480,7 @@ export function FacturacionTab({ projectId }: Props) {
             <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">{pendingReceptions.length}</Badge>
           </div>
           <p className="text-xl font-bold mt-2 text-amber-700">
-            {pendingTotal > 0 ? pendingTotal.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00"}
+            {pendingTotal > 0 ? pendingTotal.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00"}
           </p>
           <p className="text-[10px] text-muted-foreground">Pendiente de facturar</p>
         </button>
@@ -499,7 +500,7 @@ export function FacturacionTab({ projectId }: Props) {
             <Badge className="bg-amber-100 text-[#B85A0F] hover:bg-amber-100">{invoicedReceptions.length}</Badge>
           </div>
           <p className="text-xl font-bold mt-2 text-[#B85A0F]">
-            {invoicedTotal > 0 ? invoicedTotal.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00"}
+            {invoicedTotal > 0 ? invoicedTotal.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00"}
           </p>
           <p className="text-[10px] text-muted-foreground">Saldo pendiente de pagar</p>
         </button>
@@ -525,7 +526,7 @@ export function FacturacionTab({ projectId }: Props) {
               </p>
               <p className="text-sm font-bold text-emerald-700 mt-0.5">
                 {paidLocalSum > 0
-                  ? paidLocalSum.toLocaleString("es", { maximumFractionDigits: 0 })
+                  ? paidLocalSum.toLocaleString(getNumberLocale(), { maximumFractionDigits: 0 })
                   : "—"}
               </p>
             </div>
@@ -533,7 +534,7 @@ export function FacturacionTab({ projectId }: Props) {
               <p className="text-[9px] uppercase tracking-wider font-mono text-muted-foreground">USD</p>
               <p className="text-sm font-bold text-emerald-700 mt-0.5">
                 {paidUsdSum > 0
-                  ? paidUsdSum.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  ? paidUsdSum.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                   : "—"}
               </p>
             </div>
@@ -541,7 +542,7 @@ export function FacturacionTab({ projectId }: Props) {
               <p className="text-[9px] uppercase tracking-wider font-mono text-muted-foreground">Equiv. USD</p>
               <p className="text-sm font-bold text-emerald-700 mt-0.5">
                 {paidUsdEquivalent > 0
-                  ? paidUsdEquivalent.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  ? paidUsdEquivalent.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                   : "—"}
               </p>
             </div>
@@ -670,17 +671,17 @@ export function FacturacionTab({ projectId }: Props) {
                   <>
                     <span className="text-right font-mono font-semibold text-emerald-700">
                       {bd && bd.local > 0
-                        ? bd.local.toLocaleString("es", { maximumFractionDigits: 0 })
+                        ? bd.local.toLocaleString(getNumberLocale(), { maximumFractionDigits: 0 })
                         : <span className="text-muted-foreground">—</span>}
                     </span>
                     <span className="text-right font-mono font-semibold text-emerald-700">
                       {bd && bd.usd > 0
-                        ? bd.usd.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        ? bd.usd.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                         : <span className="text-muted-foreground">—</span>}
                     </span>
                     <span className="text-right font-mono font-semibold text-emerald-700">
                       {bd && bd.usdEq > 0
-                        ? bd.usdEq.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        ? bd.usdEq.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                         : <span className="text-muted-foreground">—</span>}
                     </span>
                   </>
@@ -1005,7 +1006,7 @@ export function FacturacionTab({ projectId }: Props) {
                         Aplicar tipo de cambio diferente al del proyecto
                       </label>
                       <p className="text-[10px] text-muted-foreground">
-                        TC del proyecto: 1 USD = {projectRate.toLocaleString("es")} {localCurr}
+                        TC del proyecto: 1 USD = {projectRate.toLocaleString(getNumberLocale())} {localCurr}
                       </p>
                     </div>
                   </div>
@@ -1027,7 +1028,7 @@ export function FacturacionTab({ projectId }: Props) {
                       <DollarSign className="h-3 w-3 inline mr-0.5" />
                       Equivalente USD:{" "}
                       <span className="font-semibold text-foreground">
-                        ${usdEquivalent.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ${usdEquivalent.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>{" "}
                       <span className="text-[10px]">(usando TC {effectiveRate})</span>
                     </div>

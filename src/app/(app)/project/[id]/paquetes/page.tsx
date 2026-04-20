@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, use, useRef } from "react";
+import { getNumberLocale } from "@/lib/utils/number-format";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1690,7 +1691,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                         <span className="truncate text-muted-foreground">{line.subName}</span>
                         <span className="truncate">{line.description}</span>
                         <span className="text-right font-mono">
-                          {line.totalQty.toLocaleString("es", { maximumFractionDigits: 2 })}
+                          {line.totalQty.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
                         </span>
                         <span className="text-center text-muted-foreground">{line.unit}</span>
                       </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { getNumberLocale } from "@/lib/utils/number-format";
 import { createClient } from "@/lib/supabase/client";
 import { ChevronDown, ChevronRight, DollarSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -460,7 +461,7 @@ export function AvanceTab({ projectId }: Props) {
 
   function formatMoney(usdAmount: number) {
     const val = displayAmount(usdAmount);
-    return val.toLocaleString("es", {
+    return val.toLocaleString(getNumberLocale(), {
       minimumFractionDigits: displayCurrency === "usd" ? 2 : 0,
       maximumFractionDigits: displayCurrency === "usd" ? 2 : 0,
     });
@@ -622,7 +623,7 @@ export function AvanceTab({ projectId }: Props) {
           <h2 className="text-lg font-semibold">Avance Financiero por EDT</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
             Montos normalizados desde la moneda de cada OC.
-            {displayCurrency === "local" && tc > 1 && ` TC proyecto: 1 USD = ${tc.toLocaleString("es")} ${localCurrency}`}
+            {displayCurrency === "local" && tc > 1 && ` TC proyecto: 1 USD = ${tc.toLocaleString(getNumberLocale())} ${localCurrency}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -875,7 +876,7 @@ export function AvanceTab({ projectId }: Props) {
                     <div className="font-semibold">{formatMoney(item.amountUsd)} {currencyLabel}</div>
                     {item.amountOriginal !== undefined && item.currency && item.currency !== currencyLabel && displayCurrency === "usd" && (
                       <div className="text-[10px] text-muted-foreground">
-                        ({item.currency} {item.amountOriginal.toLocaleString("es", { maximumFractionDigits: 2 })})
+                        ({item.currency} {item.amountOriginal.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })})
                       </div>
                     )}
                   </span>

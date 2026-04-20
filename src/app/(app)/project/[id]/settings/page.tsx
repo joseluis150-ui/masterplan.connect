@@ -21,6 +21,8 @@ import { Switch } from "@/components/ui/switch";
 import { Plus, Trash2, GripVertical, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { setNumberLocale } from "@/lib/utils/number-format";
+import { cn } from "@/lib/utils";
 
 export default function SettingsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: projectId } = use(params);
@@ -59,6 +61,10 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
       toast.success("Proyecto actualizado");
       // Refresh server components (sidebar) if module toggles changed
       if ("compras_enabled" in updates) router.refresh();
+      // Propagate number-format preference to all client components
+      if ("number_format" in updates) {
+        setNumberLocale((updates.number_format as "es" | "en") || "es");
+      }
     } else {
       toast.error("Error al actualizar");
     }
@@ -239,6 +245,45 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
               <Button variant="outline" onClick={addTcVersion}>
                 Guardar versión TC
               </Button>
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2">
+            <Label>Formato de números</Label>
+            <p className="text-[11px] text-muted-foreground">
+              Define cómo se muestran los números en todo el proyecto.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => updateProject({ number_format: "es" })}
+                className={cn(
+                  "flex-1 max-w-xs text-left p-3 rounded-md border transition-colors",
+                  project.number_format === "es"
+                    ? "bg-primary/10 border-primary"
+                    : "bg-background hover:bg-muted"
+                )}
+              >
+                <p className="text-sm font-medium">Punto como separador de miles</p>
+                <p className="text-xs font-mono text-muted-foreground mt-1">1.234.567,89</p>
+                <p className="text-[10px] text-muted-foreground">Español / Latam</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => updateProject({ number_format: "en" })}
+                className={cn(
+                  "flex-1 max-w-xs text-left p-3 rounded-md border transition-colors",
+                  project.number_format === "en"
+                    ? "bg-primary/10 border-primary"
+                    : "bg-background hover:bg-muted"
+                )}
+              >
+                <p className="text-sm font-medium">Coma como separador de miles</p>
+                <p className="text-xs font-mono text-muted-foreground mt-1">1,234,567.89</p>
+                <p className="text-[10px] text-muted-foreground">Inglés / USA</p>
+              </button>
             </div>
           </div>
 

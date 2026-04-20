@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { getNumberLocale } from "@/lib/utils/number-format";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { BookOpen, History, Check } from "lucide-react";
@@ -31,7 +32,7 @@ interface Props {
 function formatCurrency(amount: number, currency: string): string {
   const c = CURRENCIES.find((x) => x.code === currency);
   const symbol = c?.symbol || "";
-  return `${symbol} ${amount.toLocaleString("es", {
+  return `${symbol} ${amount.toLocaleString(getNumberLocale(), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
@@ -143,7 +144,7 @@ export function PriceSuggestionsInput({
                   </span>
                   {budget.currency !== currency && (
                     <span className="text-[10px] text-muted-foreground">
-                      (de {budget.currency} {budget.price.toLocaleString("es", { maximumFractionDigits: 2 })})
+                      (de {budget.currency} {budget.price.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })})
                     </span>
                   )}
                   <Check className="h-3 w-3 opacity-0 group-hover:opacity-100" />
@@ -181,7 +182,7 @@ export function PriceSuggestionsInput({
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                         {h.date && <span>{new Date(h.date).toLocaleDateString("es")}</span>}
                         {h.quantity !== undefined && (
-                          <span>· {h.quantity.toLocaleString("es", { maximumFractionDigits: 2 })} und.</span>
+                          <span>· {h.quantity.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} und.</span>
                         )}
                       </div>
                     </div>

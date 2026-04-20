@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { getNumberLocale } from "@/lib/utils/number-format";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -360,7 +361,7 @@ export function SolicitudesTab({ projectId }: Props) {
     }
     if (byUnit.size === 0) return "0";
     return Array.from(byUnit.entries())
-      .map(([unit, qty]) => `${qty.toLocaleString("es", { maximumFractionDigits: 2 })} ${unit}`)
+      .map(([unit, qty]) => `${qty.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} ${unit}`)
       .join(" + ");
   }
 
@@ -848,7 +849,7 @@ export function SolicitudesTab({ projectId }: Props) {
   }
 
   function formatQty(n: number) {
-    return n.toLocaleString("es", { maximumFractionDigits: 2 });
+    return n.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 });
   }
 
   // Aggregate status for the whole SC (for overall progress indicator)

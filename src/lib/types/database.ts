@@ -29,6 +29,7 @@ export interface Project {
   proration_criteria: ProrationCriteria;
   current_version: number;
   compras_enabled: boolean;
+  number_format: "es" | "en";
   created_by: string | null;
   created_at: string;
   updated_at: string;
