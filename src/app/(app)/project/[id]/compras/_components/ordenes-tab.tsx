@@ -81,8 +81,12 @@ export function OrdenesTab({ projectId }: Props) {
   const [receptionDate, setReceptionDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [receptionComment, setReceptionComment] = useState("");
   // Per OC line: { selected, qtyReceived, unitPrice, amortAmount }
-  // amortAmount is only used when OC.amortization_mode === 'per_certification'
+  // amortAmount is used when OC.amortization_mode === 'per_certification' OR when
+  // the user explicitly opens the manual amortization override panel.
   const [receptionLineSel, setReceptionLineSel] = useState<Map<string, { selected: boolean; qtyReceived: number; unitPrice: number; amortAmount: number }>>(new Map());
+  // Manual amortization override for this reception (only meaningful when OC is in
+  // percentage mode). Off by default — default behavior is auto-calc from the OC's pct.
+  const [manualAmortOpen, setManualAmortOpen] = useState(false);
   const [savingReception, setSavingReception] = useState(false);
 
   // Create OC dialog
@@ -683,6 +687,9 @@ export function OrdenesTab({ projectId }: Props) {
     setReceptionFor(oc);
     setReceptionDate(new Date().toISOString().slice(0, 10));
     setReceptionComment("");
+    // Reset manual override — default is auto-calc from the OC's amortization_pct.
+    // (In per_certification mode, the manual editor is always visible.)
+    setManualAmortOpen(false);
     // Default all lines UNCHECKED; user explicitly picks what's being received
     const sel = new Map<string, { selected: boolean; qtyReceived: number; unitPrice: number; amortAmount: number }>();
     for (const line of oc.lines) {
@@ -741,17 +748,23 @@ export function OrdenesTab({ projectId }: Props) {
       // Create delivery_notes (lines of this reception).
       // NOTE: gross_amount, amortization_amount, retention_amount and payable_amount are
       // GENERATED columns in the DB — do NOT include them in the insert payload.
-      // When the OC has an advance, we always use the user-editable amortAmount per line
-      // (pre-seeded from the pct in percentage mode, empty in per_certification mode)
-      // and convert it to an effective per-line pct so the generated column matches.
+      // Amortization handling:
+      //   - Default (percentage mode, no manual override): use the OC's amortization_pct directly.
+      //   - Manual override (opt-in via button) OR per_certification mode: compute
+      //     effective pct from the user-entered amortAmount so the generated column matches.
       const hasAdvance = receptionFor.has_advance;
+      const isPerCert = receptionFor.amortization_mode === "per_certification";
+      const useManualAmort = hasAdvance && (isPerCert || manualAmortOpen);
+      const ocAmortPctNum = Number(receptionFor.amortization_pct || 0);
       const ocRetentionPct = Number(receptionFor.retention_pct || 0);
       const linesPayload = selectedLines.map((ocLine) => {
         const sel = receptionLineSel.get(ocLine.id)!;
         const gross = sel.qtyReceived * sel.unitPrice;
-        const effectiveAmortPct = hasAdvance
-          ? (gross > 0 ? (sel.amortAmount / gross) * 100 : 0)
-          : 0;
+        const effectiveAmortPct = !hasAdvance
+          ? 0
+          : useManualAmort
+            ? (gross > 0 ? (sel.amortAmount / gross) * 100 : 0)
+            : ocAmortPctNum;
         return {
           reception_id: rec.id,
           order_line_id: ocLine.id,
@@ -1697,17 +1710,18 @@ export function OrdenesTab({ projectId }: Props) {
             const ocRetentionPct = Number(receptionFor.retention_pct || 0);
             const hasAdvance = receptionFor.has_advance;
             const isPerCert = receptionFor.amortization_mode === "per_certification" && hasAdvance;
+            // "Use manual amounts" is forced on in per_certification mode, opt-in otherwise.
+            const useManualAmort = hasAdvance && (isPerCert || manualAmortOpen);
 
             // Aggregate preview totals
             const selectedSummary = Array.from(receptionLineSel.entries())
               .filter(([, s]) => s.selected && s.qtyReceived > 0);
             const grossTotal = selectedSummary.reduce((sum, [, s]) => sum + s.qtyReceived * s.unitPrice, 0);
-            // When there's an advance, we always use the user-editable amortAmount per line
-            // (pre-seeded from pct in percentage mode). This lets the user override the
-            // suggested amount per certification.
-            const amortTotal = hasAdvance
-              ? selectedSummary.reduce((sum, [, s]) => sum + (s.amortAmount || 0), 0)
-              : 0;
+            const amortTotal = !hasAdvance
+              ? 0
+              : useManualAmort
+                ? selectedSummary.reduce((sum, [, s]) => sum + (s.amortAmount || 0), 0)
+                : (grossTotal * ocAmortPct) / 100;
             const retentionTotal = (grossTotal * ocRetentionPct) / 100;
             const payableTotal = grossTotal - amortTotal - retentionTotal;
 
@@ -1816,19 +1830,9 @@ export function OrdenesTab({ projectId }: Props) {
                               type="checkbox"
                               checked={sel.selected}
                               onChange={(e) => {
-                                const checked = e.target.checked;
-                                // Auto-seed amortization amount on first check
-                                // when the OC has an advance in percentage mode
-                                const gross = sel.qtyReceived * sel.unitPrice;
-                                const shouldSeed = checked && receptionFor.has_advance &&
-                                  receptionFor.amortization_mode === "percentage" &&
-                                  sel.amortAmount === 0;
-                                const seededAmort = shouldSeed
-                                  ? (gross * Number(receptionFor.amortization_pct || 0)) / 100
-                                  : sel.amortAmount;
                                 setReceptionLineSel((prev) => {
                                   const next = new Map(prev);
-                                  next.set(line.id, { ...sel, selected: checked, amortAmount: seededAmort });
+                                  next.set(line.id, { ...sel, selected: e.target.checked });
                                   return next;
                                 });
                               }}
@@ -1889,39 +1893,58 @@ export function OrdenesTab({ projectId }: Props) {
                     </div>
                   </div>
 
-                  {/* Per-line amortization editor (shown whenever OC has an advance) */}
-                  {hasAdvance && selectedSummary.length > 0 && (
+                  {/* Amortization override:
+                      - percentage mode + panel closed  → discreet "Ajustar manualmente" link
+                      - percentage mode + panel open    → per-line editor with "Volver al auto-cálculo"
+                      - per_certification mode          → editor always visible (no auto to fall back to) */}
+                  {hasAdvance && selectedSummary.length > 0 && !useManualAmort && (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        className="text-[11px] text-[#B85A0F] hover:underline flex items-center gap-1"
+                        onClick={() => {
+                          // Seed each selected line's amortAmount with the auto-calc so
+                          // the user starts from the same number the summary was showing
+                          const pct = Number(receptionFor.amortization_pct || 0);
+                          setReceptionLineSel((prev) => {
+                            const next = new Map(prev);
+                            for (const [k, v] of next) {
+                              if (!v.selected) continue;
+                              const gross = v.qtyReceived * v.unitPrice;
+                              next.set(k, { ...v, amortAmount: (gross * pct) / 100 });
+                            }
+                            return next;
+                          });
+                          setManualAmortOpen(true);
+                        }}
+                      >
+                        <HandCoins className="h-3 w-3" />
+                        Ajustar amortización manualmente (caso aislado)
+                      </button>
+                    </div>
+                  )}
+
+                  {hasAdvance && selectedSummary.length > 0 && useManualAmort && (
                     <div className="border rounded-lg p-3 bg-amber-50/40">
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-xs font-semibold text-[#B85A0F] uppercase flex items-center gap-1.5">
                           <HandCoins className="h-3.5 w-3.5" />
-                          Amortización de anticipo por línea
+                          Amortización manual por línea
                         </p>
                         {!isPerCert && (
                           <button
                             type="button"
-                            className="text-[10px] text-[#B85A0F] hover:underline"
-                            onClick={() => {
-                              const pct = Number(receptionFor.amortization_pct || 0);
-                              setReceptionLineSel((prev) => {
-                                const next = new Map(prev);
-                                for (const [k, v] of next) {
-                                  if (!v.selected) continue;
-                                  const gross = v.qtyReceived * v.unitPrice;
-                                  next.set(k, { ...v, amortAmount: (gross * pct) / 100 });
-                                }
-                                return next;
-                              });
-                            }}
+                            className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+                            onClick={() => setManualAmortOpen(false)}
                           >
-                            ↻ Recalcular ({ocAmortPct}%)
+                            ↩ Volver al auto-cálculo ({ocAmortPct}%)
                           </button>
                         )}
                       </div>
                       <p className="text-[10px] text-muted-foreground mb-2">
                         {isPerCert
                           ? "Ingresá el monto a amortizar en esta certificación. Se descuenta del anticipo pendiente."
-                          : `Sugerido ${ocAmortPct}% del bruto. Podés ajustar manualmente cada monto si corresponde.`}
+                          : `Sólo para esta certificación. El contrato sigue configurado al ${ocAmortPct}%.`}
                       </p>
                       <div className="space-y-1.5">
                         {selectedSummary.map(([lineId, s]) => {
@@ -1966,7 +1989,9 @@ export function OrdenesTab({ projectId }: Props) {
                           <p className="text-sm font-bold">{formatMoney(grossTotal, receptionFor.currency)}</p>
                         </div>
                         <div className="bg-background rounded p-2">
-                          <p className="text-muted-foreground">Amortización{hasAdvance ? " (editable)" : ""}</p>
+                          <p className="text-muted-foreground">
+                            Amortización {hasAdvance ? (useManualAmort ? "(manual)" : `(${ocAmortPct}%)`) : ""}
+                          </p>
                           <p className="text-sm font-bold text-amber-700">
                             {amortTotal > 0 ? `- ${formatMoney(amortTotal, receptionFor.currency)}` : "—"}
                           </p>
