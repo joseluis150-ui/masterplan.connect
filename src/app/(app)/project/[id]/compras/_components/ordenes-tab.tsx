@@ -1173,15 +1173,41 @@ export function OrdenesTab({ projectId }: Props) {
                               const recPayable = rec.lines.reduce((s, l) => s + Number(l.payable_amount || 0), 0);
                               const recAmort = rec.lines.reduce((s, l) => s + Number(l.amortization_amount || 0), 0);
                               const recRetention = rec.lines.reduce((s, l) => s + Number(l.retention_amount || 0), 0);
+                              const isAdvance = rec.type === "advance";
+                              const statusLabel =
+                                rec.status === "received" ? "Recibido" :
+                                rec.status === "invoiced" ? "Facturado" :
+                                rec.status === "pending_approval" ? "Pendiente de aprobación" : "Cancelado";
                               return (
-                                <div key={rec.id} className="border rounded-md p-3 bg-muted/20">
+                                <div
+                                  key={rec.id}
+                                  className={cn(
+                                    "border rounded-md p-3",
+                                    isAdvance
+                                      ? "bg-amber-50/60 border-amber-300 ring-1 ring-amber-200"
+                                      : "bg-muted/20"
+                                  )}
+                                >
+                                  {isAdvance && (
+                                    <div className="flex items-center gap-1.5 mb-2 text-[11px] font-semibold text-[#B85A0F] uppercase tracking-wider">
+                                      <HandCoins className="h-3.5 w-3.5" />
+                                      Recepción de anticipo
+                                    </div>
+                                  )}
                                   <div className="flex items-center gap-3 mb-2">
                                     <span className="font-mono text-xs font-semibold">
                                       {oc.number}-REC-{String(rec.number).padStart(3, "0")}
                                     </span>
-                                    <Badge variant="outline" className="text-[10px]">
-                                      {rec.status === "received" ? "Recibido" :
-                                        rec.status === "invoiced" ? "Facturado" : "Cancelado"}
+                                    <Badge
+                                      className={cn(
+                                        "text-[10px]",
+                                        rec.status === "pending_approval" && "bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200",
+                                        rec.status === "received" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
+                                        rec.status === "invoiced" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
+                                        rec.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
+                                      )}
+                                    >
+                                      {statusLabel}
                                     </Badge>
                                     <span className="text-xs text-muted-foreground">
                                       {new Date(rec.date).toLocaleDateString("es")} · {rec.lines.length} línea(s)
@@ -1210,13 +1236,15 @@ export function OrdenesTab({ projectId }: Props) {
                                         key={rl.id}
                                         className="grid grid-cols-[1fr_80px_100px_80px_90px_90px_110px] gap-2 text-xs px-2 py-1 items-center border-b last:border-b-0"
                                       >
-                                        <span className="truncate" title={ocLine ? `${getSubName(ocLine.subcategory_id)} · ${ocLine.description}` : "—"}>
+                                        <span className="truncate" title={ocLine ? `${getSubName(ocLine.subcategory_id)} · ${ocLine.description}` : (isAdvance ? "Pago de anticipo" : "—")}>
                                           {ocLine && (
                                             <span className="text-muted-foreground text-[10px] font-mono mr-1.5">
                                               {getSubName(ocLine.subcategory_id)}
                                             </span>
                                           )}
-                                          {ocLine?.description || "—"}
+                                          {ocLine?.description || (isAdvance ? (
+                                            <span className="italic text-[#B85A0F]">Pago de anticipo</span>
+                                          ) : "—")}
                                         </span>
                                         <span className="text-right font-mono">
                                           {Number(rl.quantity_received).toLocaleString("es", { maximumFractionDigits: 2 })}
@@ -1259,21 +1287,30 @@ export function OrdenesTab({ projectId }: Props) {
                                   </div>
                                   <div className="flex items-center justify-between mt-2">
                                     <p className="text-[10px] text-muted-foreground italic">
-                                      {rec.status === "invoiced"
-                                        ? "Facturado"
-                                        : rec.status === "received"
-                                          ? `Pendiente de facturar · ${formatMoney(recPayable, oc.currency)}`
-                                          : "Cancelado"}
+                                      {rec.status === "pending_approval"
+                                        ? (isAdvance ? "Aprobar desde Anticipos dados ↗" : "Pendiente de aprobación")
+                                        : rec.status === "invoiced"
+                                          ? "Facturado"
+                                          : rec.status === "received"
+                                            ? `Pendiente de facturar · ${formatMoney(recPayable, oc.currency)}`
+                                            : "Cancelado"}
                                     </p>
                                     <Badge
                                       className={cn(
                                         "text-[10px]",
+                                        rec.status === "pending_approval" && "bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200",
                                         rec.status === "invoiced" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
                                         rec.status === "received" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
                                         rec.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
                                       )}
                                     >
-                                      {rec.status === "invoiced" ? "Facturado" : rec.status === "received" ? "Recibido · No Facturado" : "Cancelado"}
+                                      {rec.status === "pending_approval"
+                                        ? "Pendiente de aprobación"
+                                        : rec.status === "invoiced"
+                                          ? "Facturado"
+                                          : rec.status === "received"
+                                            ? "Recibido · No Facturado"
+                                            : "Cancelado"}
                                     </Badge>
                                   </div>
                                 </div>
