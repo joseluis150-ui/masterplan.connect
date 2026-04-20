@@ -750,7 +750,17 @@ export function ProveedoresTab({ projectId }: Props) {
                           (a, b) => a[0].localeCompare(b[0])
                         );
 
-                        const gridCols = "grid-cols-[130px_100px_100px_70px_130px_130px_130px_130px]";
+                        const gridCols = "grid-cols-[130px_100px_100px_70px_130px_130px_130px_130px_150px]";
+                        const fmtSigned = (n: number) =>
+                          n.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        const balanceCell = (n: number) =>
+                          n === 0 ? (
+                            <span className="text-right font-mono text-muted-foreground">—</span>
+                          ) : (
+                            <span className={cn("text-right font-mono", n > 0 ? "text-emerald-700" : "text-red-600")}>
+                              {fmtSigned(n)}
+                            </span>
+                          );
                         return (
                           <div className="border rounded-md overflow-hidden">
                             <div className={cn("grid gap-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-2 bg-muted/40 border-b", gridCols)}>
@@ -762,50 +772,59 @@ export function ProveedoresTab({ projectId }: Props) {
                               <span className="text-right">Certificado</span>
                               <span className="text-right">Facturado</span>
                               <span className="text-right">Pagado</span>
+                              <span className="text-right">Balance del proveedor</span>
                             </div>
-                            {rows.map(({ oc, total, certificado, facturado, pagado }) => (
-                              <div
-                                key={oc.id}
-                                className={cn("grid gap-2 text-xs px-3 py-1.5 items-center border-b last:border-b-0 hover:bg-muted/20", gridCols)}
-                              >
-                                <span className="font-mono font-semibold">{oc.number}</span>
-                                <span className="text-muted-foreground">{oc.issue_date}</span>
-                                <span>
-                                  <Badge
-                                    className={cn(
-                                      "text-[10px]",
-                                      oc.status === "open" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
-                                      oc.status === "closed" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
-                                      oc.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
-                                    )}
-                                  >
-                                    {oc.status === "open" ? "Abierta" : oc.status === "closed" ? "Cerrada" : "Cancelada"}
-                                  </Badge>
-                                </span>
-                                <span className="font-mono text-muted-foreground">{oc.currency}</span>
-                                <span className="text-right font-mono font-semibold">{fmt(total, 2)}</span>
-                                <span className="text-right font-mono text-[#E87722]">{certificado > 0 ? fmt(certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                <span className="text-right font-mono text-[#B85A0F]">{facturado > 0 ? fmt(facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                <span className="text-right font-mono text-emerald-700">{pagado > 0 ? fmt(pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                              </div>
-                            ))}
+                            {rows.map(({ oc, total, certificado, facturado, pagado }) => {
+                              const balance = certificado - pagado;
+                              return (
+                                <div
+                                  key={oc.id}
+                                  className={cn("grid gap-2 text-xs px-3 py-1.5 items-center border-b last:border-b-0 hover:bg-muted/20", gridCols)}
+                                >
+                                  <span className="font-mono font-semibold">{oc.number}</span>
+                                  <span className="text-muted-foreground">{oc.issue_date}</span>
+                                  <span>
+                                    <Badge
+                                      className={cn(
+                                        "text-[10px]",
+                                        oc.status === "open" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
+                                        oc.status === "closed" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
+                                        oc.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
+                                      )}
+                                    >
+                                      {oc.status === "open" ? "Abierta" : oc.status === "closed" ? "Cerrada" : "Cancelada"}
+                                    </Badge>
+                                  </span>
+                                  <span className="font-mono text-muted-foreground">{oc.currency}</span>
+                                  <span className="text-right font-mono font-semibold">{fmt(total, 2)}</span>
+                                  <span className="text-right font-mono text-[#E87722]">{certificado > 0 ? fmt(certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                  <span className="text-right font-mono text-[#B85A0F]">{facturado > 0 ? fmt(facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                  <span className="text-right font-mono text-emerald-700">{pagado > 0 ? fmt(pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                  {balanceCell(balance)}
+                                </div>
+                              );
+                            })}
                             {/* Una fila TOTAL por cada moneda presente, en su moneda nativa */}
-                            {totalsEntries.map(([curr, t], i) => (
-                              <div
-                                key={curr}
-                                className={cn(
-                                  "grid gap-2 text-xs px-3 py-2 items-center bg-muted/40 font-bold",
-                                  i === 0 ? "border-t-2" : "border-t",
-                                  gridCols
-                                )}
-                              >
-                                <span className="col-span-4 text-right">TOTAL ({curr})</span>
-                                <span className="text-right font-mono">{fmt(t.total, 2)}</span>
-                                <span className="text-right font-mono text-[#E87722]">{t.certificado > 0 ? fmt(t.certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                <span className="text-right font-mono text-[#B85A0F]">{t.facturado > 0 ? fmt(t.facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                <span className="text-right font-mono text-emerald-700">{t.pagado > 0 ? fmt(t.pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                              </div>
-                            ))}
+                            {totalsEntries.map(([curr, t], i) => {
+                              const balance = t.certificado - t.pagado;
+                              return (
+                                <div
+                                  key={curr}
+                                  className={cn(
+                                    "grid gap-2 text-xs px-3 py-2 items-center bg-muted/40 font-bold",
+                                    i === 0 ? "border-t-2" : "border-t",
+                                    gridCols
+                                  )}
+                                >
+                                  <span className="col-span-4 text-right">TOTAL ({curr})</span>
+                                  <span className="text-right font-mono">{fmt(t.total, 2)}</span>
+                                  <span className="text-right font-mono text-[#E87722]">{t.certificado > 0 ? fmt(t.certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                  <span className="text-right font-mono text-[#B85A0F]">{t.facturado > 0 ? fmt(t.facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                  <span className="text-right font-mono text-emerald-700">{t.pagado > 0 ? fmt(t.pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                  {balanceCell(balance)}
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       })()}
