@@ -429,16 +429,34 @@ export function AnticiposTab({ projectId }: Props) {
     return true;
   });
 
-  // Summary
-  const totals = cards.reduce(
-    (acc, c) => ({
-      totalAdvance: acc.totalAdvance + c.advanceAmount,
-      totalPaid: acc.totalPaid + c.paidAmount,
-      totalAmortized: acc.totalAmortized + c.amortizedAmount,
-      totalRetained: acc.totalRetained + c.retainedTotal,
-    }),
-    { totalAdvance: 0, totalPaid: 0, totalAmortized: 0, totalRetained: 0 }
-  );
+  // Summary — split by the OC's currency (local vs USD) so we don't mix units.
+  // USD equivalent uses the project exchange rate.
+  const localCurrency = project?.local_currency || "PYG";
+  const projectRate = Number(project?.exchange_rate || 0);
+  type Bucket = { local: number; usd: number; usdEq: number };
+  const zeroBucket = (): Bucket => ({ local: 0, usd: 0, usdEq: 0 });
+  const addToBucket = (b: Bucket, amount: number, currency: string) => {
+    if (currency === "USD") {
+      b.usd += amount;
+      b.usdEq += amount;
+    } else {
+      b.local += amount;
+      b.usdEq += projectRate > 0 ? amount / projectRate : 0;
+    }
+  };
+  const totalsAdvance = zeroBucket();
+  const totalsPaid = zeroBucket();
+  const totalsAmortized = zeroBucket();
+  const totalsRetained = zeroBucket();
+  for (const c of cards) {
+    addToBucket(totalsAdvance, c.advanceAmount, c.oc.currency);
+    addToBucket(totalsPaid, c.paidAmount, c.oc.currency);
+    addToBucket(totalsAmortized, c.amortizedAmount, c.oc.currency);
+    addToBucket(totalsRetained, c.retentionBalance, c.oc.currency);
+  }
+
+  const fmt = (n: number, decimals = 0) =>
+    n > 0 ? n.toLocaleString("es", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : "—";
 
   return (
     <div className="py-6 space-y-4">
@@ -449,29 +467,37 @@ export function AnticiposTab({ projectId }: Props) {
         </p>
       </div>
 
-      {/* Summary strip */}
+      {/* Summary strip — each metric split by currency */}
       <div className="grid grid-cols-4 gap-3">
-        <div className="bg-muted/40 rounded-lg p-3">
-          <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Total anticipos</p>
-          <p className="text-lg font-bold mt-1">{totals.totalAdvance > 0 ? totals.totalAdvance.toLocaleString("es", { maximumFractionDigits: 0 }) : "—"}</p>
-          <p className="text-[10px] text-muted-foreground">{cards.length} OC{cards.length !== 1 ? "s" : ""}</p>
-        </div>
-        <div className="bg-muted/40 rounded-lg p-3">
-          <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Pagado</p>
-          <p className="text-lg font-bold mt-1 text-emerald-700">{totals.totalPaid > 0 ? totals.totalPaid.toLocaleString("es", { maximumFractionDigits: 0 }) : "—"}</p>
-        </div>
-        <div className="bg-muted/40 rounded-lg p-3">
-          <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Amortizado</p>
-          <p className="text-lg font-bold mt-1 text-[#B85A0F]">{totals.totalAmortized > 0 ? totals.totalAmortized.toLocaleString("es", { maximumFractionDigits: 0 }) : "—"}</p>
-        </div>
-        <div className="bg-muted/40 rounded-lg p-3">
-          <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Retenido (saldo)</p>
-          <p className="text-lg font-bold mt-1 text-foreground">
-            {cards.reduce((s, c) => s + c.retentionBalance, 0) > 0
-              ? cards.reduce((s, c) => s + c.retentionBalance, 0).toLocaleString("es", { maximumFractionDigits: 0 })
-              : "—"}
-          </p>
-        </div>
+        {[
+          { label: "Total anticipos", bucket: totalsAdvance, color: "text-foreground", sub: `${cards.length} OC${cards.length !== 1 ? "s" : ""}` },
+          { label: "Pagado", bucket: totalsPaid, color: "text-emerald-700", sub: null },
+          { label: "Amortizado", bucket: totalsAmortized, color: "text-[#B85A0F]", sub: null },
+          { label: "Retenido (saldo)", bucket: totalsRetained, color: "text-foreground", sub: null },
+        ].map((m) => (
+          <div key={m.label} className="bg-muted/40 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">{m.label}</p>
+              {m.sub && <p className="text-[10px] text-muted-foreground">{m.sub}</p>}
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <p className="text-[9px] uppercase tracking-wider font-mono text-muted-foreground">
+                  {localCurrency}
+                </p>
+                <p className={cn("text-sm font-bold mt-0.5", m.color)}>{fmt(m.bucket.local, 0)}</p>
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-wider font-mono text-muted-foreground">USD</p>
+                <p className={cn("text-sm font-bold mt-0.5", m.color)}>{fmt(m.bucket.usd, 2)}</p>
+              </div>
+              <div className="border-l pl-2">
+                <p className="text-[9px] uppercase tracking-wider font-mono text-muted-foreground">Equiv. USD</p>
+                <p className={cn("text-sm font-bold mt-0.5", m.color)}>{fmt(m.bucket.usdEq, 2)}</p>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Filters */}
