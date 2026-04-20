@@ -103,6 +103,8 @@ export function AvanceTab({ projectId }: Props) {
   const [loading, setLoading] = useState(true);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
   const [displayCurrency, setDisplayCurrency] = useState<"usd" | "local">("local");
+  // Total amount amortized against advances across all regular certifications (USD).
+  const [amortizedUsd, setAmortizedUsd] = useState(0);
 
   // Breakdown dialog state
   const [breakdownOpen, setBreakdownOpen] = useState(false);
@@ -417,6 +419,19 @@ export function AvanceTab({ projectId }: Props) {
       }
     }
 
+    // Total amortizado USD — sum of amortization_amount across regular delivery_notes
+    // (advance delivery_notes have order_line_id=null and don't amortize themselves).
+    let amortizedTotalUsd = 0;
+    for (const dn of deliveryNotes) {
+      if (!dn.order_line_id) continue;
+      const ol = orderLines.find((l) => l.id === dn.order_line_id);
+      if (!ol) continue;
+      const oc = ordersById.get(ol.order_id);
+      const ocCurrency = oc?.currency || "USD";
+      amortizedTotalUsd += toUSD(Number(dn.amortization_amount || 0), ocCurrency);
+    }
+    setAmortizedUsd(amortizedTotalUsd);
+
     // Populate "ejecutado" details (all items from comprometido/recibido/facturado/pagado, tagged)
     for (const sf of subFinance.values()) {
       const tagged: BreakdownItem[] = [
@@ -689,25 +704,72 @@ export function AvanceTab({ projectId }: Props) {
               })}
             </div>
 
-            {/* Anticipos dados — línea paralela (no se suma a Ejecutado para evitar
-                doble conteo con futuras amortizaciones) */}
-            {grandTotal.anticipos > 0 && (
-              <div className="rounded-lg border border-amber-300 bg-[#FFF4E6] px-4 py-2.5 flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-amber-600" />
-                  <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">
-                    Anticipos dados
-                  </p>
+            {/* Anticipos dados — línea paralela con desglose de amortización.
+                No se suma a Ejecutado para evitar doble conteo. */}
+            {grandTotal.anticipos > 0 && (() => {
+              const anticiposTotal = grandTotal.anticipos;
+              const amortizedApplied = Math.min(amortizedUsd, anticiposTotal);
+              const pendienteAmort = Math.max(0, anticiposTotal - amortizedApplied);
+              const pct = (v: number) =>
+                anticiposTotal > 0 ? `${((v / anticiposTotal) * 100).toFixed(1)}%` : "—";
+              return (
+                <div className="rounded-lg border border-amber-300 bg-[#FFF4E6] px-4 py-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="h-2 w-2 rounded-full bg-amber-600" />
+                    <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">
+                      Anticipos dados
+                    </p>
+                    <span className="text-[10px] text-muted-foreground italic ml-auto">
+                      no se suma a Ejecutado — se amortiza en certificaciones
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-md bg-white/60 border border-amber-200 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">
+                        Anticipos dados
+                      </p>
+                      <div className="flex items-baseline gap-2 mt-0.5">
+                        <p className="text-base font-bold text-amber-800">
+                          {formatMoney(anticiposTotal)}
+                        </p>
+                        <span className="text-[10px] text-muted-foreground">{currencyLabel}</span>
+                      </div>
+                      <p className="text-[10px] text-amber-700/70 mt-0.5">100%</p>
+                    </div>
+
+                    <div className="rounded-md bg-white/60 border border-amber-200 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">
+                        Amortizado
+                      </p>
+                      <div className="flex items-baseline gap-2 mt-0.5">
+                        <p className="text-base font-bold text-emerald-700">
+                          {formatMoney(amortizedApplied)}
+                        </p>
+                        <span className="text-[10px] text-muted-foreground">{currencyLabel}</span>
+                      </div>
+                      <p className="text-[10px] text-emerald-700/80 mt-0.5">
+                        {pct(amortizedApplied)} del anticipo
+                      </p>
+                    </div>
+
+                    <div className="rounded-md bg-white/60 border border-amber-200 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">
+                        Pendiente de amortizar
+                      </p>
+                      <div className="flex items-baseline gap-2 mt-0.5">
+                        <p className="text-base font-bold text-[#B85A0F]">
+                          {formatMoney(pendienteAmort)}
+                        </p>
+                        <span className="text-[10px] text-muted-foreground">{currencyLabel}</span>
+                      </div>
+                      <p className="text-[10px] text-[#B85A0F]/80 mt-0.5">
+                        {pct(pendienteAmort)} del anticipo
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <p className="text-sm font-bold text-amber-800 ml-auto">
-                  {formatMoney(grandTotal.anticipos)}
-                </p>
-                <span className="text-[10px] text-amber-700/70">{currencyLabel}</span>
-                <span className="text-[10px] text-muted-foreground italic ml-2">
-                  (no se suma a Ejecutado — se amortiza en las certificaciones)
-                </span>
-              </div>
-            )}
+              );
+            })()}
           </div>
         );
       })()}
