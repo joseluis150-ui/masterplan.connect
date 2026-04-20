@@ -1072,31 +1072,100 @@ export function OrdenesTab({ projectId }: Props) {
                     </div>
                   )}
 
-                  {/* Key financial info */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                    <div className="bg-muted/40 rounded-md p-2">
-                      <span className="text-muted-foreground block">Moneda</span>
-                      <span className="font-medium">{oc.currency}</span>
-                    </div>
-                    <div className="bg-muted/40 rounded-md p-2">
-                      <span className="text-muted-foreground block">Anticipo</span>
-                      <span className="font-medium">
-                        {oc.has_advance
-                          ? oc.advance_type === "percentage"
-                            ? `${oc.advance_amount}%`
-                            : formatMoney(Number(oc.advance_amount), oc.currency)
-                          : "No"}
-                      </span>
-                    </div>
-                    <div className="bg-muted/40 rounded-md p-2">
-                      <span className="text-muted-foreground block">Amortización</span>
-                      <span className="font-medium">{oc.amortization_pct}%</span>
-                    </div>
-                    <div className="bg-muted/40 rounded-md p-2">
-                      <span className="text-muted-foreground block">Retención</span>
-                      <span className="font-medium">{oc.retention_pct}%</span>
-                    </div>
-                  </div>
+                  {/* Execution summary */}
+                  {(() => {
+                    const regularRecs = ocReceptions.filter((r) => r.type !== "advance" && r.status !== "cancelled");
+                    const advanceResolved = oc.has_advance
+                      ? resolveAdvanceAmount(oc.advance_type, Number(oc.advance_amount || 0), total)
+                      : 0;
+                    const certificadoTotal = regularRecs.reduce(
+                      (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
+                      0
+                    );
+                    const pendienteCertificar = Math.max(0, total - certificadoTotal);
+                    const amortizadoTotal = regularRecs.reduce(
+                      (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.amortization_amount || 0), 0),
+                      0
+                    );
+                    const porAmortizar = Math.max(0, advanceResolved - amortizadoTotal);
+                    const retencionesTotal = regularRecs.reduce(
+                      (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.retention_amount || 0), 0),
+                      0
+                    );
+                    const pctOf = (part: number, whole: number) =>
+                      whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—";
+                    return (
+                      <div className="space-y-3">
+                        {/* Meta line — config */}
+                        <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
+                          <span>Moneda: <span className="font-medium text-foreground">{oc.currency}</span></span>
+                          <span>·</span>
+                          <span>
+                            Anticipo configurado:{" "}
+                            <span className="font-medium text-foreground">
+                              {oc.has_advance
+                                ? oc.advance_type === "percentage"
+                                  ? `${oc.advance_amount}%`
+                                  : formatMoney(Number(oc.advance_amount), oc.currency)
+                                : "No"}
+                            </span>
+                          </span>
+                          <span>·</span>
+                          <span>Amortización: <span className="font-medium text-foreground">{oc.amortization_pct}%</span></span>
+                          <span>·</span>
+                          <span>Retención: <span className="font-medium text-foreground">{oc.retention_pct}%</span></span>
+                        </div>
+
+                        {/* Execution dashboard — main KPIs */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
+                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Monto total de la OC</p>
+                            <p className="text-base font-bold text-foreground mt-1">{formatMoney(total, oc.currency)}</p>
+                          </div>
+                          <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
+                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Certificado</p>
+                            <p className="text-base font-bold text-[#E87722] mt-1">{formatMoney(certificadoTotal, oc.currency)}</p>
+                            <p className="text-[10px] text-muted-foreground">{pctOf(certificadoTotal, total)} del total</p>
+                          </div>
+                          <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
+                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Pendiente de certificar</p>
+                            <p className="text-base font-bold text-[#B85A0F] mt-1">{formatMoney(pendienteCertificar, oc.currency)}</p>
+                            <p className="text-[10px] text-muted-foreground">{pctOf(pendienteCertificar, total)} del total</p>
+                          </div>
+                          <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
+                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Retenciones acumuladas</p>
+                            <p className="text-base font-bold text-foreground mt-1">
+                              {retencionesTotal > 0 ? formatMoney(retencionesTotal, oc.currency) : "—"}
+                            </p>
+                            {oc.retention_pct > 0 && (
+                              <p className="text-[10px] text-muted-foreground">{oc.retention_pct}% por certificación</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Anticipo breakdown — only when the OC has an advance */}
+                        {oc.has_advance && (
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="border border-amber-300 rounded-md p-3 bg-[#FFF4E6]">
+                              <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">Anticipo dado</p>
+                              <p className="text-base font-bold text-amber-800 mt-1">{formatMoney(advanceResolved, oc.currency)}</p>
+                              <p className="text-[10px] text-amber-700/80">{pctOf(advanceResolved, total)} del total OC</p>
+                            </div>
+                            <div className="border border-amber-300 rounded-md p-3 bg-[#FFF4E6]">
+                              <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">Amortizado</p>
+                              <p className="text-base font-bold text-emerald-700 mt-1">{formatMoney(amortizadoTotal, oc.currency)}</p>
+                              <p className="text-[10px] text-emerald-700/80">{pctOf(amortizadoTotal, advanceResolved)} del anticipo</p>
+                            </div>
+                            <div className="border border-amber-300 rounded-md p-3 bg-[#FFF4E6]">
+                              <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">Por amortizar</p>
+                              <p className="text-base font-bold text-[#B85A0F] mt-1">{formatMoney(porAmortizar, oc.currency)}</p>
+                              <p className="text-[10px] text-[#B85A0F]/80">{pctOf(porAmortizar, advanceResolved)} del anticipo</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {oc.comment && (
                     <p className="text-xs text-muted-foreground italic">{oc.comment}</p>
