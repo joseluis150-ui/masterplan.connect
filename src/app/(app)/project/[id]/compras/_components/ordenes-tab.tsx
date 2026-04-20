@@ -1195,9 +1195,10 @@ export function OrdenesTab({ projectId }: Props) {
                     </header>
                     <div className="p-4 space-y-4">
 
-                  {/* Execution summary */}
+                  {/* Execution summary — compact executive layout */}
                   {(() => {
                     const regularRecs = ocReceptions.filter((r) => r.type !== "advance" && r.status !== "cancelled");
+                    const allLiveRecs = ocReceptions.filter((r) => r.status !== "cancelled");
                     const advanceResolved = oc.has_advance
                       ? resolveAdvanceAmount(oc.advance_type, Number(oc.advance_amount || 0), total)
                       : 0;
@@ -1215,14 +1216,39 @@ export function OrdenesTab({ projectId }: Props) {
                       (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.retention_amount || 0), 0),
                       0
                     );
+                    // Desembolsado = suma de A pagar (payable_amount) en todas las recepciones no canceladas
+                    // (incluye la recepción de anticipo para reflejar el total que fluirá al proveedor)
+                    const desembolsadoTotal = allLiveRecs.reduce(
+                      (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.payable_amount || 0), 0),
+                      0
+                    );
                     const pctOf = (part: number, whole: number) =>
                       whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : "—";
+
+                    // Reusable row: label left, value right with optional % subscript
+                    const Row = ({
+                      label,
+                      value,
+                      pct,
+                      emphasize,
+                    }: { label: string; value: string; pct?: string; emphasize?: boolean }) => (
+                      <div className="flex items-baseline justify-between gap-3 py-1.5 border-b border-border/40 last:border-b-0">
+                        <span className="text-[11px] text-muted-foreground">{label}</span>
+                        <span className="flex items-baseline gap-2">
+                          {pct && <span className="text-[10px] font-mono text-muted-foreground">{pct}</span>}
+                          <span className={cn("font-mono tabular-nums text-right", emphasize ? "text-sm font-bold" : "text-xs font-semibold")}>
+                            {value}
+                          </span>
+                        </span>
+                      </div>
+                    );
+
                     return (
                       <div className="space-y-3">
-                        {/* Meta line — config */}
-                        <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
+                        {/* Meta line — contract config */}
+                        <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap pb-2 border-b">
                           <span>Moneda: <span className="font-medium text-foreground">{oc.currency}</span></span>
-                          <span>·</span>
+                          <span className="text-border">·</span>
                           <span>
                             Anticipo configurado:{" "}
                             <span className="font-medium text-foreground">
@@ -1233,59 +1259,52 @@ export function OrdenesTab({ projectId }: Props) {
                                 : "No"}
                             </span>
                           </span>
-                          <span>·</span>
+                          <span className="text-border">·</span>
                           <span>Amortización: <span className="font-medium text-foreground">{oc.amortization_pct}%</span></span>
-                          <span>·</span>
+                          <span className="text-border">·</span>
                           <span>Retención: <span className="font-medium text-foreground">{oc.retention_pct}%</span></span>
                         </div>
 
-                        {/* Execution dashboard — main KPIs */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Monto total de la OC</p>
-                            <p className="text-base font-bold text-foreground mt-1">{formatMoney(total, oc.currency)}</p>
+                        {/* Two-column executive list */}
+                        <div className="grid md:grid-cols-2 gap-x-8 gap-y-0">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Ejecución</p>
+                            <Row label="Monto total de la OC" value={formatMoney(total, oc.currency)} emphasize />
+                            <Row label="Certificado" value={formatMoney(certificadoTotal, oc.currency)} pct={pctOf(certificadoTotal, total)} />
+                            <Row label="Pendiente de certificar" value={formatMoney(pendienteCertificar, oc.currency)} pct={pctOf(pendienteCertificar, total)} />
+                            <Row
+                              label="Desembolsado"
+                              value={formatMoney(desembolsadoTotal, oc.currency)}
+                              pct={pctOf(desembolsadoTotal, total)}
+                            />
+                            <Row
+                              label="Retenciones acumuladas"
+                              value={retencionesTotal > 0 ? formatMoney(retencionesTotal, oc.currency) : "—"}
+                            />
                           </div>
-                          <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Certificado</p>
-                            <p className="text-base font-bold text-[#E87722] mt-1">{formatMoney(certificadoTotal, oc.currency)}</p>
-                            <p className="text-[10px] text-muted-foreground">{pctOf(certificadoTotal, total)} del total</p>
-                          </div>
-                          <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Pendiente de certificar</p>
-                            <p className="text-base font-bold text-[#B85A0F] mt-1">{formatMoney(pendienteCertificar, oc.currency)}</p>
-                            <p className="text-[10px] text-muted-foreground">{pctOf(pendienteCertificar, total)} del total</p>
-                          </div>
-                          <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Retenciones acumuladas</p>
-                            <p className="text-base font-bold text-foreground mt-1">
-                              {retencionesTotal > 0 ? formatMoney(retencionesTotal, oc.currency) : "—"}
-                            </p>
-                            {oc.retention_pct > 0 && (
-                              <p className="text-[10px] text-muted-foreground">{oc.retention_pct}% por certificación</p>
-                            )}
-                          </div>
-                        </div>
 
-                        {/* Anticipo breakdown — only when the OC has an advance */}
-                        {oc.has_advance && (
-                          <div className="grid grid-cols-3 gap-3">
-                            <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                              <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Anticipo dado</p>
-                              <p className="text-base font-bold text-foreground mt-1">{formatMoney(advanceResolved, oc.currency)}</p>
-                              <p className="text-[10px] text-muted-foreground">{pctOf(advanceResolved, total)} del total OC</p>
+                          {oc.has_advance && (
+                            <div>
+                              <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Anticipo</p>
+                              <Row
+                                label="Anticipo dado"
+                                value={formatMoney(advanceResolved, oc.currency)}
+                                pct={`${pctOf(advanceResolved, total)} del total OC`}
+                                emphasize
+                              />
+                              <Row
+                                label="Amortizado"
+                                value={formatMoney(amortizadoTotal, oc.currency)}
+                                pct={`${pctOf(amortizadoTotal, advanceResolved)} del anticipo`}
+                              />
+                              <Row
+                                label="Por amortizar"
+                                value={formatMoney(porAmortizar, oc.currency)}
+                                pct={`${pctOf(porAmortizar, advanceResolved)} del anticipo`}
+                              />
                             </div>
-                            <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                              <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Amortizado</p>
-                              <p className="text-base font-bold text-emerald-700 mt-1">{formatMoney(amortizadoTotal, oc.currency)}</p>
-                              <p className="text-[10px] text-muted-foreground">{pctOf(amortizadoTotal, advanceResolved)} del anticipo</p>
-                            </div>
-                            <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                              <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Por amortizar</p>
-                              <p className="text-base font-bold text-[#B85A0F] mt-1">{formatMoney(porAmortizar, oc.currency)}</p>
-                              <p className="text-[10px] text-muted-foreground">{pctOf(porAmortizar, advanceResolved)} del anticipo</p>
-                            </div>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                     );
                   })()}
