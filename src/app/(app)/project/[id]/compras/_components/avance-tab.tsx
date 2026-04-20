@@ -103,7 +103,31 @@ export function AvanceTab({ projectId }: Props) {
   const [data, setData] = useState<CategoryFinance[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
-  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  // Collapsed categories state — persisted across tab switches. The default for a
+  // brand-new visit (no stored value yet) is "all collapsed"; this is materialized
+  // in an effect once `data` has loaded and we know the category ids.
+  const COLLAPSED_KEY = `avance:collapsedCats:${projectId}`;
+  const [collapsedCats, _setCollapsedCats] = useState<Set<string> | null>(() => {
+    if (typeof window === "undefined") return null;
+    const raw = window.localStorage.getItem(COLLAPSED_KEY);
+    if (raw === null) return null; // sentinel: first visit, initialize to all-collapsed once data loads
+    try {
+      const arr = JSON.parse(raw) as string[];
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const setCollapsedCats = (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    _setCollapsedCats((prev) => {
+      const base = prev ?? new Set<string>();
+      const next = typeof updater === "function" ? updater(base) : updater;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(Array.from(next)));
+      }
+      return next;
+    });
+  };
   // Persist the currency choice per project so tab-switching doesn't reset it
   const DISPLAY_CURR_KEY = `avance:displayCurrency:${projectId}`;
   const [displayCurrency, _setDisplayCurrency] = useState<"usd" | "local">(() => {
@@ -478,6 +502,16 @@ export function AvanceTab({ projectId }: Props) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // First-visit default: once data is loaded and we don't have a saved collapse
+  // state, collapse every category. Subsequent visits restore whatever the user left.
+  useEffect(() => {
+    if (data.length === 0) return;
+    if (collapsedCats !== null) return;
+    const allCatIds = new Set(data.map((c) => c.categoryId));
+    setCollapsedCats(allCatIds);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
   const tc = Number(project?.exchange_rate || 1);
   const localCurrency = project?.local_currency || "PYG";
 
@@ -805,7 +839,7 @@ export function AvanceTab({ projectId }: Props) {
         )}
 
         {data.map((cat) => {
-          const isCollapsed = collapsedCats.has(cat.categoryId);
+          const isCollapsed = collapsedCats?.has(cat.categoryId) ?? true;
           const hasValues =
             cat.presupuestado > 0 || cat.comprometido > 0 || cat.recibido > 0 ||
             cat.facturado > 0 || cat.pagado > 0;
