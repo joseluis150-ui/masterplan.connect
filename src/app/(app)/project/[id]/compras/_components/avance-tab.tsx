@@ -102,7 +102,17 @@ export function AvanceTab({ projectId }: Props) {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
-  const [displayCurrency, setDisplayCurrency] = useState<"usd" | "local">("local");
+  // Persist the currency choice per project so tab-switching doesn't reset it
+  const DISPLAY_CURR_KEY = `avance:displayCurrency:${projectId}`;
+  const [displayCurrency, _setDisplayCurrency] = useState<"usd" | "local">(() => {
+    if (typeof window === "undefined") return "local";
+    const stored = window.localStorage.getItem(DISPLAY_CURR_KEY);
+    return stored === "usd" || stored === "local" ? stored : "local";
+  });
+  const setDisplayCurrency = (v: "usd" | "local") => {
+    _setDisplayCurrency(v);
+    if (typeof window !== "undefined") window.localStorage.setItem(DISPLAY_CURR_KEY, v);
+  };
   // Total amount amortized against advances across all regular certifications (USD).
   const [amortizedUsd, setAmortizedUsd] = useState(0);
 
