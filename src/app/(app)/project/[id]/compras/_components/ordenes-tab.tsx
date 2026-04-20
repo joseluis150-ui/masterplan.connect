@@ -1427,18 +1427,13 @@ export function OrdenesTab({ projectId }: Props) {
                             return (
                               <div
                                 key={rec.id}
-                                className={cn(
-                                  "border rounded-md p-3 cursor-pointer transition-colors hover:ring-1 hover:ring-primary/40",
-                                  isAdvance
-                                    ? "bg-amber-50/60 border-amber-300 ring-1 ring-amber-200"
-                                    : "bg-muted/20 hover:bg-muted/40"
-                                )}
+                                className="border rounded-md p-3 cursor-pointer transition-colors bg-muted/20 hover:bg-muted/40 hover:ring-1 hover:ring-primary/40"
                                 onClick={() => openReceptionDetail(rec, oc)}
                               >
                                 {isAdvance && (
                                   <div className="flex items-center gap-1.5 mb-2 text-[11px] font-semibold text-[#B85A0F] uppercase tracking-wider">
-                                    <HandCoins className="h-3.5 w-3.5" />
-                                    Recepción de anticipo
+                                    <span className="inline-block h-2 w-2 rounded-full bg-[#E87722]" />
+                                    Anticipo
                                   </div>
                                 )}
                                 <div className="flex items-center gap-3 mb-2 flex-wrap">
