@@ -49,6 +49,7 @@ import type {
   Project,
 } from "@/lib/types/database";
 import { InsumoPicker } from "./insumo-picker";
+import { ColumnFilter, matchesColumnFilter } from "./column-filter";
 import { cn } from "@/lib/utils";
 import { logActivity } from "@/lib/utils/activity-log";
 import { createAdvanceReception, resolveAdvanceAmount } from "@/lib/utils/oc-advance";
@@ -73,6 +74,11 @@ export function OrdenesTab({ projectId }: Props) {
   // Filters
   const [filterStatus, setFilterStatus] = useState<PurchaseOrderStatus | "all">("all");
   const [filterSupplier, setFilterSupplier] = useState<string>("all");
+  // Per-column Excel-style filters (Sets of selected values; empty = all)
+  const [colFilterNumber, setColFilterNumber] = useState<Set<string>>(new Set());
+  const [colFilterStatus, setColFilterStatus] = useState<Set<string>>(new Set());
+  const [colFilterSupplier, setColFilterSupplier] = useState<Set<string>>(new Set());
+  const [colFilterDate, setColFilterDate] = useState<Set<string>>(new Set());
   const [searchText, setSearchText] = useState("");
 
   // Receptions (albaranes) — Map<orderId, ReceptionNote[]>
@@ -840,10 +846,21 @@ export function OrdenesTab({ projectId }: Props) {
       const q = searchText.trim().toLowerCase();
       if (!oc.number.toLowerCase().includes(q) && !oc.supplier.toLowerCase().includes(q)) return false;
     }
+    if (!matchesColumnFilter(colFilterNumber, oc.number)) return false;
+    if (!matchesColumnFilter(colFilterStatus, oc.status)) return false;
+    if (!matchesColumnFilter(colFilterSupplier, oc.supplier)) return false;
+    if (!matchesColumnFilter(colFilterDate, oc.issue_date)) return false;
     return true;
   });
 
-  const hasActiveFilter = filterStatus !== "all" || filterSupplier !== "all" || searchText.trim() !== "";
+  const hasActiveFilter =
+    filterStatus !== "all" ||
+    filterSupplier !== "all" ||
+    searchText.trim() !== "" ||
+    colFilterNumber.size > 0 ||
+    colFilterStatus.size > 0 ||
+    colFilterSupplier.size > 0 ||
+    colFilterDate.size > 0;
 
   return (
     <div className="py-6 space-y-4">
@@ -941,40 +958,46 @@ export function OrdenesTab({ projectId }: Props) {
       )}
 
       {/* OC List */}
-      <div className="border rounded-lg overflow-hidden">
-        {/* Column header */}
-        <div className="grid grid-cols-[130px_120px_1fr_160px_90px_170px_220px] gap-3 px-4 py-2 bg-muted/60 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          <span>N° OC</span>
-          <span>Estado</span>
-          <span>Proveedor</span>
-          <span>Fecha</span>
-          <span className="text-right">Líneas</span>
-          <span className="text-right">Total</span>
-          <span className="text-right">Acciones</span>
-        </div>
-        {filteredOrders.map((oc) => {
-          const total = getOCTotal(oc);
-          const recCount = (receptions.get(oc.id) || []).filter((r) => r.status !== "cancelled").length;
-          return (
-            <div
-              key={oc.id}
-              className="grid grid-cols-[130px_120px_1fr_160px_90px_170px_220px] gap-3 px-4 py-2.5 items-center text-xs border-t hover:bg-muted/20 cursor-pointer transition-colors"
-              onClick={() => openDetail(oc.id)}
-            >
-              <span className="font-mono text-sm font-semibold">{oc.number}</span>
-              <span>{getStatusBadge(oc.status)}</span>
-              <span className="truncate font-medium" title={oc.supplier}>{oc.supplier}</span>
-              <span className="text-muted-foreground">{oc.issue_date}</span>
-              <span className="text-right text-muted-foreground">
-                {oc.lines.length}
-                {recCount > 0 && (
-                  <span className="ml-1 text-[10px] text-emerald-700">· {recCount} rec.</span>
-                )}
-              </span>
-              <span className="text-right font-mono font-semibold">
-                {formatMoney(total, oc.currency)}
-              </span>
-              <div className="flex items-center justify-end gap-1.5">
+      {(() => {
+        const localCurr = project?.local_currency || "PYG";
+        const gridCols = "grid-cols-[130px_120px_1fr_140px_150px_150px_220px]";
+        const allNumbers = Array.from(new Set(orders.map((o) => o.number))).sort();
+        const allStatuses = Array.from(new Set(orders.map((o) => o.status))).sort();
+        const allSuppliers = Array.from(new Set(orders.map((o) => o.supplier))).sort();
+        const allDates = Array.from(new Set(orders.map((o) => o.issue_date))).sort().reverse();
+        const statusLabels: Record<string, string> = { open: "Abierta", closed: "Cerrada", cancelled: "Cancelada" };
+        return (
+          <div className="border rounded-lg overflow-hidden">
+            {/* Column header with Excel-style filters */}
+            <div className={cn("grid gap-3 px-4 py-2 bg-muted/60 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground", gridCols)}>
+              <ColumnFilter label="N° OC" values={allNumbers} selected={colFilterNumber} onChange={setColFilterNumber} />
+              <ColumnFilter label="Estado" values={allStatuses} valueLabels={statusLabels} selected={colFilterStatus} onChange={setColFilterStatus} />
+              <ColumnFilter label="Proveedor" values={allSuppliers} selected={colFilterSupplier} onChange={setColFilterSupplier} />
+              <ColumnFilter label="Fecha" values={allDates} selected={colFilterDate} onChange={setColFilterDate} />
+              <span className="text-right">Total USD</span>
+              <span className="text-right">Total {localCurr}</span>
+              <span className="text-right">Acciones</span>
+            </div>
+            {filteredOrders.map((oc) => {
+              const total = getOCTotal(oc);
+              const isUsd = oc.currency === "USD";
+              return (
+                <div
+                  key={oc.id}
+                  className={cn("grid gap-3 px-4 py-2.5 items-center text-xs border-t hover:bg-muted/20 cursor-pointer transition-colors", gridCols)}
+                  onClick={() => openDetail(oc.id)}
+                >
+                  <span className="font-mono text-sm font-semibold">{oc.number}</span>
+                  <span>{getStatusBadge(oc.status)}</span>
+                  <span className="truncate font-medium" title={oc.supplier}>{oc.supplier}</span>
+                  <span className="text-muted-foreground">{oc.issue_date}</span>
+                  <span className="text-right font-mono font-semibold">
+                    {isUsd ? formatMoney(total, oc.currency) : <span className="text-muted-foreground/50">—</span>}
+                  </span>
+                  <span className="text-right font-mono font-semibold">
+                    {!isUsd ? formatMoney(total, oc.currency) : <span className="text-muted-foreground/50">—</span>}
+                  </span>
+                  <div className="flex items-center justify-end gap-1.5">
                   {canEditOC(oc) && (
                     <Button
                       size="sm"
@@ -1022,9 +1045,11 @@ export function OrdenesTab({ projectId }: Props) {
                 </div>
               </div>
 
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* ─────── OC Detail Dialog — full info + actions for a single OC ─────── */}
       <Dialog open={detailOCId !== null} onOpenChange={(open) => !open && setDetailOCId(null)}>
