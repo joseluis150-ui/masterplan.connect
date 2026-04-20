@@ -204,9 +204,18 @@ export function AnticiposTab({ projectId }: Props) {
       );
 
       const ocPayments = paymentsByOC.get(oc.id) || [];
-      const advancePayments = ocPayments.filter((p) => p.type === "advance");
       const retentionReturnPayments = ocPayments.filter((p) => p.type === "retention_return");
 
+      // Paid amount of the advance: payments that are either
+      //   (a) explicitly type='advance' on this OC (legacy / direct-from-Anticipos flow), OR
+      //   (b) linked to the invoice that targets the advance reception (Facturación flow)
+      const advanceReceptionRec = advanceReceptionByOC.get(oc.id);
+      const advanceInvoice = advanceReceptionRec ? invoiceByReceptionId.get(advanceReceptionRec.id) : null;
+      const advancePayments = ocPayments.filter((p) => {
+        if (p.type === "advance") return true;
+        if (advanceInvoice && p.invoice_id === advanceInvoice.id) return true;
+        return false;
+      });
       const paidAmount = advancePayments.reduce((s, p) => s + Number(p.amount || 0), 0);
       const retentionReturned = retentionReturnPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
 
@@ -275,8 +284,6 @@ export function AnticiposTab({ projectId }: Props) {
         retentionBalance,
       };
     });
-
-    void invoiceByReceptionId;  // reserved for future: show invoice # on card
 
     setCards(cardsList);
     setLoading(false);

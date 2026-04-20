@@ -251,7 +251,8 @@ export function FacturacionTab({ projectId }: Props) {
     setPayCurrency(rec.order.currency);
     setPayUseCustomTC(false);
     setPayCustomTC(Number(project?.exchange_rate || 0));
-    setPayType("regular");
+    // Auto-tag as 'advance' when paying an invoice against an advance reception
+    setPayType(rec.type === "advance" ? "advance" : "regular");
     setPayComment("");
   }
 
