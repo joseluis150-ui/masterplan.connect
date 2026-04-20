@@ -470,12 +470,12 @@ export function AnticiposTab({ projectId }: Props) {
       {/* Summary strip — each metric split by currency */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          { label: "Total anticipos", bucket: totalsAdvance, color: "text-foreground", sub: `${cards.length} OC${cards.length !== 1 ? "s" : ""}` },
-          { label: "Pagado", bucket: totalsPaid, color: "text-emerald-700", sub: null },
-          { label: "Amortizado", bucket: totalsAmortized, color: "text-[#B85A0F]", sub: null },
-          { label: "Retenido (saldo)", bucket: totalsRetained, color: "text-foreground", sub: null },
+          { label: "Total anticipos", bucket: totalsAdvance, color: "text-foreground", sub: `${cards.length} OC${cards.length !== 1 ? "s" : ""}`, bg: "bg-[#FFF4E6] border-[#FFD9B0]" },
+          { label: "Pagado", bucket: totalsPaid, color: "text-emerald-700", sub: null, bg: "bg-emerald-50 border-emerald-200" },
+          { label: "Amortizado", bucket: totalsAmortized, color: "text-[#B85A0F]", sub: null, bg: "bg-[#FFEEDC] border-[#FFCFA0]" },
+          { label: "Retenido (saldo)", bucket: totalsRetained, color: "text-foreground", sub: null, bg: "bg-slate-100 border-slate-300" },
         ].map((m) => (
-          <div key={m.label} className="bg-muted/40 rounded-lg p-3">
+          <div key={m.label} className={cn("rounded-lg p-3 border", m.bg)}>
             <div className="flex items-center justify-between mb-1.5">
               <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">{m.label}</p>
               {m.sub && <p className="text-[10px] text-muted-foreground">{m.sub}</p>}
