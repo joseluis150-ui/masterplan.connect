@@ -76,6 +76,9 @@ export function FacturacionTab({ projectId }: Props) {
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // All payments in this project (used for currency-breakdown of paid total)
+  const [allPayments, setAllPayments] = useState<Payment[]>([]);
+
   // Payment dialog state
   const [payingRec, setPayingRec] = useState<ReceptionFull | null>(null);
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
@@ -128,9 +131,12 @@ export function FacturacionTab({ projectId }: Props) {
       if (inv.reception_id) invoiceByReception.set(inv.reception_id, inv);
     }
 
+    const paymentsList = (payRes.data || []) as Payment[];
+    setAllPayments(paymentsList);
+
     // Sum payments per invoice (in invoice's currency — same as OC currency)
     const paidByInvoice = new Map<string, number>();
-    for (const p of (payRes.data || []) as Payment[]) {
+    for (const p of paymentsList) {
       if (!p.invoice_id) continue;
       paidByInvoice.set(p.invoice_id, (paidByInvoice.get(p.invoice_id) || 0) + Number(p.amount || 0));
     }
@@ -409,10 +415,29 @@ export function FacturacionTab({ projectId }: Props) {
     (s, r) => s + (r.invoice ? (Number(r.invoice.amount) - (r.paidAmount || 0)) : 0),
     0
   );
-  const paidTotal = paidReceptions.reduce(
-    (s, r) => s + (r.invoice ? Number(r.invoice.amount) : 0),
-    0
+  // Paid breakdown by currency — sums actual payments (not invoice amounts),
+  // split by the currency each payment was made in.
+  const localCurrency = project?.local_currency || "PYG";
+  const projectRate = Number(project?.exchange_rate || 0);
+  const paidInvoiceIds = new Set(
+    paidReceptions.map((r) => r.invoice?.id).filter(Boolean) as string[]
   );
+  let paidLocalSum = 0;
+  let paidUsdSum = 0;
+  let paidUsdEquivalent = 0;
+  for (const p of allPayments) {
+    if (!p.invoice_id || !paidInvoiceIds.has(p.invoice_id)) continue;
+    const amt = Number(p.amount || 0);
+    const curr = p.currency || localCurrency;
+    const rate = Number(p.exchange_rate || 0) || projectRate;
+    if (curr === "USD") {
+      paidUsdSum += amt;
+      paidUsdEquivalent += amt;
+    } else {
+      paidLocalSum += amt;
+      paidUsdEquivalent += rate > 0 ? amt / rate : 0;
+    }
+  }
 
   return (
     <div className="py-6 space-y-4">
@@ -472,17 +497,41 @@ export function FacturacionTab({ projectId }: Props) {
             view === "paid" ? "border-emerald-400 bg-emerald-50" : "hover:bg-muted/30"
           )}
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-600" />
               <span className="text-sm font-semibold">Pagadas</span>
             </div>
             <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">{paidReceptions.length}</Badge>
           </div>
-          <p className="text-xl font-bold mt-2 text-emerald-700">
-            {paidTotal > 0 ? paidTotal.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00"}
-          </p>
-          <p className="text-[10px] text-muted-foreground">Total pagado</p>
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <p className="text-[9px] uppercase tracking-wider font-mono text-muted-foreground">
+                Local ({localCurrency})
+              </p>
+              <p className="text-sm font-bold text-emerald-700 mt-0.5">
+                {paidLocalSum > 0
+                  ? paidLocalSum.toLocaleString("es", { maximumFractionDigits: 0 })
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-[9px] uppercase tracking-wider font-mono text-muted-foreground">USD</p>
+              <p className="text-sm font-bold text-emerald-700 mt-0.5">
+                {paidUsdSum > 0
+                  ? paidUsdSum.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : "—"}
+              </p>
+            </div>
+            <div className="border-l pl-2">
+              <p className="text-[9px] uppercase tracking-wider font-mono text-muted-foreground">Equiv. USD</p>
+              <p className="text-sm font-bold text-emerald-700 mt-0.5">
+                {paidUsdEquivalent > 0
+                  ? paidUsdEquivalent.toLocaleString("es", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : "—"}
+              </p>
+            </div>
+          </div>
         </button>
       </div>
 
