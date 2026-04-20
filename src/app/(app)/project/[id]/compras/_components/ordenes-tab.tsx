@@ -29,6 +29,7 @@ import {
   Truck,
   Pencil,
   History,
+  HandCoins,
 } from "lucide-react";
 import { toast } from "sonner";
 import { OC_STATUSES, CURRENCIES, DEFAULT_UNITS } from "@/lib/constants/units";
@@ -79,8 +80,9 @@ export function OrdenesTab({ projectId }: Props) {
   const [receptionFor, setReceptionFor] = useState<OCWithLines | null>(null);
   const [receptionDate, setReceptionDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [receptionComment, setReceptionComment] = useState("");
-  // Per OC line: { selected, qtyReceived, unitPrice }
-  const [receptionLineSel, setReceptionLineSel] = useState<Map<string, { selected: boolean; qtyReceived: number; unitPrice: number }>>(new Map());
+  // Per OC line: { selected, qtyReceived, unitPrice, amortAmount }
+  // amortAmount is only used when OC.amortization_mode === 'per_certification'
+  const [receptionLineSel, setReceptionLineSel] = useState<Map<string, { selected: boolean; qtyReceived: number; unitPrice: number; amortAmount: number }>>(new Map());
   const [savingReception, setSavingReception] = useState(false);
 
   // Create OC dialog
@@ -90,6 +92,7 @@ export function OrdenesTab({ projectId }: Props) {
   const [newHasAdvance, setNewHasAdvance] = useState(false);
   const [newAdvanceAmount, setNewAdvanceAmount] = useState(0);
   const [newAdvanceType, setNewAdvanceType] = useState<"amount" | "percentage">("percentage");
+  const [newAmortMode, setNewAmortMode] = useState<"percentage" | "per_certification">("percentage");
   const [newAmortPct, setNewAmortPct] = useState(0);
   const [newRetentionPct, setNewRetentionPct] = useState(0);
   const [newReturnCondition, setNewReturnCondition] = useState("");
@@ -192,7 +195,10 @@ export function OrdenesTab({ projectId }: Props) {
         toast.error(`Debés ingresar el ${newAdvanceType === "percentage" ? "% del anticipo" : "monto del anticipo"}`);
         return;
       }
-      // Amortization is optional — OC may have an advance without amortization
+      if (newAmortMode === "percentage" && (!newAmortPct || newAmortPct <= 0)) {
+        toast.error("Debés ingresar el % de amortización o cambiar a modo 'monto por certificación'");
+        return;
+      }
     }
 
     // Validate all lines have sector + EDT + insumo + qty/price
@@ -233,7 +239,8 @@ export function OrdenesTab({ projectId }: Props) {
           has_advance: newHasAdvance,
           advance_amount: newHasAdvance ? newAdvanceAmount : 0,
           advance_type: newHasAdvance ? newAdvanceType : null,
-          amortization_pct: newAmortPct,
+          amortization_mode: newHasAdvance ? newAmortMode : "percentage",
+          amortization_pct: newHasAdvance && newAmortMode === "per_certification" ? 0 : newAmortPct,
           retention_pct: newRetentionPct,
           return_condition: newReturnCondition || null,
           comment: newComment || null,
@@ -314,6 +321,7 @@ export function OrdenesTab({ projectId }: Props) {
     setNewHasAdvance(false);
     setNewAdvanceAmount(0);
     setNewAdvanceType("percentage");
+    setNewAmortMode("percentage");
     setNewAmortPct(0);
     setNewRetentionPct(0);
     setNewReturnCondition("");
@@ -676,13 +684,14 @@ export function OrdenesTab({ projectId }: Props) {
     setReceptionDate(new Date().toISOString().slice(0, 10));
     setReceptionComment("");
     // Default all lines UNCHECKED; user explicitly picks what's being received
-    const sel = new Map<string, { selected: boolean; qtyReceived: number; unitPrice: number }>();
+    const sel = new Map<string, { selected: boolean; qtyReceived: number; unitPrice: number; amortAmount: number }>();
     for (const line of oc.lines) {
       const remaining = getLineRemainingToReceive(line, oc.id);
       sel.set(line.id, {
         selected: false,
         qtyReceived: remaining,
         unitPrice: Number(line.unit_price || 0),
+        amortAmount: 0,
       });
     }
     setReceptionLineSel(sel);
@@ -732,17 +741,24 @@ export function OrdenesTab({ projectId }: Props) {
       // Create delivery_notes (lines of this reception).
       // NOTE: gross_amount, amortization_amount, retention_amount and payable_amount are
       // GENERATED columns in the DB — do NOT include them in the insert payload.
+      // For per-certification mode, convert the manual amortization amount to an
+      // effective per-line pct so the generated amortization_amount matches.
+      const isPerCert = receptionFor.amortization_mode === "per_certification";
       const ocAmortPct = Number(receptionFor.amortization_pct || 0);
       const ocRetentionPct = Number(receptionFor.retention_pct || 0);
       const linesPayload = selectedLines.map((ocLine) => {
         const sel = receptionLineSel.get(ocLine.id)!;
+        const gross = sel.qtyReceived * sel.unitPrice;
+        const effectiveAmortPct = isPerCert
+          ? (gross > 0 ? (sel.amortAmount / gross) * 100 : 0)
+          : ocAmortPct;
         return {
           reception_id: rec.id,
           order_line_id: ocLine.id,
           date: receptionDate,
           quantity_received: sel.qtyReceived,
           unit_price: sel.unitPrice,
-          amortization_pct: ocAmortPct,
+          amortization_pct: effectiveAmortPct,
           retention_pct: ocRetentionPct,
         };
       });
@@ -1353,26 +1369,69 @@ export function OrdenesTab({ projectId }: Props) {
                   </div>
                 )}
               </div>
+              {newHasAdvance && (
+                <div className="space-y-2">
+                  <label className="text-[10px] text-muted-foreground font-medium">
+                    Forma de amortización <span className="text-destructive">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewAmortMode("percentage")}
+                      className={cn(
+                        "flex-1 text-xs px-3 py-2 rounded-md border transition-colors text-left",
+                        newAmortMode === "percentage"
+                          ? "bg-primary/10 border-primary text-foreground"
+                          : "bg-background hover:bg-muted"
+                      )}
+                    >
+                      <div className="font-medium">% fijo por medición</div>
+                      <div className="text-[10px] text-muted-foreground">Mismo % en cada recepción</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewAmortMode("per_certification")}
+                      className={cn(
+                        "flex-1 text-xs px-3 py-2 rounded-md border transition-colors text-left",
+                        newAmortMode === "per_certification"
+                          ? "bg-primary/10 border-primary text-foreground"
+                          : "bg-background hover:bg-muted"
+                      )}
+                    >
+                      <div className="font-medium">Monto por certificación</div>
+                      <div className="text-[10px] text-muted-foreground">Indicás el monto al recepcionar</div>
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-3">
+                {newHasAdvance && newAmortMode === "percentage" && (
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">
+                      Amortización % <span className="text-destructive">*</span>
+                    </label>
+                    <Input
+                      className={cn(
+                        "h-8 text-xs mt-0.5",
+                        (!newAmortPct || newAmortPct <= 0) && "border-destructive/60 focus-visible:ring-destructive/30"
+                      )}
+                      type="number"
+                      value={newAmortPct || ""}
+                      onChange={(e) => setNewAmortPct(parseFloat(e.target.value) || 0)}
+                      placeholder="Requerido"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="text-[10px] text-muted-foreground">
-                    Amortización % <span className="text-[9px]">(opcional)</span>
+                    Retención % <span className="text-[9px]">(opcional)</span>
                   </label>
-                  <Input
-                    className="h-8 text-xs mt-0.5"
-                    type="number"
-                    value={newAmortPct || ""}
-                    onChange={(e) => setNewAmortPct(parseFloat(e.target.value) || 0)}
-                    placeholder="Sin amortización"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-muted-foreground">Retención %</label>
                   <Input
                     className="h-8 text-xs mt-0.5"
                     type="number"
                     value={newRetentionPct || ""}
                     onChange={(e) => setNewRetentionPct(parseFloat(e.target.value) || 0)}
+                    placeholder="Sin retención"
                   />
                 </div>
                 <div>
@@ -1599,12 +1658,15 @@ export function OrdenesTab({ projectId }: Props) {
             const nextNum = (receptions.get(receptionFor.id)?.length || 0) + 1;
             const ocAmortPct = Number(receptionFor.amortization_pct || 0);
             const ocRetentionPct = Number(receptionFor.retention_pct || 0);
+            const isPerCert = receptionFor.amortization_mode === "per_certification" && receptionFor.has_advance;
 
             // Aggregate preview totals
             const selectedSummary = Array.from(receptionLineSel.entries())
               .filter(([, s]) => s.selected && s.qtyReceived > 0);
             const grossTotal = selectedSummary.reduce((sum, [, s]) => sum + s.qtyReceived * s.unitPrice, 0);
-            const amortTotal = (grossTotal * ocAmortPct) / 100;
+            const amortTotal = isPerCert
+              ? selectedSummary.reduce((sum, [, s]) => sum + (s.amortAmount || 0), 0)
+              : (grossTotal * ocAmortPct) / 100;
             const retentionTotal = (grossTotal * ocRetentionPct) / 100;
             const payableTotal = grossTotal - amortTotal - retentionTotal;
 
@@ -1696,7 +1758,7 @@ export function OrdenesTab({ projectId }: Props) {
                         const ordered = Number(line.quantity);
                         const alreadyReceived = getLineReceivedQty(line.id, receptionFor.id);
                         const remaining = Math.max(0, ordered - alreadyReceived);
-                        const sel = receptionLineSel.get(line.id) || { selected: false, qtyReceived: 0, unitPrice: 0 };
+                        const sel = receptionLineSel.get(line.id) || { selected: false, qtyReceived: 0, unitPrice: 0, amortAmount: 0 };
                         const subtotal = sel.qtyReceived * sel.unitPrice;
                         const isFullyReceived = remaining === 0;
 
@@ -1776,6 +1838,49 @@ export function OrdenesTab({ projectId }: Props) {
                     </div>
                   </div>
 
+                  {/* Per-line manual amortization (only in per_certification mode) */}
+                  {isPerCert && selectedSummary.length > 0 && (
+                    <div className="border rounded-lg p-3 bg-amber-50/40">
+                      <p className="text-xs font-semibold text-[#B85A0F] uppercase mb-2 flex items-center gap-1.5">
+                        <HandCoins className="h-3.5 w-3.5" />
+                        Amortización de anticipo por línea
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mb-2">
+                        Ingresá el monto a amortizar en esta certificación. Se descuenta del anticipo pendiente.
+                      </p>
+                      <div className="space-y-1.5">
+                        {selectedSummary.map(([lineId, s]) => {
+                          const line = receptionFor.lines.find((l) => l.id === lineId);
+                          if (!line) return null;
+                          const lineGross = s.qtyReceived * s.unitPrice;
+                          return (
+                            <div key={lineId} className="grid grid-cols-[minmax(0,1fr)_120px_140px] gap-2 items-center text-xs">
+                              <span className="truncate text-muted-foreground">{line.description}</span>
+                              <span className="text-right font-mono text-[11px] text-muted-foreground">
+                                Bruto: {formatMoney(lineGross, receptionFor.currency)}
+                              </span>
+                              <Input
+                                className="h-8 text-xs text-right"
+                                type="number"
+                                value={s.amortAmount || ""}
+                                max={lineGross}
+                                onChange={(e) => {
+                                  const v = Math.max(0, Math.min(lineGross, parseFloat(e.target.value) || 0));
+                                  setReceptionLineSel((prev) => {
+                                    const next = new Map(prev);
+                                    next.set(lineId, { ...s, amortAmount: v });
+                                    return next;
+                                  });
+                                }}
+                                placeholder="Monto a amortizar"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Financial summary */}
                   {selectedSummary.length > 0 && (
                     <div className="border rounded-lg p-3 bg-muted/20">
@@ -1786,7 +1891,7 @@ export function OrdenesTab({ projectId }: Props) {
                           <p className="text-sm font-bold">{formatMoney(grossTotal, receptionFor.currency)}</p>
                         </div>
                         <div className="bg-background rounded p-2">
-                          <p className="text-muted-foreground">Amortización ({ocAmortPct}%)</p>
+                          <p className="text-muted-foreground">Amortización {isPerCert ? "(manual)" : `(${ocAmortPct}%)`}</p>
                           <p className="text-sm font-bold text-amber-700">
                             {amortTotal > 0 ? `- ${formatMoney(amortTotal, receptionFor.currency)}` : "—"}
                           </p>

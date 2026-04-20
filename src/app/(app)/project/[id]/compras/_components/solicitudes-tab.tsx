@@ -111,6 +111,7 @@ export function SolicitudesTab({ projectId }: Props) {
   const [ocHasAdvance, setOcHasAdvance] = useState(false);
   const [ocAdvanceAmount, setOcAdvanceAmount] = useState(0);
   const [ocAdvanceType, setOcAdvanceType] = useState<"amount" | "percentage">("percentage");
+  const [ocAmortMode, setOcAmortMode] = useState<"percentage" | "per_certification">("percentage");
   const [ocAmortPct, setOcAmortPct] = useState(0);
   const [ocRetentionPct, setOcRetentionPct] = useState(0);
   const [ocReturnCondition, setOcReturnCondition] = useState("");
@@ -445,6 +446,7 @@ export function SolicitudesTab({ projectId }: Props) {
     setOcHasAdvance(false);
     setOcAdvanceAmount(0);
     setOcAdvanceType("percentage");
+    setOcAmortMode("percentage");
     setOcAmortPct(0);
     setOcRetentionPct(0);
     setOcReturnCondition("");
@@ -507,11 +509,16 @@ export function SolicitudesTab({ projectId }: Props) {
       return;
     }
 
-    // If anticipo is enabled, require advance_amount (amortization is optional —
-    // an OC may have an advance without amortization, e.g. a deposit returned at close)
+    // If anticipo is enabled, advance_amount is always required.
+    // Amortization method is also required: either a fixed % per reception,
+    // or manual amount per certification (selected via ocAmortMode).
     if (ocHasAdvance) {
       if (!ocAdvanceAmount || ocAdvanceAmount <= 0) {
         toast.error(`Debés ingresar el ${ocAdvanceType === "percentage" ? "% del anticipo" : "monto del anticipo"}`);
+        return;
+      }
+      if (ocAmortMode === "percentage" && (!ocAmortPct || ocAmortPct <= 0)) {
+        toast.error("Debés ingresar el % de amortización o cambiar a modo 'monto por certificación'");
         return;
       }
     }
@@ -579,7 +586,10 @@ export function SolicitudesTab({ projectId }: Props) {
           advance_amount: ocHasAdvance ? ocAdvanceAmount : 0,
           advance_type: ocHasAdvance ? ocAdvanceType : null,
           // Amortization applies when there's an advance (regardless of payment type); retention and return_condition only under "contrato"
-          amortization_pct: ocHasAdvance ? ocAmortPct : (ocPaymentType === "contrato" ? ocAmortPct : 0),
+          amortization_mode: ocHasAdvance ? ocAmortMode : "percentage",
+          amortization_pct: ocHasAdvance
+            ? (ocAmortMode === "percentage" ? ocAmortPct : 0)
+            : (ocPaymentType === "contrato" ? ocAmortPct : 0),
           retention_pct: ocPaymentType === "contrato" ? ocRetentionPct : 0,
           return_condition: ocPaymentType === "contrato" ? (ocReturnCondition || null) : null,
           payment_terms_type: ocPaymentType,
@@ -1546,30 +1556,70 @@ export function SolicitudesTab({ projectId }: Props) {
                           )}
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3 border-t pt-2">
-                          <div>
-                            <label className="text-xs text-muted-foreground">
-                              Amortización % <span className="text-[10px]">(opcional, por medición)</span>
+                        {ocHasAdvance && (
+                          <div className="border-t pt-2 space-y-2">
+                            <label className="text-xs text-muted-foreground font-medium">
+                              Forma de amortización del anticipo <span className="text-destructive">*</span>
                             </label>
-                            <Input
-                              className="h-8 text-xs mt-1"
-                              type="number"
-                              value={ocAmortPct || ""}
-                              onChange={(e) => setOcAmortPct(parseFloat(e.target.value) || 0)}
-                              placeholder="Sin amortización"
-                            />
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setOcAmortMode("percentage")}
+                                className={cn(
+                                  "flex-1 text-xs px-3 py-2 rounded-md border transition-colors text-left",
+                                  ocAmortMode === "percentage"
+                                    ? "bg-primary/10 border-primary text-foreground"
+                                    : "bg-background hover:bg-muted"
+                                )}
+                              >
+                                <div className="font-medium">% fijo por medición</div>
+                                <div className="text-[10px] text-muted-foreground">Se descuenta el mismo % en cada recepción</div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setOcAmortMode("per_certification")}
+                                className={cn(
+                                  "flex-1 text-xs px-3 py-2 rounded-md border transition-colors text-left",
+                                  ocAmortMode === "per_certification"
+                                    ? "bg-primary/10 border-primary text-foreground"
+                                    : "bg-background hover:bg-muted"
+                                )}
+                              >
+                                <div className="font-medium">Monto por certificación</div>
+                                <div className="text-[10px] text-muted-foreground">Se indica el monto al registrar cada recepción</div>
+                              </button>
+                            </div>
+                            {ocAmortMode === "percentage" && (
+                              <div>
+                                <label className="text-xs text-muted-foreground">
+                                  Amortización % <span className="text-destructive">*</span>
+                                </label>
+                                <Input
+                                  className={cn(
+                                    "h-8 text-xs mt-1",
+                                    (!ocAmortPct || ocAmortPct <= 0) && "border-destructive/60 focus-visible:ring-destructive/30"
+                                  )}
+                                  type="number"
+                                  value={ocAmortPct || ""}
+                                  onChange={(e) => setOcAmortPct(parseFloat(e.target.value) || 0)}
+                                  placeholder="Requerido"
+                                />
+                              </div>
+                            )}
                           </div>
-                          <div>
-                            <label className="text-xs text-muted-foreground">
-                              Retención % <span className="text-[10px]">(por medición)</span>
-                            </label>
-                            <Input
-                              className="h-8 text-xs mt-1"
-                              type="number"
-                              value={ocRetentionPct || ""}
-                              onChange={(e) => setOcRetentionPct(parseFloat(e.target.value) || 0)}
-                            />
-                          </div>
+                        )}
+
+                        <div className="border-t pt-2">
+                          <label className="text-xs text-muted-foreground">
+                            Retención % <span className="text-[10px]">(opcional, por medición)</span>
+                          </label>
+                          <Input
+                            className="h-8 text-xs mt-1"
+                            type="number"
+                            value={ocRetentionPct || ""}
+                            onChange={(e) => setOcRetentionPct(parseFloat(e.target.value) || 0)}
+                            placeholder="Sin retención"
+                          />
                         </div>
 
                         {ocRetentionPct > 0 && (

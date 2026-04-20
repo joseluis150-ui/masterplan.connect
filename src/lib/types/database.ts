@@ -11,6 +11,7 @@ export type PurchaseRequestStatus = "pending" | "partial" | "completed" | "cance
 export type PurchaseRequestOrigin = "package" | "manual";
 export type PurchaseOrderStatus = "open" | "closed" | "cancelled";
 export type AdvanceType = "amount" | "percentage";
+export type AmortizationMode = "percentage" | "per_certification";
 export type PaymentType = "advance" | "regular" | "retention_return";
 export type PurchaseDocumentType = "sc" | "oc" | "delivery" | "invoice" | "payment";
 export type InvoiceStatus = "pending" | "paid" | "cancelled";
@@ -260,6 +261,7 @@ export interface PurchaseOrder {
   has_advance: boolean;
   advance_amount: number;
   advance_type: AdvanceType | null;
+  amortization_mode: AmortizationMode;
   amortization_pct: number;
   retention_pct: number;
   return_condition: string | null;
