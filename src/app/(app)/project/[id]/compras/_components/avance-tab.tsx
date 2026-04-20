@@ -673,11 +673,11 @@ export function AvanceTab({ projectId }: Props) {
           <div className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
               {([
-                { label: "Presupuestado", value: grandTotal.presupuestado, color: "text-foreground", bg: "bg-slate-100 border-slate-300" },
+                { label: "Presupuestado", value: grandTotal.presupuestado, color: "text-foreground", bg: "bg-neutral-100 border-neutral-300" },
                 { label: "Comprometido", value: grandTotal.comprometido, color: "text-[#737373]", bg: "bg-neutral-100 border-neutral-300" },
-                { label: "Recibido", value: grandTotal.recibido, color: "text-[#E87722]", bg: "bg-[#FFF4E6] border-[#FFD9B0]" },
-                { label: "Facturado", value: grandTotal.facturado, color: "text-[#B85A0F]", bg: "bg-[#FFEEDC] border-[#FFCFA0]" },
-                { label: "Pagado", value: grandTotal.pagado, color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
+                { label: "Recibido", value: grandTotal.recibido, color: "text-[#E87722]", bg: "bg-neutral-100 border-neutral-300" },
+                { label: "Facturado", value: grandTotal.facturado, color: "text-[#B85A0F]", bg: "bg-neutral-100 border-neutral-300" },
+                { label: "Pagado", value: grandTotal.pagado, color: "text-emerald-700", bg: "bg-neutral-100 border-neutral-300" },
                 { label: "Ejecutado", value: grandEjecutado, color: "text-[#0A0A0A] font-bold", bg: "bg-[#0A0A0A] border-[#0A0A0A] text-white", extra: grandPct, extraColor: grandPctColor },
               ] as const).map((item) => {
                 const isExec = item.label === "Ejecutado";
