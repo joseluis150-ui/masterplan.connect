@@ -85,15 +85,17 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
   anticipos: "Anticipos dados",
 };
 
-// Brand-compliant color progression: Ash → Amber → Amber-dark → Emerald (success)
+// Table cells — muted grays for intermediate stages. Only 'Ejecutado' stays
+// in Ink Black since it's the final KPI. The top dashboard cards still keep
+// the semantic color in the text for quick identification.
 const COLUMN_COLORS: Record<ColumnKey, string> = {
   presupuestado: "text-foreground",
   ejecutado: "text-[#0A0A0A] font-semibold",  // Ink Black (final KPI)
-  comprometido: "text-[#737373]",              // Ash 500 (neutral, pending)
-  recibido: "text-[#E87722]",                  // Signal Amber (active)
-  facturado: "text-[#B85A0F]",                 // Amber 700 (darker amber)
-  pagado: "text-emerald-600",                  // Success
-  anticipos: "text-amber-700",                 // Amber darker — anticipated outflow
+  comprometido: "text-[#737373]",              // Ash 500
+  recibido: "text-[#737373]",                  // Ash 500
+  facturado: "text-[#737373]",                 // Ash 500
+  pagado: "text-[#737373]",                    // Ash 500
+  anticipos: "text-[#737373]",                 // Ash 500
 };
 
 export function AvanceTab({ projectId }: Props) {
@@ -723,10 +725,10 @@ export function AvanceTab({ projectId }: Props) {
               const pct = (v: number) =>
                 anticiposTotal > 0 ? `${((v / anticiposTotal) * 100).toFixed(1)}%` : "—";
               return (
-                <div className="rounded-lg border border-amber-300 bg-[#FFF4E6] px-4 py-3">
+                <div className="rounded-lg border border-neutral-300 bg-neutral-100 px-4 py-3">
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="h-2 w-2 rounded-full bg-amber-600" />
-                    <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">
+                    <span className="h-2 w-2 rounded-full bg-[#E87722]" />
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Anticipos dados
                     </p>
                     <span className="text-[10px] text-muted-foreground italic ml-auto">
@@ -734,21 +736,21 @@ export function AvanceTab({ projectId }: Props) {
                     </span>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
-                    <div className="rounded-md bg-white/60 border border-amber-200 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">
+                    <div className="rounded-md bg-background border border-neutral-300 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
                         Anticipos dados
                       </p>
                       <div className="flex items-baseline gap-2 mt-0.5">
-                        <p className="text-base font-bold text-amber-800">
+                        <p className="text-base font-bold text-foreground">
                           {formatMoney(anticiposTotal)}
                         </p>
                         <span className="text-[10px] text-muted-foreground">{currencyLabel}</span>
                       </div>
-                      <p className="text-[10px] text-amber-700/70 mt-0.5">100%</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">100%</p>
                     </div>
 
-                    <div className="rounded-md bg-white/60 border border-amber-200 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">
+                    <div className="rounded-md bg-background border border-neutral-300 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
                         Amortizado
                       </p>
                       <div className="flex items-baseline gap-2 mt-0.5">
@@ -757,13 +759,13 @@ export function AvanceTab({ projectId }: Props) {
                         </p>
                         <span className="text-[10px] text-muted-foreground">{currencyLabel}</span>
                       </div>
-                      <p className="text-[10px] text-emerald-700/80 mt-0.5">
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
                         {pct(amortizedApplied)} del anticipo
                       </p>
                     </div>
 
-                    <div className="rounded-md bg-white/60 border border-amber-200 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">
+                    <div className="rounded-md bg-background border border-neutral-300 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
                         Pendiente de amortizar
                       </p>
                       <div className="flex items-baseline gap-2 mt-0.5">
@@ -772,7 +774,7 @@ export function AvanceTab({ projectId }: Props) {
                         </p>
                         <span className="text-[10px] text-muted-foreground">{currencyLabel}</span>
                       </div>
-                      <p className="text-[10px] text-[#B85A0F]/80 mt-0.5">
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
                         {pct(pendienteAmort)} del anticipo
                       </p>
                     </div>
