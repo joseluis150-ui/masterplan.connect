@@ -1156,20 +1156,20 @@ export function OrdenesTab({ projectId }: Props) {
                         {/* Anticipo breakdown — only when the OC has an advance */}
                         {oc.has_advance && (
                           <div className="grid grid-cols-3 gap-3">
-                            <div className="border border-amber-300 rounded-md p-3 bg-[#FFF4E6]">
-                              <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">Anticipo dado</p>
-                              <p className="text-base font-bold text-amber-800 mt-1">{formatMoney(advanceResolved, oc.currency)}</p>
-                              <p className="text-[10px] text-amber-700/80">{pctOf(advanceResolved, total)} del total OC</p>
+                            <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
+                              <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Anticipo dado</p>
+                              <p className="text-base font-bold text-foreground mt-1">{formatMoney(advanceResolved, oc.currency)}</p>
+                              <p className="text-[10px] text-muted-foreground">{pctOf(advanceResolved, total)} del total OC</p>
                             </div>
-                            <div className="border border-amber-300 rounded-md p-3 bg-[#FFF4E6]">
-                              <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">Amortizado</p>
+                            <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
+                              <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Amortizado</p>
                               <p className="text-base font-bold text-emerald-700 mt-1">{formatMoney(amortizadoTotal, oc.currency)}</p>
-                              <p className="text-[10px] text-emerald-700/80">{pctOf(amortizadoTotal, advanceResolved)} del anticipo</p>
+                              <p className="text-[10px] text-muted-foreground">{pctOf(amortizadoTotal, advanceResolved)} del anticipo</p>
                             </div>
-                            <div className="border border-amber-300 rounded-md p-3 bg-[#FFF4E6]">
-                              <p className="text-[10px] uppercase tracking-wider font-mono text-amber-700/80">Por amortizar</p>
+                            <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
+                              <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Por amortizar</p>
                               <p className="text-base font-bold text-[#B85A0F] mt-1">{formatMoney(porAmortizar, oc.currency)}</p>
-                              <p className="text-[10px] text-[#B85A0F]/80">{pctOf(porAmortizar, advanceResolved)} del anticipo</p>
+                              <p className="text-[10px] text-muted-foreground">{pctOf(porAmortizar, advanceResolved)} del anticipo</p>
                             </div>
                           </div>
                         )}
