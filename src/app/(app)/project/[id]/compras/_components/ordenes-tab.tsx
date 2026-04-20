@@ -71,6 +71,24 @@ export function OrdenesTab({ projectId }: Props) {
   // OC detail dialog — clicking a row opens this modal with full info + actions
   const [detailOCId, setDetailOCId] = useState<string | null>(null);
 
+  // Reception detail dialog — clicking a reception card opens this nested modal
+  type ReceptionDetail = ReceptionNote & {
+    lines: DeliveryNote[];
+    ocNumber: string;
+    ocCurrency: string;
+  };
+  type AttachmentRow = {
+    id: string;
+    file_name: string;
+    file_type: string | null;
+    file_size: number | null;
+    url: string;
+    uploaded_at: string;
+  };
+  const [detailReception, setDetailReception] = useState<ReceptionDetail | null>(null);
+  const [detailAttachments, setDetailAttachments] = useState<AttachmentRow[]>([]);
+  const [loadingAttachments, setLoadingAttachments] = useState(false);
+
   // Filters
   const [filterStatus, setFilterStatus] = useState<PurchaseOrderStatus | "all">("all");
   const [filterSupplier, setFilterSupplier] = useState<string>("all");
@@ -461,6 +479,31 @@ export function OrdenesTab({ projectId }: Props) {
 
   function openDetail(id: string) {
     setDetailOCId(id);
+  }
+
+  async function openReceptionDetail(rec: ReceptionNote & { lines: DeliveryNote[] }, oc: { number: string; currency: string }) {
+    setDetailReception({ ...rec, ocNumber: oc.number, ocCurrency: oc.currency });
+    setDetailAttachments([]);
+    setLoadingAttachments(true);
+    const { data } = await supabase
+      .from("purchase_attachments")
+      .select("id, file_name, file_type, file_size, url, uploaded_at")
+      .eq("document_type", "delivery")
+      .eq("document_id", rec.id)
+      .order("uploaded_at", { ascending: false });
+    setDetailAttachments((data || []) as AttachmentRow[]);
+    setLoadingAttachments(false);
+  }
+
+  async function openAttachmentFile(path: string) {
+    const { data, error } = await supabase.storage
+      .from("invoice-attachments")
+      .createSignedUrl(path, 3600);
+    if (error || !data?.signedUrl) {
+      toast.error("No se pudo abrir el archivo");
+      return;
+    }
+    window.open(data.signedUrl, "_blank");
   }
 
   function getSubName(subId: string | null) {
@@ -1385,11 +1428,12 @@ export function OrdenesTab({ projectId }: Props) {
                               <div
                                 key={rec.id}
                                 className={cn(
-                                  "border rounded-md p-3",
+                                  "border rounded-md p-3 cursor-pointer transition-colors hover:ring-1 hover:ring-primary/40",
                                   isAdvance
                                     ? "bg-amber-50/60 border-amber-300 ring-1 ring-amber-200"
-                                    : "bg-muted/20"
+                                    : "bg-muted/20 hover:bg-muted/40"
                                 )}
+                                onClick={() => openReceptionDetail(rec, oc)}
                               >
                                 {isAdvance && (
                                   <div className="flex items-center gap-1.5 mb-2 text-[11px] font-semibold text-[#B85A0F] uppercase tracking-wider">
@@ -1491,6 +1535,180 @@ export function OrdenesTab({ projectId }: Props) {
                       </Button>
                     );
                   })()}
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* ─────── Reception Detail Dialog ─────── */}
+      <Dialog open={detailReception !== null} onOpenChange={(open) => !open && setDetailReception(null)}>
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-auto">
+          {detailReception && (() => {
+            const rec = detailReception;
+            const isAdvance = rec.type === "advance";
+            const statusLabel =
+              rec.status === "received" ? "Recibido · No Facturado" :
+              rec.status === "invoiced" ? "Facturado" :
+              rec.status === "pending_approval" ? "Pendiente de aprobación" : "Cancelado";
+            const recTotal = rec.lines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
+            const recPayable = rec.lines.reduce((s, l) => s + Number(l.payable_amount || 0), 0);
+            const recAmort = rec.lines.reduce((s, l) => s + Number(l.amortization_amount || 0), 0);
+            const recRetention = rec.lines.reduce((s, l) => s + Number(l.retention_amount || 0), 0);
+            const refNumber = `${rec.ocNumber}-REC-${String(rec.number).padStart(3, "0")}`;
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-3 flex-wrap">
+                    <PackageCheck className="h-5 w-5" />
+                    <span className="font-mono">{refNumber}</span>
+                    <Badge
+                      className={cn(
+                        "text-[10px]",
+                        rec.status === "pending_approval" && "bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200",
+                        rec.status === "received" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
+                        rec.status === "invoiced" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
+                        rec.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
+                      )}
+                    >
+                      {statusLabel}
+                    </Badge>
+                    {isAdvance && (
+                      <Badge className="text-[10px] bg-amber-100 text-[#B85A0F] hover:bg-amber-100 border-amber-300 gap-1">
+                        <HandCoins className="h-3 w-3" />
+                        Anticipo
+                      </Badge>
+                    )}
+                  </DialogTitle>
+                </DialogHeader>
+
+                <div className="space-y-4 pt-2">
+                  {/* Meta info */}
+                  <div className="grid grid-cols-3 gap-3 text-xs">
+                    <div className="bg-muted/30 rounded p-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Fecha</p>
+                      <p className="font-medium mt-0.5">{new Date(rec.date).toLocaleDateString(getNumberLocale())}</p>
+                    </div>
+                    <div className="bg-muted/30 rounded p-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Líneas</p>
+                      <p className="font-medium mt-0.5">{rec.lines.length}</p>
+                    </div>
+                    <div className="bg-muted/30 rounded p-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">OC</p>
+                      <p className="font-mono font-medium mt-0.5">{rec.ocNumber}</p>
+                    </div>
+                  </div>
+
+                  {rec.comment && (
+                    <div className="bg-muted/20 rounded-md px-3 py-2 border">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Comentario</p>
+                      <p className="text-xs italic">{rec.comment}</p>
+                    </div>
+                  )}
+
+                  {/* Lines table */}
+                  <div className="border rounded-md overflow-hidden">
+                    <div className="grid grid-cols-[1.5fr_80px_110px_100px_100px_100px_120px] gap-2 text-[10px] font-semibold text-muted-foreground uppercase px-3 py-2 bg-muted/40 border-b">
+                      <span>Descripción</span>
+                      <span className="text-right">Cantidad</span>
+                      <span className="text-right">P. Unitario</span>
+                      <span className="text-right">Bruto</span>
+                      <span className="text-right">Amort.</span>
+                      <span className="text-right">Retención</span>
+                      <span className="text-right">A pagar</span>
+                    </div>
+                    {rec.lines.map((dn) => {
+                      const ocLine = dn.order_line_id
+                        ? orders.find((o) => o.id === rec.order_id)?.lines.find((l) => l.id === dn.order_line_id)
+                        : null;
+                      return (
+                        <div
+                          key={dn.id}
+                          className="grid grid-cols-[1.5fr_80px_110px_100px_100px_100px_120px] gap-2 text-xs px-3 py-1.5 items-center border-b last:border-b-0"
+                        >
+                          <span className="truncate">
+                            {ocLine?.description || (isAdvance ? (
+                              <span className="italic text-[#B85A0F]">Pago de anticipo</span>
+                            ) : "—")}
+                          </span>
+                          <span className="text-right font-mono">
+                            {Number(dn.quantity_received).toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-right font-mono text-muted-foreground">
+                            {formatMoney(Number(dn.unit_price), rec.ocCurrency)}
+                          </span>
+                          <span className="text-right font-mono">
+                            {formatMoney(Number(dn.gross_amount || 0), rec.ocCurrency)}
+                          </span>
+                          <span className="text-right font-mono text-amber-700">
+                            {Number(dn.amortization_amount || 0) > 0
+                              ? formatMoney(Number(dn.amortization_amount), rec.ocCurrency)
+                              : "—"}
+                          </span>
+                          <span className="text-right font-mono text-[#B85A0F]">
+                            {Number(dn.retention_amount || 0) > 0
+                              ? formatMoney(Number(dn.retention_amount), rec.ocCurrency)
+                              : "—"}
+                          </span>
+                          <span className="text-right font-mono font-semibold text-emerald-700">
+                            {formatMoney(Number(dn.payable_amount || 0), rec.ocCurrency)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    <div className="grid grid-cols-[1.5fr_80px_110px_100px_100px_100px_120px] gap-2 text-xs px-3 py-2 items-center bg-muted/40 font-semibold">
+                      <span className="text-right col-span-3">TOTAL</span>
+                      <span className="text-right font-mono">{formatMoney(recTotal, rec.ocCurrency)}</span>
+                      <span className="text-right font-mono text-amber-700">
+                        {recAmort > 0 ? formatMoney(recAmort, rec.ocCurrency) : "—"}
+                      </span>
+                      <span className="text-right font-mono text-[#B85A0F]">
+                        {recRetention > 0 ? formatMoney(recRetention, rec.ocCurrency) : "—"}
+                      </span>
+                      <span className="text-right font-mono text-emerald-700">
+                        {formatMoney(recPayable, rec.ocCurrency)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Attachments */}
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-2">
+                      Archivos adjuntos
+                    </p>
+                    {loadingAttachments ? (
+                      <p className="text-xs text-muted-foreground italic">Cargando…</p>
+                    ) : detailAttachments.length === 0 ? (
+                      <p className="text-xs text-muted-foreground italic">Esta recepción no tiene archivos adjuntos.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {detailAttachments.map((att) => (
+                          <div
+                            key={att.id}
+                            className="flex items-center gap-2 text-xs bg-muted/20 border rounded-md px-3 py-2"
+                          >
+                            <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate" title={att.file_name}>{att.file_name}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {att.file_size ? `${(att.file_size / 1024).toFixed(1)} KB` : ""}
+                                {att.uploaded_at ? ` · ${new Date(att.uploaded_at).toLocaleString(getNumberLocale())}` : ""}
+                              </p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => openAttachmentFile(att.url)}
+                            >
+                              Abrir
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             );
