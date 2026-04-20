@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { getNumberLocale } from "@/lib/utils/number-format";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -96,6 +96,9 @@ export function OrdenesTab({ projectId }: Props) {
   // percentage mode). Off by default — default behavior is auto-calc from the OC's pct.
   const [manualAmortOpen, setManualAmortOpen] = useState(false);
   const [savingReception, setSavingReception] = useState(false);
+  // Files the user selects to attach to this reception (uploaded on submit)
+  const [receptionFiles, setReceptionFiles] = useState<File[]>([]);
+  const receptionFileInputRef = useRef<HTMLInputElement>(null);
 
   // Create OC dialog
   const [createOpen, setCreateOpen] = useState(false);
@@ -693,6 +696,8 @@ export function OrdenesTab({ projectId }: Props) {
     // Reset manual override — default is auto-calc from the OC's amortization_pct.
     // (In per_certification mode, the manual editor is always visible.)
     setManualAmortOpen(false);
+    setReceptionFiles([]);
+    if (receptionFileInputRef.current) receptionFileInputRef.current.value = "";
     // Default all lines UNCHECKED; user explicitly picks what's being received
     const sel = new Map<string, { selected: boolean; qtyReceived: number; unitPrice: number; amortAmount: number }>();
     for (const line of oc.lines) {
@@ -785,6 +790,31 @@ export function OrdenesTab({ projectId }: Props) {
         await supabase.from("reception_notes").delete().eq("id", rec.id);
         toast.error(`Error al insertar líneas: ${lErr.message}`);
         return;
+      }
+
+      // Upload attachments (if any) to Supabase Storage + register in purchase_attachments.
+      // We use the same 'invoice-attachments' bucket used for invoice files (already public-read via signed URLs).
+      if (receptionFiles.length > 0) {
+        for (const file of receptionFiles) {
+          const ext = file.name.split(".").pop() || "bin";
+          const path = `${projectId}/receptions/${rec.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const { error: upErr } = await supabase.storage
+            .from("invoice-attachments")
+            .upload(path, file, { upsert: false });
+          if (upErr) {
+            toast.error(`No se pudo subir ${file.name}: ${upErr.message}`);
+            continue;
+          }
+          await supabase.from("purchase_attachments").insert({
+            project_id: projectId,
+            document_type: "delivery",
+            document_id: rec.id,
+            file_name: file.name,
+            file_type: file.type || null,
+            file_size: file.size || null,
+            url: path,
+          });
+        }
       }
 
       // Auto-close OC if all lines fully received after this reception
@@ -1988,8 +2018,11 @@ export function OrdenesTab({ projectId }: Props) {
                               type="number"
                               value={sel.qtyReceived || ""}
                               disabled={!sel.selected}
+                              max={remaining}
                               onChange={(e) => {
-                                const v = Math.max(0, parseFloat(e.target.value) || 0);
+                                // Cap qty to remaining — can't receive more than what's pending
+                                const raw = Math.max(0, parseFloat(e.target.value) || 0);
+                                const v = Math.min(raw, remaining);
                                 setReceptionLineSel((prev) => {
                                   const next = new Map(prev);
                                   next.set(line.id, { ...sel, qtyReceived: v });
@@ -1997,20 +2030,15 @@ export function OrdenesTab({ projectId }: Props) {
                                 });
                               }}
                             />
-                            <Input
-                              className="h-8 text-xs text-right"
-                              type="number"
-                              value={sel.unitPrice || ""}
-                              disabled={!sel.selected}
-                              onChange={(e) => {
-                                const v = parseFloat(e.target.value) || 0;
-                                setReceptionLineSel((prev) => {
-                                  const next = new Map(prev);
-                                  next.set(line.id, { ...sel, unitPrice: v });
-                                  return next;
-                                });
-                              }}
-                            />
+                            {/* Unit price is locked to the OC's contracted price — can't be modified at reception time */}
+                            <div
+                              className="h-8 px-2 text-xs text-right flex items-center justify-end border rounded-md bg-muted/40 text-muted-foreground cursor-not-allowed font-mono"
+                              title="El precio unitario contratado en la OC no se puede modificar al recepcionar"
+                            >
+                              {sel.unitPrice
+                                ? sel.unitPrice.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })
+                                : "—"}
+                            </div>
                             <span className="text-right font-mono font-semibold">
                               {formatMoney(subtotal, receptionFor.currency)}
                             </span>
@@ -2105,6 +2133,68 @@ export function OrdenesTab({ projectId }: Props) {
                       </div>
                     </div>
                   )}
+
+                  {/* Attachments */}
+                  <div className="border rounded-lg p-3 bg-muted/10">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">
+                      Adjuntos (opcional)
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mb-2">
+                      Podés adjuntar remitos, fotos, actas o cualquier documento que respalde esta recepción.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={receptionFileInputRef}
+                        type="file"
+                        multiple
+                        accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,.doc,.docx,.xls,.xlsx"
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          setReceptionFiles((prev) => [...prev, ...files]);
+                          if (receptionFileInputRef.current) receptionFileInputRef.current.value = "";
+                        }}
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs"
+                        onClick={() => receptionFileInputRef.current?.click()}
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" />
+                        Seleccionar archivos
+                      </Button>
+                      <span className="text-[11px] text-muted-foreground">
+                        {receptionFiles.length === 0
+                          ? "Sin archivos"
+                          : `${receptionFiles.length} archivo${receptionFiles.length === 1 ? "" : "s"} seleccionado${receptionFiles.length === 1 ? "" : "s"}`}
+                      </span>
+                    </div>
+                    {receptionFiles.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {receptionFiles.map((f, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-2 text-xs bg-background border rounded px-2 py-1"
+                          >
+                            <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
+                            <span className="flex-1 truncate" title={f.name}>{f.name}</span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {(f.size / 1024).toFixed(1)} KB
+                            </span>
+                            <button
+                              type="button"
+                              className="text-destructive hover:opacity-70"
+                              onClick={() => setReceptionFiles((prev) => prev.filter((_, i) => i !== idx))}
+                              title="Quitar"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   {/* Financial summary */}
                   {selectedSummary.length > 0 && (
