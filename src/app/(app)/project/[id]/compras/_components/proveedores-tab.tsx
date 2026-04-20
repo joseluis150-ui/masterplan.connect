@@ -43,16 +43,14 @@ type OCWithLinesAndRecs = PurchaseOrder & {
   receptions: (ReceptionNote & { lines: DeliveryNote[] })[];
 };
 
+interface Bucket { local: number; usd: number; usdEq: number; }
 interface SupplierStats {
   ocCount: number;
-  totalLocal: number;
-  totalUsd: number;
-  totalUsdEq: number;
-  certificadoUsdEq: number;
-  pendienteCertUsdEq: number;
-  desembolsadoUsdEq: number;
-  advancePendingUsdEq: number;   // Anticipo pagado aún sin amortizar
-  retentionUsdEq: number;        // Retenciones acumuladas (no devueltas)
+  total: Bucket;
+  certificado: Bucket;
+  desembolsado: Bucket;
+  advancePending: Bucket;
+  retention: Bucket;
 }
 
 const PAYMENT_TERMS_OPTIONS: { value: PaymentTermsType; label: string }[] = [
@@ -124,69 +122,64 @@ export function ProveedoresTab({ projectId }: Props) {
     const supplierOrders = orders.filter(
       (o) => o.supplier_id === supplierId && o.status !== "cancelled"
     );
-    let totalLocal = 0, totalUsd = 0, totalUsdEq = 0;
-    let certificadoUsdEq = 0, desembolsadoUsdEq = 0;
-    let advancePendingUsdEq = 0, retentionUsdEq = 0;
+    const mk = (): Bucket => ({ local: 0, usd: 0, usdEq: 0 });
+    const add = (b: Bucket, amount: number, currency: string) => {
+      if (currency === "USD") b.usd += amount;
+      else b.local += amount;
+      b.usdEq += toUsd(amount, currency);
+    };
+    const total = mk();
+    const certificado = mk();
+    const desembolsado = mk();
+    const advancePending = mk();
+    const retention = mk();
     for (const oc of supplierOrders) {
-      const total = oc.lines.reduce((s, l) => s + Number(l.total || 0), 0);
-      if (oc.currency === "USD") {
-        totalUsd += total;
-      } else {
-        totalLocal += total;
-      }
-      totalUsdEq += toUsd(total, oc.currency);
+      const ocTotal = oc.lines.reduce((s, l) => s + Number(l.total || 0), 0);
+      add(total, ocTotal, oc.currency);
 
-      // Regular receptions (not advance, not cancelled) — for certificado / amortización / retención
       const regularRecs = oc.receptions.filter(
         (r) => r.type !== "advance" && r.status !== "cancelled"
       );
-      const certificado = regularRecs.reduce(
+      const certificadoOC = regularRecs.reduce(
         (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
         0
       );
-      certificadoUsdEq += toUsd(certificado, oc.currency);
+      add(certificado, certificadoOC, oc.currency);
 
-      // Desembolsado = payable_amount across ALL live receptions (incl. advance)
       const liveRecs = oc.receptions.filter((r) => r.status !== "cancelled");
-      const desembolsado = liveRecs.reduce(
+      const desembolsadoOC = liveRecs.reduce(
         (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.payable_amount || 0), 0),
         0
       );
-      desembolsadoUsdEq += toUsd(desembolsado, oc.currency);
+      add(desembolsado, desembolsadoOC, oc.currency);
 
-      // Anticipo pendiente de amortizar
       if (oc.has_advance) {
         const advanceResolved = resolveAdvanceAmount(
           oc.advance_type,
           Number(oc.advance_amount || 0),
-          total
+          ocTotal
         );
         const amortizado = regularRecs.reduce(
           (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.amortization_amount || 0), 0),
           0
         );
         const pending = Math.max(0, advanceResolved - amortizado);
-        advancePendingUsdEq += toUsd(pending, oc.currency);
+        add(advancePending, pending, oc.currency);
       }
 
-      // Retenciones acumuladas (suma de retention_amount en recepciones regulares;
-      // no descuenta devoluciones de retención porque aquí no cargamos payments)
-      const retencion = regularRecs.reduce(
+      const retencionOC = regularRecs.reduce(
         (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.retention_amount || 0), 0),
         0
       );
-      retentionUsdEq += toUsd(retencion, oc.currency);
+      add(retention, retencionOC, oc.currency);
     }
     return {
       ocCount: supplierOrders.length,
-      totalLocal,
-      totalUsd,
-      totalUsdEq,
-      certificadoUsdEq,
-      pendienteCertUsdEq: Math.max(0, totalUsdEq - certificadoUsdEq),
-      desembolsadoUsdEq,
-      advancePendingUsdEq,
-      retentionUsdEq,
+      total,
+      certificado,
+      desembolsado,
+      advancePending,
+      retention,
     };
   }
 
@@ -435,7 +428,7 @@ export function ProveedoresTab({ projectId }: Props) {
                   {stats.ocCount > 0 ? stats.ocCount : <span className="opacity-50">—</span>}
                 </span>
                 <span className="text-right font-mono font-semibold">
-                  {stats.totalUsdEq > 0 ? fmt(stats.totalUsdEq, 2) : <span className="opacity-50">—</span>}
+                  {stats.total.usdEq > 0 ? fmt(stats.total.usdEq, 2) : <span className="opacity-50">—</span>}
                 </span>
                 <div className="flex items-center justify-end gap-1">
                   {stats.ocCount === 0 && (
@@ -512,7 +505,7 @@ export function ProveedoresTab({ projectId }: Props) {
                     </DialogTitle>
                   </DialogHeader>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {ocCount} OC{ocCount !== 1 ? "s" : ""} activa{ocCount !== 1 ? "s" : ""} · Total {fmt(stats.totalUsdEq, 2)} USD equivalente
+                    {ocCount} OC{ocCount !== 1 ? "s" : ""} activa{ocCount !== 1 ? "s" : ""} · Total {fmt(stats.total.usdEq, 2)} USD equivalente
                   </p>
                 </div>
 
@@ -642,60 +635,54 @@ export function ProveedoresTab({ projectId }: Props) {
                       </h3>
                     </header>
                     <div className="p-4 space-y-4">
-                      {/* KPIs */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                          <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Total OCs ({stats.ocCount})</p>
-                          <div className="grid grid-cols-3 gap-2 mt-1">
-                            <div>
-                              <p className="text-[9px] uppercase font-mono text-muted-foreground">{localCurrency}</p>
-                              <p className="text-sm font-bold">{fmt(stats.totalLocal, 0)}</p>
+                      {/* KPIs — cada uno con desglose Local / USD / Equiv. USD */}
+                      {(() => {
+                        const renderBucket = (
+                          label: string,
+                          bucket: Bucket,
+                          opts?: { subtitle?: string; decimalsLocal?: number }
+                        ) => (
+                          <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
+                            <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
+                              {label}
+                            </p>
+                            <div className="grid grid-cols-3 gap-2 mt-1">
+                              <div>
+                                <p className="text-[9px] uppercase font-mono text-muted-foreground">{localCurrency}</p>
+                                <p className="text-sm font-bold">
+                                  {bucket.local > 0 ? fmt(bucket.local, opts?.decimalsLocal ?? 0) : <span className="text-muted-foreground">—</span>}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase font-mono text-muted-foreground">USD</p>
+                                <p className="text-sm font-bold">
+                                  {bucket.usd > 0 ? fmt(bucket.usd, 2) : <span className="text-muted-foreground">—</span>}
+                                </p>
+                              </div>
+                              <div className="border-l pl-2">
+                                <p className="text-[9px] uppercase font-mono text-muted-foreground">Equiv. USD</p>
+                                <p className="text-sm font-bold">
+                                  {bucket.usdEq > 0 ? fmt(bucket.usdEq, 2) : <span className="text-muted-foreground">—</span>}
+                                </p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-[9px] uppercase font-mono text-muted-foreground">USD</p>
-                              <p className="text-sm font-bold">{fmt(stats.totalUsd, 2)}</p>
-                            </div>
-                            <div className="border-l pl-2">
-                              <p className="text-[9px] uppercase font-mono text-muted-foreground">Equiv. USD</p>
-                              <p className="text-sm font-bold">{fmt(stats.totalUsdEq, 2)}</p>
-                            </div>
+                            {opts?.subtitle && (
+                              <p className="text-[10px] text-muted-foreground mt-1">{opts.subtitle}</p>
+                            )}
                           </div>
-                        </div>
-                        <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                          <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Desembolsado</p>
-                          <p className="text-base font-bold text-emerald-700 mt-1">{fmt(stats.desembolsadoUsdEq, 2)} <span className="text-[10px] text-muted-foreground">USD eq.</span></p>
-                          <p className="text-[10px] text-muted-foreground">
-                            {stats.totalUsdEq > 0 ? `${((stats.desembolsadoUsdEq / stats.totalUsdEq) * 100).toFixed(1)}%` : "—"} del total
-                          </p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                          <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Certificado</p>
-                          <p className="text-base font-bold text-[#E87722] mt-1">{fmt(stats.certificadoUsdEq, 2)} <span className="text-[10px] text-muted-foreground">USD eq.</span></p>
-                          <p className="text-[10px] text-muted-foreground">
-                            {stats.totalUsdEq > 0 ? `${((stats.certificadoUsdEq / stats.totalUsdEq) * 100).toFixed(1)}%` : "—"} del total
-                          </p>
-                        </div>
-                        <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                          <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Anticipo pendiente de amortizar</p>
-                          <p className="text-base font-bold text-[#B85A0F] mt-1">
-                            {stats.advancePendingUsdEq > 0
-                              ? <>{fmt(stats.advancePendingUsdEq, 2)} <span className="text-[10px] text-muted-foreground">USD eq.</span></>
-                              : <span className="text-muted-foreground">—</span>}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">Saldo del anticipo sin descontar</p>
-                        </div>
-                        <div className="border rounded-md p-3 bg-neutral-100 border-neutral-300">
-                          <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">Retenciones</p>
-                          <p className="text-base font-bold text-foreground mt-1">
-                            {stats.retentionUsdEq > 0
-                              ? <>{fmt(stats.retentionUsdEq, 2)} <span className="text-[10px] text-muted-foreground">USD eq.</span></>
-                              : <span className="text-muted-foreground">—</span>}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">Acumuladas en certificaciones</p>
-                        </div>
-                      </div>
+                        );
+                        const pct = (v: number) =>
+                          stats.total.usdEq > 0 ? `${((v / stats.total.usdEq) * 100).toFixed(1)}% del total` : "";
+                        return (
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {renderBucket(`Total OCs (${stats.ocCount})`, stats.total)}
+                            {renderBucket("Certificado", stats.certificado, { subtitle: pct(stats.certificado.usdEq) })}
+                            {renderBucket("Desembolsado", stats.desembolsado, { subtitle: pct(stats.desembolsado.usdEq) })}
+                            {renderBucket("Anticipo pendiente de amortizar", stats.advancePending, { subtitle: "Saldo del anticipo sin descontar" })}
+                            {renderBucket("Retenciones", stats.retention, { subtitle: "Acumuladas en certificaciones" })}
+                          </div>
+                        );
+                      })()}
 
                       {/* OCs table */}
                       {supplierOrders.length === 0 ? (
