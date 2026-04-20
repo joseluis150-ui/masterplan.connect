@@ -31,6 +31,7 @@ import {
   Pencil,
   History,
   HandCoins,
+  Shield,
 } from "lucide-react";
 import { toast } from "sonner";
 import { OC_STATUSES, CURRENCIES, DEFAULT_UNITS } from "@/lib/constants/units";
@@ -106,13 +107,14 @@ export function OrdenesTab({ projectId }: Props) {
   const [receptionFor, setReceptionFor] = useState<OCWithLines | null>(null);
   const [receptionDate, setReceptionDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [receptionComment, setReceptionComment] = useState("");
-  // Per OC line: { selected, qtyReceived, unitPrice, amortAmount }
-  // amortAmount is used when OC.amortization_mode === 'per_certification' OR when
-  // the user explicitly opens the manual amortization override panel.
-  const [receptionLineSel, setReceptionLineSel] = useState<Map<string, { selected: boolean; qtyReceived: number; unitPrice: number; amortAmount: number }>>(new Map());
-  // Manual amortization override for this reception (only meaningful when OC is in
-  // percentage mode). Off by default — default behavior is auto-calc from the OC's pct.
+  // Per OC line: { selected, qtyReceived, unitPrice, amortAmount, retentionAmount }
+  // amortAmount is used when OC.amortization_mode === 'per_certification' OR when the
+  // user explicitly opens the manual amortization override panel.
+  // retentionAmount is used only when the user explicitly opens the manual retention override panel.
+  const [receptionLineSel, setReceptionLineSel] = useState<Map<string, { selected: boolean; qtyReceived: number; unitPrice: number; amortAmount: number; retentionAmount: number }>>(new Map());
+  // Manual override panels (off by default — default is auto-calc from OC percentages)
   const [manualAmortOpen, setManualAmortOpen] = useState(false);
+  const [manualRetentionOpen, setManualRetentionOpen] = useState(false);
   const [savingReception, setSavingReception] = useState(false);
   // Files the user selects to attach to this reception (uploaded on submit)
   const [receptionFiles, setReceptionFiles] = useState<File[]>([]);
@@ -736,13 +738,13 @@ export function OrdenesTab({ projectId }: Props) {
     setReceptionFor(oc);
     setReceptionDate(new Date().toISOString().slice(0, 10));
     setReceptionComment("");
-    // Reset manual override — default is auto-calc from the OC's amortization_pct.
-    // (In per_certification mode, the manual editor is always visible.)
+    // Reset manual overrides — default is auto-calc from OC percentages.
     setManualAmortOpen(false);
+    setManualRetentionOpen(false);
     setReceptionFiles([]);
     if (receptionFileInputRef.current) receptionFileInputRef.current.value = "";
     // Default all lines UNCHECKED; user explicitly picks what's being received
-    const sel = new Map<string, { selected: boolean; qtyReceived: number; unitPrice: number; amortAmount: number }>();
+    const sel = new Map<string, { selected: boolean; qtyReceived: number; unitPrice: number; amortAmount: number; retentionAmount: number }>();
     for (const line of oc.lines) {
       const remaining = getLineRemainingToReceive(line, oc.id);
       sel.set(line.id, {
@@ -750,6 +752,7 @@ export function OrdenesTab({ projectId }: Props) {
         qtyReceived: remaining,
         unitPrice: Number(line.unit_price || 0),
         amortAmount: 0,
+        retentionAmount: 0,
       });
     }
     setReceptionLineSel(sel);
@@ -806,6 +809,7 @@ export function OrdenesTab({ projectId }: Props) {
       const hasAdvance = receptionFor.has_advance;
       const isPerCert = receptionFor.amortization_mode === "per_certification";
       const useManualAmort = hasAdvance && (isPerCert || manualAmortOpen);
+      const useManualRetention = manualRetentionOpen;
       const ocAmortPctNum = Number(receptionFor.amortization_pct || 0);
       const ocRetentionPct = Number(receptionFor.retention_pct || 0);
       const linesPayload = selectedLines.map((ocLine) => {
@@ -816,6 +820,9 @@ export function OrdenesTab({ projectId }: Props) {
           : useManualAmort
             ? (gross > 0 ? (sel.amortAmount / gross) * 100 : 0)
             : ocAmortPctNum;
+        const effectiveRetentionPct = useManualRetention
+          ? (gross > 0 ? (sel.retentionAmount / gross) * 100 : 0)
+          : ocRetentionPct;
         return {
           reception_id: rec.id,
           order_line_id: ocLine.id,
@@ -823,7 +830,7 @@ export function OrdenesTab({ projectId }: Props) {
           quantity_received: sel.qtyReceived,
           unit_price: sel.unitPrice,
           amortization_pct: effectiveAmortPct,
-          retention_pct: ocRetentionPct,
+          retention_pct: effectiveRetentionPct,
         };
       });
 
@@ -2101,6 +2108,7 @@ export function OrdenesTab({ projectId }: Props) {
             const isPerCert = receptionFor.amortization_mode === "per_certification" && hasAdvance;
             // "Use manual amounts" is forced on in per_certification mode, opt-in otherwise.
             const useManualAmort = hasAdvance && (isPerCert || manualAmortOpen);
+            const useManualRetention = manualRetentionOpen;
 
             // Aggregate preview totals
             const selectedSummary = Array.from(receptionLineSel.entries())
@@ -2111,7 +2119,9 @@ export function OrdenesTab({ projectId }: Props) {
               : useManualAmort
                 ? selectedSummary.reduce((sum, [, s]) => sum + (s.amortAmount || 0), 0)
                 : (grossTotal * ocAmortPct) / 100;
-            const retentionTotal = (grossTotal * ocRetentionPct) / 100;
+            const retentionTotal = useManualRetention
+              ? selectedSummary.reduce((sum, [, s]) => sum + (s.retentionAmount || 0), 0)
+              : (grossTotal * ocRetentionPct) / 100;
             const payableTotal = grossTotal - amortTotal - retentionTotal;
 
             return (
@@ -2202,7 +2212,7 @@ export function OrdenesTab({ projectId }: Props) {
                         const ordered = Number(line.quantity);
                         const alreadyReceived = getLineReceivedQty(line.id, receptionFor.id);
                         const remaining = Math.max(0, ordered - alreadyReceived);
-                        const sel = receptionLineSel.get(line.id) || { selected: false, qtyReceived: 0, unitPrice: 0, amortAmount: 0 };
+                        const sel = receptionLineSel.get(line.id) || { selected: false, qtyReceived: 0, unitPrice: 0, amortAmount: 0, retentionAmount: 0 };
                         const subtotal = sel.qtyReceived * sel.unitPrice;
                         const isFullyReceived = remaining === 0;
 
@@ -2366,6 +2376,83 @@ export function OrdenesTab({ projectId }: Props) {
                     </div>
                   )}
 
+                  {/* Retention override — parallel to amortization */}
+                  {selectedSummary.length > 0 && !useManualRetention && (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        className="text-[11px] text-[#B85A0F] hover:underline flex items-center gap-1"
+                        onClick={() => {
+                          const pct = Number(receptionFor.retention_pct || 0);
+                          setReceptionLineSel((prev) => {
+                            const next = new Map(prev);
+                            for (const [k, v] of next) {
+                              if (!v.selected) continue;
+                              const gross = v.qtyReceived * v.unitPrice;
+                              next.set(k, { ...v, retentionAmount: (gross * pct) / 100 });
+                            }
+                            return next;
+                          });
+                          setManualRetentionOpen(true);
+                        }}
+                      >
+                        <Shield className="h-3 w-3" />
+                        Ajustar retención manualmente (caso aislado)
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedSummary.length > 0 && useManualRetention && (
+                    <div className="border rounded-lg p-3 bg-amber-50/40">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-semibold text-[#B85A0F] uppercase flex items-center gap-1.5">
+                          <Shield className="h-3.5 w-3.5" />
+                          Retención manual por línea
+                        </p>
+                        <button
+                          type="button"
+                          className="text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+                          onClick={() => setManualRetentionOpen(false)}
+                        >
+                          ↩ Volver al auto-cálculo ({ocRetentionPct}%)
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mb-2">
+                        Sólo para esta certificación. El contrato sigue configurado al {ocRetentionPct}%.
+                      </p>
+                      <div className="space-y-1.5">
+                        {selectedSummary.map(([lineId, s]) => {
+                          const line = receptionFor.lines.find((l) => l.id === lineId);
+                          if (!line) return null;
+                          const lineGross = s.qtyReceived * s.unitPrice;
+                          return (
+                            <div key={lineId} className="grid grid-cols-[minmax(0,1fr)_120px_140px] gap-2 items-center text-xs">
+                              <span className="truncate text-muted-foreground">{line.description}</span>
+                              <span className="text-right font-mono text-[11px] text-muted-foreground">
+                                Bruto: {formatMoney(lineGross, receptionFor.currency)}
+                              </span>
+                              <Input
+                                className="h-8 text-xs text-right"
+                                type="number"
+                                value={s.retentionAmount || ""}
+                                max={lineGross}
+                                onChange={(e) => {
+                                  const v = Math.max(0, Math.min(lineGross, parseFloat(e.target.value) || 0));
+                                  setReceptionLineSel((prev) => {
+                                    const next = new Map(prev);
+                                    next.set(lineId, { ...s, retentionAmount: v });
+                                    return next;
+                                  });
+                                }}
+                                placeholder="Monto a retener"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Attachments */}
                   <div className="border rounded-lg p-3 bg-muted/10">
                     <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">
@@ -2446,7 +2533,7 @@ export function OrdenesTab({ projectId }: Props) {
                           </p>
                         </div>
                         <div className="bg-background rounded p-2">
-                          <p className="text-muted-foreground">Retención ({ocRetentionPct}%)</p>
+                          <p className="text-muted-foreground">Retención {useManualRetention ? "(manual)" : `(${ocRetentionPct}%)`}</p>
                           <p className="text-sm font-bold text-[#B85A0F]">
                             {retentionTotal > 0 ? `- ${formatMoney(retentionTotal, receptionFor.currency)}` : "—"}
                           </p>
