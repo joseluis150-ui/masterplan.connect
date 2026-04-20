@@ -968,12 +968,14 @@ export function SolicitudesTab({ projectId }: Props) {
             sc.lines.length > 0 &&
             derivedStatus !== "completed";
           const canCancel = sc.status !== "cancelled" && progress.partial === 0 && progress.complete === 0 && progress.excess === 0;
-          // Allow manual close when SC is in partial progress but buyer decides pending is no longer needed
+          // Allow manual close when SC is in partial progress and there's still quantity
+          // unfulfilled — either lines that haven't been ordered at all (pending) or lines
+          // that have been ordered only partially (partial).
           const canMarkCompleted =
             sc.status !== "cancelled" &&
             sc.status !== "completed" &&
             derivedStatus === "partial" &&
-            progress.pending > 0;
+            (progress.pending > 0 || progress.partial > 0);
 
           return (
             <div key={sc.id} className="border rounded-lg overflow-hidden">
