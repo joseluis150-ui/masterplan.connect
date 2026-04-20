@@ -929,7 +929,7 @@ export function AvanceTab({ projectId }: Props) {
               {breakdownItems.map((item, i) => (
                 <div
                   key={i}
-                  className="grid grid-cols-[110px_95px_1fr_1.2fr_140px] gap-2 items-center text-xs px-2 py-1.5 border-b last:border-b-0 hover:bg-muted/20"
+                  className="grid grid-cols-[110px_95px_1fr_1.2fr_140px] gap-2 items-start text-xs px-2 py-1.5 border-b last:border-b-0 hover:bg-muted/20"
                 >
                   <span className="font-mono truncate" title={item.ref}>{item.ref || "—"}</span>
                   <span className="text-muted-foreground">
@@ -938,7 +938,16 @@ export function AvanceTab({ projectId }: Props) {
                   <span className="truncate" title={item.supplier}>
                     {item.supplier || <span className="text-muted-foreground">—</span>}
                   </span>
-                  <span className="truncate" title={item.description}>
+                  <span
+                    className="leading-snug break-words"
+                    style={{
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }}
+                    title={item.description || ""}
+                  >
                     {item.description || "—"}
                     {item.note && (
                       <span className="text-[10px] text-muted-foreground italic ml-1">({item.note})</span>
