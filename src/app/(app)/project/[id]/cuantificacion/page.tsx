@@ -24,10 +24,10 @@ import { ColumnFilter, type SortDirection } from "@/components/shared/column-fil
 type SortConfig = { key: string; dir: SortDirection };
 import { toast } from "sonner";
 
-// Batch colors for import tracking
+// Batch colors for import tracking — brand-aligned palette (Ash + Amber + allowed accents)
 const BATCH_COLORS = [
-  "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6",
-  "#EC4899", "#06B6D4", "#84CC16", "#F97316", "#6366F1",
+  "#E87722", "#B85A0F", "#FDB67A", "#0A0A0A", "#3D3D3D",
+  "#737373", "#166534", "#991B1B", "#FACC15", "#BFBFBF",
 ];
 
 interface QuantLine {
@@ -566,7 +566,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                     type="checkbox"
                     checked={filtered.length > 0 && selected.size === filtered.length}
                     onChange={toggleSelectAll}
-                    className="h-3.5 w-3.5 rounded cursor-pointer accent-[#1E3A8A]"
+                    className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
                   />
                 </th>
                 <th className="px-1 py-2 text-center" title="Marcador de revisión">
@@ -617,7 +617,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                         type="checkbox"
                         checked={selected.has(line.id)}
                         onChange={() => toggleSelect(line.id)}
-                        className="h-3.5 w-3.5 rounded cursor-pointer accent-[#1E3A8A]"
+                        className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
                       />
                     </td>
                     <td className="px-1 py-1 text-center">
@@ -728,7 +728,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                   <p className="text-xs text-muted-foreground">Líneas válidas</p>
                 </div>
                 <div className="border rounded-lg p-3">
-                  <p className="text-2xl font-bold" style={{ color: "#1E3A8A" }}>{importResult.categoriesNeeded.size}</p>
+                  <p className="text-2xl font-bold" style={{ color: "#E87722" }}>{importResult.categoriesNeeded.size}</p>
                   <p className="text-xs text-muted-foreground">Categorías</p>
                 </div>
                 <div className="border rounded-lg p-3">

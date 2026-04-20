@@ -54,20 +54,27 @@ export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
       <Link key={item.href} href={href}>
         <div
           className={cn(
-            "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors relative",
-            indented && "pl-9",
+            "group relative flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-colors",
+            indented && "pl-9 text-[12.5px]",
             isActive
-              ? "bg-white/[0.15] text-white"
-              : "text-white/60 hover:bg-white/[0.08] hover:text-white/90"
+              ? "text-white bg-white/[0.05]"
+              : "text-white/70 hover:text-white hover:bg-white/[0.03]"
           )}
         >
+          {/* Active indicator: amber dot (Signal Amber as spec says) */}
           {isActive && (
-            <div
-              className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r"
-              style={{ background: "#1E3A8A" }}
+            <span
+              aria-hidden
+              className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 rounded-r"
+              style={{ background: "#E87722" }}
             />
           )}
-          <item.icon className="h-4 w-4 shrink-0" />
+          <item.icon
+            className={cn(
+              "h-[15px] w-[15px] shrink-0 transition-colors",
+              isActive ? "text-[#E87722]" : "text-white/55 group-hover:text-white/85"
+            )}
+          />
           <span className="truncate">{item.label}</span>
         </div>
       </Link>
@@ -75,48 +82,63 @@ export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
   };
 
   return (
-    <div className="flex h-full w-[240px] flex-col" style={{ background: "#0F0F0F" }}>
+    <div
+      className="flex h-full w-[232px] flex-col"
+      style={{ background: "#0A0A0A" /* Ink Black */ }}
+    >
       {/* Header */}
-      <div className="p-4 pb-3">
+      <div className="px-4 pt-4 pb-3">
         <Link
           href="/projects"
-          className="flex items-center gap-1 text-xs text-white/50 hover:text-white/80 transition-colors mb-3"
+          className="flex items-center gap-1 text-[10px] font-medium text-white/45 hover:text-white/80 transition-colors mb-4 uppercase tracking-[0.1em] font-mono"
         >
-          <ChevronLeft className="h-3.5 w-3.5" />
+          <ChevronLeft className="h-3 w-3" />
           Proyectos
         </Link>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/isotipo-white.svg" alt="MasterPlan Connect" className="h-7 mb-2" />
-        <h2 className="font-semibold text-sm text-white truncate">{project.name}</h2>
-        <p className="text-xs text-white/40">
-          v{project.current_version} &middot; {project.project_type === "venta" ? "Venta" : "Costo"}
+        <img
+          src="/isotipo-white.svg"
+          alt="MasterPlan Connect"
+          className="h-10 mb-4"
+        />
+        <h2 className="font-semibold text-[14px] text-white truncate leading-tight tracking-tight">
+          {project.name}
+        </h2>
+        <p
+          className="text-[10px] text-white/45 mt-1 font-mono uppercase tracking-wider"
+        >
+          v{project.current_version} · {project.project_type === "venta" ? "Venta" : "Costo"}
         </p>
       </div>
 
       {/* Divider */}
-      <div className="mx-4 border-t border-white/10" />
+      <div className="mx-4 border-t border-white/[0.06]" />
 
       {/* Navigation */}
-      <ScrollArea className="flex-1 py-2">
+      <ScrollArea className="flex-1 py-3">
         <nav className="px-2 space-y-0.5">
-          {/* 1. Configuración */}
           {renderNavLink({ label: "Configuración", href: "settings", icon: Settings })}
 
-          {/* 2. Planificación (collapsible group) */}
+          {/* Planificación group */}
           <button
             onClick={() => setPlanningOpen(!planningOpen)}
             className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors w-full text-left",
+              "group relative flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-colors w-full text-left",
               isPlanningActive
                 ? "text-white"
-                : "text-white/60 hover:bg-white/[0.08] hover:text-white/90"
+                : "text-white/70 hover:text-white hover:bg-white/[0.03]"
             )}
           >
-            <ClipboardList className="h-4 w-4 shrink-0" />
+            <ClipboardList
+              className={cn(
+                "h-[15px] w-[15px] shrink-0",
+                isPlanningActive ? "text-[#E87722]" : "text-white/55 group-hover:text-white/85"
+              )}
+            />
             <span className="truncate flex-1">Planificación</span>
             <ChevronDown
               className={cn(
-                "h-3.5 w-3.5 shrink-0 transition-transform duration-200",
+                "h-3 w-3 shrink-0 text-white/40 transition-transform duration-200",
                 !planningOpen && "-rotate-90"
               )}
             />
@@ -128,21 +150,21 @@ export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
             </div>
           )}
 
-          {/* 3. Compras (conditional) */}
           {project.compras_enabled &&
             renderNavLink({ label: "Compras", href: "compras", icon: ShoppingCart })}
 
-          {/* 4. Consultas */}
           {renderNavLink({ label: "Consultas", href: "consultas", icon: BarChart3 })}
         </nav>
       </ScrollArea>
 
       {/* Footer */}
-      <div className="mx-4 border-t border-white/10" />
-      <div className="p-4">
-        <div className="text-[11px] text-white/30 space-y-0.5">
-          <p>{project.local_currency} &middot; TC: {Number(project.exchange_rate).toLocaleString()}</p>
-          <p className="text-white/20">MasterPlan Connect</p>
+      <div className="mx-4 border-t border-white/[0.06]" />
+      <div className="px-4 py-3">
+        <div className="text-[10px] text-white/40 leading-tight space-y-0.5 font-mono tracking-wide">
+          <p>
+            {project.local_currency} · TC {Number(project.exchange_rate).toLocaleString()}
+          </p>
+          <p className="text-white/25">MASTERPLAN · CONNECT</p>
         </div>
       </div>
     </div>

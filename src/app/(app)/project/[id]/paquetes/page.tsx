@@ -37,6 +37,7 @@ import { toast } from "sonner";
 import { addWeeks, startOfWeek, format } from "date-fns";
 import { es } from "date-fns/locale";
 import { formatNumber } from "@/lib/utils/formula";
+import { logActivity } from "@/lib/utils/activity-log";
 
 /* ── Hierarchy interfaces ── */
 interface InsumoRow {
@@ -102,6 +103,10 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
 
   // Summary expanded packages
   const [expandedSummary, setExpandedSummary] = useState<Set<string>>(new Set());
+
+  // Send SC confirmation dialog
+  const [sendDialogPkg, setSendDialogPkg] = useState<ProcurementPackage | null>(null);
+  const [sendingSC, setSendingSC] = useState(false);
 
   // Filter state
   const [selectedInsumoId, setSelectedInsumoId] = useState<string | null>(null);
@@ -419,14 +424,50 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
   /** Create a Solicitud de Compra from an approved package's procurement_lines */
   async function createSCFromPackage(packageId: string, packageName: string) {
     try {
-      // Fetch lines with insumo info
-      const { data: pLines } = await supabase
-        .from("procurement_lines")
-        .select("*, insumo:insumos(description, unit)")
-        .eq("package_id", packageId);
+      // Guard: check if SC already exists for this package
+      const { data: existing } = await supabase
+        .from("purchase_requests")
+        .select("id")
+        .eq("package_id", packageId)
+        .limit(1);
+      if (existing && existing.length > 0) {
+        toast.info("Ya existe una solicitud para este paquete");
+        return;
+      }
 
-      if (!pLines || pLines.length === 0) {
-        toast.info("Paquete aprobado sin insumos — no se creó solicitud");
+      // Build aggregated lines using the hierarchy data we already have in memory.
+      // For each procurement_line (composition assignment), compute real quantity
+      // from quantification: sum( ql_qty * comp_qty * (1 + waste%/100) ) grouped by insumo+subcategory
+      type AggKey = string; // `${insumoId}::${subId}`
+      const aggMap = new Map<AggKey, { description: string; unit: string; subcategoryId: string | null; totalQty: number }>();
+
+      for (const cat of groups) {
+        for (const sub of cat.subcategories) {
+          for (const art of sub.articulos) {
+            for (const ins of art.insumos) {
+              const key = `${ins.compositionId}::${packageId}`;
+              if (!assignments.has(key)) continue;
+              // This insumo/composition is assigned to this package
+              const realQty = art.totalQlQuantity * ins.compQuantity * (1 + ins.wastePct / 100);
+              const aggKey = `${ins.insumoId}::${sub.id}`;
+              const prev = aggMap.get(aggKey);
+              if (prev) {
+                prev.totalQty += realQty;
+              } else {
+                aggMap.set(aggKey, {
+                  description: ins.insumoDescription,
+                  unit: ins.insumoUnit,
+                  subcategoryId: sub.id,
+                  totalQty: realQty,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      if (aggMap.size === 0) {
+        toast.info("Paquete aprobado sin insumos asignados — no se creó solicitud");
         return;
       }
 
@@ -456,18 +497,22 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
         return;
       }
 
-      // Create SC lines from procurement_lines
-      const lines = pLines.map((pl: { id: string; subcategory_origin: string | null; insumo: { description: string; unit: string } | null; quantity: number; need_date: string | null }) => ({
+      // Create SC lines from aggregated data
+      const lines = Array.from(aggMap.values()).map((agg) => ({
         request_id: sc.id,
-        subcategory_id: pl.subcategory_origin || null,
-        description: pl.insumo?.description || "Sin descripción",
-        quantity: pl.quantity,
-        unit: pl.insumo?.unit || "U",
-        need_date: pl.need_date || null,
+        subcategory_id: agg.subcategoryId,
+        description: agg.description,
+        quantity: Math.round(agg.totalQty * 100) / 100,
+        unit: agg.unit,
       }));
 
-      await supabase.from("purchase_request_lines").insert(lines);
+      const { error: linesErr } = await supabase.from("purchase_request_lines").insert(lines);
+      if (linesErr) {
+        toast.error("SC creada pero error al insertar líneas");
+        return;
+      }
       toast.success(`Solicitud ${number} creada en Compras con ${lines.length} línea(s)`);
+      return { scId: sc.id as string, scNumber: number as string, lineCount: lines.length };
     } catch {
       toast.error("Error al generar solicitud de compra");
     }
@@ -647,50 +692,68 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
   const statusLabel = (status: string) =>
     PACKAGE_STATUSES.find((s) => s.value === status)?.label || status;
 
-  /** Inline status selector for the summary list */
-  async function changePackageStatus(pkgId: string, newStatus: string) {
-    const pkg = packages.find((p) => p.id === pkgId);
-    if (!pkg) return;
-    const wasApproved = pkg.status !== "aprobado" && newStatus === "aprobado";
+  /** Handle "Enviar solicitud de compra" confirmation */
+  async function confirmSendSC() {
+    if (!sendDialogPkg) return;
+    setSendingSC(true);
+    try {
+      // 1. Mark package as approved
+      const { error: updErr } = await supabase
+        .from("procurement_packages")
+        .update({ status: "aprobado" })
+        .eq("id", sendDialogPkg.id);
 
-    await supabase.from("procurement_packages").update({ status: newStatus }).eq("id", pkgId);
+      if (updErr) {
+        toast.error("Error al aprobar el paquete");
+        return;
+      }
 
-    if (wasApproved) {
-      await createSCFromPackage(pkgId, pkg.name);
+      // 2. Generate SC with all package lines
+      const scResult = await createSCFromPackage(sendDialogPkg.id, sendDialogPkg.name);
+
+      await logActivity({
+        projectId,
+        actionType: "package_approved",
+        entityType: "procurement_package",
+        entityId: sendDialogPkg.id,
+        description: `Paquete "${sendDialogPkg.name}" aprobado${scResult ? ` → SC ${scResult.scNumber}` : ""}`,
+        metadata: {
+          packageId: sendDialogPkg.id,
+          packageName: sendDialogPkg.name,
+          createdScId: scResult?.scId,
+        },
+      });
+
+      setSendDialogPkg(null);
+      loadData();
+    } finally {
+      setSendingSC(false);
     }
-
-    toast.success(`Estado actualizado a "${statusLabel(newStatus)}"`);
-    loadData();
   }
 
-  const inlineStatusSelect = (pkg: ProcurementPackage) => {
+  const sendSCButton = (pkg: ProcurementPackage, disabled = false) => {
     if (pkg.status === "aprobado") {
       return (
         <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
-          <Lock className="h-3 w-3" />
-          Aprobado
+          <CheckCircle2 className="h-3 w-3" />
+          Enviado a Compras
         </span>
       );
     }
     return (
-      <Select
-        value={pkg.status}
-        onValueChange={(v) => { if (v) changePackageStatus(pkg.id, v); }}
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-[11px] font-medium"
+        disabled={disabled}
+        onClick={(e) => {
+          e.stopPropagation();
+          setSendDialogPkg(pkg);
+        }}
       >
-        <SelectTrigger
-          className="h-7 w-[115px] text-[11px] border-0 bg-transparent shadow-none px-1 justify-center gap-1 hover:bg-muted/50 cursor-pointer"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {PACKAGE_STATUSES.map((s) => (
-            <SelectItem key={s.value} value={s.value} className="text-xs">
-              {s.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        <ShoppingCart className="h-3 w-3 mr-1" />
+        Enviar solicitud
+      </Button>
     );
   };
 
@@ -824,7 +887,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
   };
 
   const typeColors: Record<string, string> = {
-    material: "bg-blue-100 text-blue-700 border-blue-300",
+    material: "bg-amber-100 text-amber-700 border-amber-300",
     mano_de_obra: "bg-amber-100 text-amber-700 border-amber-300",
     servicio: "bg-emerald-100 text-emerald-700 border-emerald-300",
     global: "bg-gray-100 text-gray-700 border-gray-300",
@@ -870,15 +933,15 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
           {/* Insumo dropdown search */}
           <div className="relative" ref={dropdownRef}>
             {selectedInsumoId ? (
-              <div className="flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[#1E3A8A]/30 bg-[#EFF6FF] text-xs max-w-72">
-                <Search className="h-3.5 w-3.5 text-[#1E3A8A] shrink-0" />
-                <span className="truncate text-[#1E3A8A] font-medium">{selectedInsumoLabel}</span>
+              <div className="flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-[#E87722]/30 bg-[#EFF6FF] text-xs max-w-72">
+                <Search className="h-3.5 w-3.5 text-[#E87722] shrink-0" />
+                <span className="truncate text-[#E87722] font-medium">{selectedInsumoLabel}</span>
                 <button
                   type="button"
                   onClick={() => { setSelectedInsumoId(null); setInsumoSearchText(""); }}
                   className="shrink-0 ml-auto"
                 >
-                  <X className="h-3.5 w-3.5 text-[#1E3A8A] hover:text-[#1E3A8A]/70" />
+                  <X className="h-3.5 w-3.5 text-[#E87722] hover:text-[#E87722]/70" />
                 </button>
               </div>
             ) : (
@@ -931,7 +994,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                         <span
                           className={cn(
                             "w-1.5 h-1.5 rounded-full shrink-0",
-                            ins.insumoType === "material" ? "bg-blue-400" :
+                            ins.insumoType === "material" ? "bg-neutral-700" :
                             ins.insumoType === "mano_de_obra" ? "bg-amber-400" :
                             ins.insumoType === "servicio" ? "bg-emerald-400" :
                             "bg-gray-400"
@@ -1061,7 +1124,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                           className={cn(
                             "text-[9px] font-bold px-1 rounded",
                             pkg.purchase_type === "licitacion"
-                              ? "bg-[#1E3A8A]/10 text-[#1E3A8A]"
+                              ? "bg-[#E87722]/10 text-[#E87722]"
                               : "bg-emerald-100 text-emerald-700"
                           )}
                         >
@@ -1077,7 +1140,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                           </span>
                         )}
                       </div>
-                      <div className="text-[9px] font-mono font-semibold text-[#1E3A8A] mt-0.5 truncate">
+                      <div className="text-[9px] font-mono font-semibold text-[#E87722] mt-0.5 truncate">
                         ${formatUsdInt(pkgTotal)}
                       </div>
                     </div>
@@ -1113,7 +1176,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                           ? <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                           : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
                         }
-                        <span className="font-mono text-xs font-bold" style={{ color: "#1E3A8A" }}>{cat.code}</span>
+                        <span className="font-mono text-xs font-bold" style={{ color: "#E87722" }}>{cat.code}</span>
                         <span className="text-sm font-semibold truncate">{cat.name}</span>
                         <span className="text-[10px] text-muted-foreground ml-auto shrink-0">
                           {catCompIds.size} ins.
@@ -1125,12 +1188,12 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                           key={pkg.id}
                           className={cn(
                             "w-28 shrink-0 border-r flex items-center justify-center",
-                            hasAnyAssignment(catCompIds, pkg.id) && "bg-[#1E3A8A]/15"
+                            hasAnyAssignment(catCompIds, pkg.id) && "bg-[#E87722]/15"
                           )}
                           style={{ height: 32 }}
                         >
                           {hasAnyAssignment(catCompIds, pkg.id) && (
-                            <span className="text-[9px] font-mono text-[#1E3A8A]/70">
+                            <span className="text-[9px] font-mono text-[#E87722]/70">
                               {countAssignments(catCompIds, pkg.id)}
                             </span>
                           )}
@@ -1171,12 +1234,12 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                                 key={pkg.id}
                                 className={cn(
                                   "w-28 shrink-0 border-r flex items-center justify-center",
-                                  hasAnyAssignment(subCompIds, pkg.id) && "bg-[#1E3A8A]/10"
+                                  hasAnyAssignment(subCompIds, pkg.id) && "bg-[#E87722]/10"
                                 )}
                                 style={{ height: 28 }}
                               >
                                 {hasAnyAssignment(subCompIds, pkg.id) && (
-                                  <span className="text-[9px] font-mono text-[#1E3A8A]/50">
+                                  <span className="text-[9px] font-mono text-[#E87722]/50">
                                     {countAssignments(subCompIds, pkg.id)}
                                   </span>
                                 )}
@@ -1218,12 +1281,12 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                                       key={pkg.id}
                                       className={cn(
                                         "w-28 shrink-0 border-r flex items-center justify-center",
-                                        hasAnyAssignment(artCompIds, pkg.id) && "bg-[#1E3A8A]/8"
+                                        hasAnyAssignment(artCompIds, pkg.id) && "bg-[#E87722]/8"
                                       )}
                                       style={{ height: 26 }}
                                     >
                                       {hasAnyAssignment(artCompIds, pkg.id) && (
-                                        <span className="text-[9px] font-mono text-[#1E3A8A]/40">
+                                        <span className="text-[9px] font-mono text-[#E87722]/40">
                                           {countAssignments(artCompIds, pkg.id)}
                                         </span>
                                       )}
@@ -1240,7 +1303,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                                       <span
                                         className={cn(
                                           "w-1.5 h-1.5 rounded-full shrink-0 mt-1.5",
-                                          ins.insumoType === "material" ? "bg-blue-400" :
+                                          ins.insumoType === "material" ? "bg-neutral-700" :
                                           ins.insumoType === "mano_de_obra" ? "bg-amber-400" :
                                           ins.insumoType === "servicio" ? "bg-emerald-400" :
                                           "bg-gray-400"
@@ -1263,7 +1326,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                                           className={cn(
                                             "w-28 shrink-0 border-r transition-colors flex items-center justify-center self-stretch",
                                             isAssigned
-                                              ? "bg-[#1E3A8A] hover:bg-[#1E3A8A]/70 cursor-pointer"
+                                              ? "bg-[#E87722] hover:bg-[#E87722]/70 cursor-pointer"
                                               : isLockedByOther
                                                 ? "bg-muted/20 cursor-not-allowed"
                                                 : "hover:bg-muted/30 cursor-pointer"
@@ -1327,10 +1390,10 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
 
           {/* List header */}
           <div className="border rounded-lg overflow-hidden">
-            <div className="grid grid-cols-[1fr_100px_90px_100px_90px_110px] gap-0 text-[10px] font-semibold uppercase tracking-wider px-4 py-2 border-b" style={{ background: "#F5F5F5" }}>
+            <div className="grid grid-cols-[1fr_100px_170px_100px_90px_110px] gap-0 text-[10px] font-semibold uppercase tracking-wider px-4 py-2 border-b" style={{ background: "#F5F5F5" }}>
               <span>Paquete</span>
               <span className="text-center">Tipo</span>
-              <span className="text-center">Estado</span>
+              <span className="text-center">Acción</span>
               <span className="text-right">Insumos</span>
               <span className="text-right">Fecha</span>
               <span className="text-right">Monto USD</span>
@@ -1345,17 +1408,17 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
 
               if (summaryLines.length === 0) {
                 return (
-                  <div key={pkg.id} className="grid grid-cols-[1fr_100px_90px_100px_90px_110px] gap-0 items-center px-4 py-2 border-b text-xs text-muted-foreground hover:bg-muted/20">
+                  <div key={pkg.id} className="grid grid-cols-[1fr_100px_170px_100px_90px_110px] gap-0 items-center px-4 py-2 border-b text-xs text-muted-foreground hover:bg-muted/20">
                     <span className="flex items-center gap-2">
                       <Package className="h-3.5 w-3.5" />
                       <span className="font-medium text-foreground">{pkg.name}</span>
                     </span>
                     <span className="text-center">
-                      <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded", pkg.purchase_type === "licitacion" ? "bg-[#1E3A8A]/10 text-[#1E3A8A]" : "bg-emerald-100 text-emerald-700")}>
+                      <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded", pkg.purchase_type === "licitacion" ? "bg-[#E87722]/10 text-[#E87722]" : "bg-emerald-100 text-emerald-700")}>
                         {pkg.purchase_type === "licitacion" ? "LIC" : "CD"}
                       </span>
                     </span>
-                    <span className="text-center" onClick={(e) => e.stopPropagation()}>{inlineStatusSelect(pkg)}</span>
+                    <span className="flex justify-center" onClick={(e) => e.stopPropagation()}>{sendSCButton(pkg, summaryLines.length === 0)}</span>
                     <span className="text-right font-mono">0</span>
                     <span className="text-right">—</span>
                     <span className="text-right font-mono">$0</span>
@@ -1367,7 +1430,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                 <div key={pkg.id}>
                   {/* Clickable summary row */}
                   <div
-                    className="grid grid-cols-[1fr_100px_90px_100px_90px_110px] gap-0 items-center px-4 py-2.5 border-b cursor-pointer hover:bg-muted/30 transition-colors"
+                    className="grid grid-cols-[1fr_100px_170px_100px_90px_110px] gap-0 items-center px-4 py-2.5 border-b cursor-pointer hover:bg-muted/30 transition-colors"
                     onClick={() => setExpandedSummary((prev) => {
                       const next = new Set(prev);
                       if (next.has(pkg.id)) next.delete(pkg.id); else next.add(pkg.id);
@@ -1379,18 +1442,18 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                         ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
                         : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                       }
-                      <Package className="h-4 w-4 shrink-0" style={{ color: "#1E3A8A" }} />
+                      <Package className="h-4 w-4 shrink-0" style={{ color: "#E87722" }} />
                       <span className="font-semibold text-sm">{pkg.name}</span>
                     </span>
                     <span className="text-center">
-                      <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded", pkg.purchase_type === "licitacion" ? "bg-[#1E3A8A]/10 text-[#1E3A8A]" : "bg-emerald-100 text-emerald-700")}>
+                      <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded", pkg.purchase_type === "licitacion" ? "bg-[#E87722]/10 text-[#E87722]" : "bg-emerald-100 text-emerald-700")}>
                         {pkg.purchase_type === "licitacion" ? "LIC" : "CD"}
                       </span>
                     </span>
-                    <span className="text-center" onClick={(e) => e.stopPropagation()}>{inlineStatusSelect(pkg)}</span>
+                    <span className="flex justify-center" onClick={(e) => e.stopPropagation()}>{sendSCButton(pkg, summaryLines.length === 0)}</span>
                     <span className="text-right text-xs font-mono">{summaryLines.length}</span>
                     <span className="text-right text-[11px]">{earliestDate}</span>
-                    <span className="text-right font-mono font-bold text-sm" style={{ color: "#1E3A8A" }}>${formatUsdInt(pkgTotal)}</span>
+                    <span className="text-right font-mono font-bold text-sm" style={{ color: "#E87722" }}>${formatUsdInt(pkgTotal)}</span>
                   </div>
 
                   {/* Expanded detail table */}
@@ -1433,7 +1496,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                                   >
                                     {idx === 0 ? (
                                       <td className="px-4 py-1.5 align-top" rowSpan={subEntry.lines.length}>
-                                        <div className="font-mono text-[10px] font-bold" style={{ color: "#1E3A8A" }}>{catEntry.catCode}</div>
+                                        <div className="font-mono text-[10px] font-bold" style={{ color: "#E87722" }}>{catEntry.catCode}</div>
                                         <div className="text-[11px] font-medium">{catEntry.catName}</div>
                                         <div className="text-[10px] text-muted-foreground mt-0.5">{subEntry.subCode} {subEntry.subName}</div>
                                       </td>
@@ -1444,7 +1507,7 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                                     </td>
                                     <td className="px-3 py-1.5">
                                       <div className="flex items-center gap-1.5">
-                                        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", line.insumoType === "material" ? "bg-blue-400" : line.insumoType === "mano_de_obra" ? "bg-amber-400" : line.insumoType === "servicio" ? "bg-emerald-400" : "bg-gray-400")} />
+                                        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", line.insumoType === "material" ? "bg-neutral-700" : line.insumoType === "mano_de_obra" ? "bg-amber-400" : line.insumoType === "servicio" ? "bg-emerald-400" : "bg-gray-400")} />
                                         <span className="text-[11px]">{line.insumoDescription}</span>
                                       </div>
                                     </td>
@@ -1457,9 +1520,9 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
                                 ))
                               ))
                             ))}
-                            <tr className="border-t-2 font-bold" style={{ background: "#F0F2F5", borderColor: "#1E3A8A" }}>
+                            <tr className="border-t-2 font-bold" style={{ background: "#F0F2F5", borderColor: "#E87722" }}>
                               <td colSpan={6} className="px-4 py-2 text-right text-xs uppercase tracking-wider">Total paquete</td>
-                              <td className="px-3 py-2 text-right font-mono text-sm" style={{ color: "#1E3A8A" }}>${formatUsdInt(pkgTotal)}</td>
+                              <td className="px-3 py-2 text-right font-mono text-sm" style={{ color: "#E87722" }}>${formatUsdInt(pkgTotal)}</td>
                               <td></td>
                             </tr>
                           </tbody>
@@ -1542,6 +1605,110 @@ export default function PaquetesPage({ params }: { params: Promise<{ id: string 
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Send SC confirmation dialog */}
+      <Dialog open={sendDialogPkg !== null} onOpenChange={(open) => !open && setSendDialogPkg(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShoppingCart className="h-5 w-5" />
+              Enviar Solicitud de Compra
+            </DialogTitle>
+          </DialogHeader>
+          {sendDialogPkg && (() => {
+            const lines = getPackageSummaryLines(sendDialogPkg.id);
+            const total = lines.reduce((s, l) => s + l.totalCost, 0);
+
+            // Aggregate by insumo + subcategory for the SC preview (same as createSCFromPackage)
+            type AggKey = string;
+            const aggMap = new Map<AggKey, { description: string; unit: string; subName: string; totalQty: number }>();
+            for (const cat of groups) {
+              for (const sub of cat.subcategories) {
+                for (const art of sub.articulos) {
+                  for (const ins of art.insumos) {
+                    const key = `${ins.compositionId}::${sendDialogPkg.id}`;
+                    if (!assignments.has(key)) continue;
+                    const realQty = art.totalQlQuantity * ins.compQuantity * (1 + ins.wastePct / 100);
+                    const aggKey = `${ins.insumoId}::${sub.id}`;
+                    const subName = `${cat.code}.${sub.code?.split(".")[1] || ""} ${sub.name}`;
+                    const prev = aggMap.get(aggKey);
+                    if (prev) prev.totalQty += realQty;
+                    else aggMap.set(aggKey, {
+                      description: ins.insumoDescription,
+                      unit: ins.insumoUnit,
+                      subName,
+                      totalQty: realQty,
+                    });
+                  }
+                }
+              }
+            }
+            const scLines = Array.from(aggMap.values());
+
+            return (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Se enviará una <strong>Solicitud de Compra</strong> al buzón de Compras con todo el contenido
+                  del paquete <strong className="text-foreground">&ldquo;{sendDialogPkg.name}&rdquo;</strong>.
+                  Una vez enviada, el paquete quedará bloqueado y no podrá editarse.
+                </p>
+
+                <div className="grid grid-cols-3 gap-3 text-xs">
+                  <div className="bg-muted/40 rounded-md p-2">
+                    <span className="text-muted-foreground block">Tipo de compra</span>
+                    <span className="font-semibold">
+                      {sendDialogPkg.purchase_type === "licitacion" ? "Licitación" : "Compra Directa"}
+                    </span>
+                  </div>
+                  <div className="bg-muted/40 rounded-md p-2">
+                    <span className="text-muted-foreground block">Líneas en la SC</span>
+                    <span className="font-semibold">{scLines.length}</span>
+                  </div>
+                  <div className="bg-muted/40 rounded-md p-2">
+                    <span className="text-muted-foreground block">Monto estimado</span>
+                    <span className="font-semibold" style={{ color: "#E87722" }}>
+                      ${formatUsdInt(total)} USD
+                    </span>
+                  </div>
+                </div>
+
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="grid grid-cols-[1fr_2fr_80px_60px] gap-0 px-3 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
+                    <span>EDT</span>
+                    <span>Descripción</span>
+                    <span className="text-right">Cantidad</span>
+                    <span className="text-center">Unidad</span>
+                  </div>
+                  <div className="max-h-[300px] overflow-auto">
+                    {scLines.map((line, idx) => (
+                      <div
+                        key={idx}
+                        className="grid grid-cols-[1fr_2fr_80px_60px] gap-0 px-3 py-1.5 text-xs border-b last:border-b-0"
+                      >
+                        <span className="truncate text-muted-foreground">{line.subName}</span>
+                        <span className="truncate">{line.description}</span>
+                        <span className="text-right font-mono">
+                          {line.totalQty.toLocaleString("es", { maximumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-center text-muted-foreground">{line.unit}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setSendDialogPkg(null)} disabled={sendingSC}>
+                    Cancelar
+                  </Button>
+                  <Button onClick={confirmSendSC} disabled={sendingSC || scLines.length === 0}>
+                    {sendingSC ? "Enviando..." : "Aceptar y enviar"}
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

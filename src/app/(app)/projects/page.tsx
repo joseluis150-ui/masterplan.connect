@@ -99,7 +99,7 @@ export default function ProjectsPage() {
         <div className="max-w-7xl mx-auto px-6 h-full flex items-center justify-between">
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-full.svg" alt="MasterPlan Connect" className="h-10" />
+            <img src="/logo-horizontal.svg" alt="MasterPlan Connect" className="h-9" />
           </div>
           <Button variant="ghost" size="sm" onClick={handleLogout}>
             <LogOut className="h-4 w-4 mr-2" />

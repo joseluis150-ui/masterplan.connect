@@ -23,10 +23,10 @@ export default async function ProjectLayout({
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-background">
       <ProjectSidebar project={project} projectId={id} />
       <main className="flex-1 overflow-auto">
-        <div className="p-6">{children}</div>
+        <div className="px-8 py-6 max-w-[1600px] mx-auto">{children}</div>
       </main>
     </div>
   );

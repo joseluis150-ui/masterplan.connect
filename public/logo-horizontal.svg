@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 220" width="900" height="220">
+  <title>MasterPlan Connect — Logo Horizontal Positivo</title>
+
+  <!-- Isotipo -->
+  <defs>
+    <mask id="slash-mask-h1">
+      <rect width="220" height="220" fill="white"/>
+      <polygon points="195,25 220,50 100,170 75,145" fill="black"/>
+      <polygon points="145,75 170,100 50,220 25,195" fill="black"/>
+    </mask>
+  </defs>
+  <g mask="url(#slash-mask-h1)">
+    <circle cx="110" cy="110" r="92" fill="#0A0A0A"/>
+    <circle cx="110" cy="110" r="50" fill="#FFFFFF"/>
+  </g>
+  <polygon points="195,25 210,25 90,145 75,145" fill="#E87722"/>
+  <polygon points="145,75 160,75 40,195 25,195" fill="#E87722"/>
+
+  <!-- Wordmark: MasterPlan. -->
+  <text x="260" y="115" font-family="Work Sans, Helvetica, Arial, sans-serif" font-weight="800" font-size="82" letter-spacing="-3" fill="#0A0A0A">MasterPlan<tspan fill="#E87722">.</tspan></text>
+
+  <!-- Sub: Connect -->
+  <text x="260" y="165" font-family="Work Sans, Helvetica, Arial, sans-serif" font-weight="400" font-size="34" letter-spacing="-0.5" fill="#737373">Connect</text>
+</svg>

@@ -4,6 +4,11 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ─────────────────────────────────────────────────────────────
+   MasterPlan Connect · Brand System v.01 / 2026
+   70 · 25 · 5 · Paper · Ink · Signal Amber
+   ───────────────────────────────────────────────────────────── */
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -39,54 +44,83 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
 
-  /* Bauhaus brand colors */
-  --color-bauhaus-blue: #1E3A8A;
-  --color-bauhaus-red: #DC2626;
-  --color-bauhaus-yellow: #FACC15;
-  --color-bauhaus-black: #0F0F0F;
+  /* 8pt baseline radii */
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: calc(var(--radius) * 0.75);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.5);
+  --radius-2xl: calc(var(--radius) * 2);
+  --radius-3xl: calc(var(--radius) * 2.5);
+  --radius-4xl: calc(var(--radius) * 3);
+
+  /* ── BRAND TOKENS · Sistema cromático oficial ── */
+  /* Primarios */
+  --color-ink-black: #0A0A0A;
+  --color-paper-white: #FFFFFF;
+  /* Acento */
+  --color-signal-amber: #E87722;
+  /* Escala neutral (Ash) */
+  --color-ink-900: #0A0A0A;
+  --color-ash-900: #1A1A1A;
+  --color-ash-700: #3D3D3D;
+  --color-ash-500: #737373;
+  --color-ash-300: #BFBFBF;
+  --color-ash-200: #E5E5E5;
+  --color-ash-50:  #FAFAFA;
+  /* Escala ámbar (solo estados y realce) */
+  --color-amber-700: #B85A0F;
+  --color-amber-500: #E87722;
+  --color-amber-300: #FDB67A;
+  --color-amber-100: #FFEEDC;
 }
 
 :root {
+  /* 70% Paper (fondos) */
   --background: #FFFFFF;
-  --foreground: #0F0F0F;
+  --foreground: #0A0A0A;          /* Ink Black */
   --card: #FFFFFF;
-  --card-foreground: #0F0F0F;
+  --card-foreground: #0A0A0A;
   --popover: #FFFFFF;
-  --popover-foreground: #0F0F0F;
-  --primary: #1E3A8A;
-  --primary-foreground: #FFFFFF;
-  --secondary: #F5F5F5;
-  --secondary-foreground: #0F0F0F;
-  --muted: #F5F5F5;
-  --muted-foreground: #525252;
-  --accent: #FACC15;
-  --accent-foreground: #0F0F0F;
+  --popover-foreground: #0A0A0A;
+
+  /* 5% Signal Amber · primary (CTAs y acentos) */
+  --primary: #E87722;
+  --primary-foreground: #FFFFFF;  /* Texto sobre amber: SIEMPRE white o ink, nunca grises */
+
+  /* 25% Ink · estructura / tipografía */
+  --secondary: #FAFAFA;           /* Ash 50 */
+  --secondary-foreground: #0A0A0A;
+  --muted: #FAFAFA;               /* Ash 50 */
+  --muted-foreground: #737373;    /* Ash 500 */
+  --accent: #FFEEDC;              /* Amber 100 */
+  --accent-foreground: #B85A0F;   /* Amber 700 */
+
   --destructive: #DC2626;
-  --border: #E5E5E5;
-  --input: #CBD5E1;
-  --ring: #1E3A8A;
-  --chart-1: #1E3A8A;
-  --chart-2: #FACC15;
-  --chart-3: #DC2626;
-  --chart-4: #166534;
-  --chart-5: #525252;
-  --radius: 0.375rem;
-  --sidebar: #0F0F0F;
+
+  --border: #E5E5E5;              /* Ash 200 */
+  --input: #BFBFBF;               /* Ash 300 */
+  --ring: #E87722;                /* Signal Amber */
+
+  /* Charts: amber scale + ink */
+  --chart-1: #E87722;
+  --chart-2: #B85A0F;
+  --chart-3: #FDB67A;
+  --chart-4: #0A0A0A;
+  --chart-5: #737373;
+
+  /* Radius: el brandbook no fija radio pero usa esquinas suaves en cards. 6px = radius-md */
+  --radius: 0.5rem;
+
+  /* Sidebar: Ink Black puro con amber como signal */
+  --sidebar: #0A0A0A;
   --sidebar-foreground: #FFFFFF;
-  --sidebar-primary: #1E3A8A;
+  --sidebar-primary: #E87722;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: rgba(255, 255, 255, 0.1);
+  --sidebar-accent: rgba(255, 255, 255, 0.06);
   --sidebar-accent-foreground: #FFFFFF;
-  --sidebar-border: rgba(255, 255, 255, 0.1);
-  --sidebar-ring: #1E3A8A;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #E87722;
 }
 
 @layer base {
@@ -95,21 +129,104 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Work Sans optimized rendering */
+    font-feature-settings: "ss01", "ss02", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.01em;
   }
   html {
     @apply font-sans;
   }
+
+  /* Hide native number input spinners (per brandbook cleanliness) */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  /* ── Jerarquía tipográfica oficial (brandbook §10) ── */
+  /* Una escala modular basada en 1.25 (cuarta menor) */
+  h1 {
+    font-weight: 800;
+    font-size: 1.75rem;     /* ~28px — H1 scaled for UI */
+    line-height: 1.14;
+    letter-spacing: -0.03em;
+  }
+  h2 {
+    font-weight: 700;
+    font-size: 1.5rem;      /* 24px */
+    line-height: 1.17;
+    letter-spacing: -0.02em;
+  }
+  h3 {
+    font-weight: 600;
+    font-size: 1rem;        /* 16px */
+    line-height: 1.375;
+    letter-spacing: -0.005em;
+  }
+  h4 {
+    font-weight: 600;
+    font-size: 0.875rem;    /* 14px */
+    line-height: 1.42;
+  }
 }
 
-/* Brandbook table styles */
-.brand-table thead th {
-  background: #F5F5F5;
-  font-size: 12px;
-  font-weight: 600;
+/* ── Utilidades de marca ── */
+
+/* Panel / card con sombra sutil (siguiendo estética brandbook pág 17) */
+.cl-panel {
+  @apply bg-card border border-border rounded-lg;
+  box-shadow: 0 1px 2px 0 rgb(10 10 10 / 0.04);
+}
+
+/* Datos / IDs / montos — IBM Plex Mono 500 con leve tracking */
+.data,
+.font-data {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  font-feature-settings: "tnum" 1;  /* tabular numbers */
+}
+
+/* Labels en Plex Mono uppercase (brandbook §9) */
+.label-mono {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 500;
+  font-size: 0.625rem;    /* 10px */
+  line-height: 1;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #0F0F0F;
-  height: 44px;
+  color: var(--muted-foreground);
+}
+
+/* Monto destacado (KPIs) */
+.kpi-value {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 500;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Row hover uniforme en tablas */
+.cl-row {
+  @apply transition-colors hover:bg-muted/60;
+}
+
+/* Brandbook table (legacy) */
+.brand-table thead th {
+  background: #FAFAFA;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #737373;
+  height: 40px;
 }
 
 .brand-table tbody tr {
@@ -120,9 +237,9 @@
   background: #FAFAFA;
 }
 
-/* Status badges */
-.badge-borrador { background: #F5F5F5; color: #525252; }
-.badge-pendiente { background: #FEF3C7; color: #92400E; }
-.badge-en-proceso { background: #DBEAFE; color: #1E3A8A; }
+/* Status badges (mantenidos) */
+.badge-borrador { background: #FAFAFA; color: #737373; }
+.badge-pendiente { background: #FFEEDC; color: #B85A0F; }
+.badge-en-proceso { background: #FFEEDC; color: #B85A0F; }
 .badge-aprobado { background: #DCFCE7; color: #166534; }
 .badge-rechazado { background: #FEE2E2; color: #991B1B; }

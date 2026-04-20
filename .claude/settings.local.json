@@ -36,7 +36,30 @@
       "Bash(node -e ':*)",
       "Bash(npm run:*)",
       "Bash(sudo npm:*)",
-      "Bash(npx vercel:*)"
+      "Bash(npx vercel:*)",
+      "Bash(grep -r \"SUPABASE_URL\\\\|supabaseUrl\\\\|NEXT_PUBLIC_SUPABASE_URL\" .env*)",
+      "Bash(gh auth:*)",
+      "Bash(brew install:*)",
+      "Bash(git config:*)",
+      "Read(//Users/jl/**)",
+      "Read(//Users/jl/.ssh/**)",
+      "Bash(ssh-keygen -t ed25519 -C \"joseluis150-ui@github\" -f ~/.ssh/id_ed25519 -N \"\")",
+      "Bash(ssh -o StrictHostKeyChecking=no -T git@github.com)",
+      "Bash(~/bin/gh auth:*)",
+      "Bash(ssh -T git@github.com)",
+      "Bash(curl -s -X POST https://api.github.com/repos/joseluis150-ui/masterplan.connect/pulls -H 'Accept: application/vnd.github+json' -d ':*)",
+      "Bash(ls ~/Downloads/*uplex* ~/Downloads/*uque* ~/Downloads/*uantif* ~/Downloads/*resupuesto*)",
+      "Bash(ls ~/Desktop/*uplex* ~/Desktop/*uque*)",
+      "Bash(ls -lt ~/Downloads/cuantificacion*)",
+      "Read(//tmp/**)",
+      "Bash(node -e \"const d = require\\('/tmp/ql_data.json'\\); console.log\\('Total rows:', d.length\\)\")",
+      "Bash(pandoc \"/Users/jl/Downloads/MasterPlanCompras_EspecificacionTecnica.docx\" -o /tmp/masterplan_compras.md)",
+      "Bash(cp \"/Users/jl/Downloads/files 2/01_isotipo_positivo.svg\" \"/Users/jl/Masterplan Connect.v2/public/isotipo.svg\")",
+      "Bash(cp \"/Users/jl/Downloads/files 2/02_isotipo_negativo.svg\" \"/Users/jl/Masterplan Connect.v2/public/isotipo-white.svg\")",
+      "Bash(cp \"/Users/jl/Downloads/files 2/03_isotipo_sobre_ambar.svg\" \"/Users/jl/Masterplan Connect.v2/public/isotipo-amber.svg\")",
+      "Bash(cp \"/Users/jl/Downloads/files 2/05_logo_horizontal_positivo.svg\" \"/Users/jl/Masterplan Connect.v2/public/logo-horizontal.svg\")",
+      "Bash(cp \"/Users/jl/Downloads/files 2/06_logo_horizontal_negativo.svg\" \"/Users/jl/Masterplan Connect.v2/public/logo-horizontal-white.svg\")",
+      "Bash(grep -v \":0$\")"
     ]
   }
 }

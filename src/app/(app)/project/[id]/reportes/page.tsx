@@ -122,7 +122,7 @@ export default function ReportesPage({ params }: { params: Promise<{ id: string 
           {grandTotal > 0 ? (
             <div className="space-y-3">
               {[
-                { label: "Materiales", value: grandMat, color: "bg-blue-500" },
+                { label: "Materiales", value: grandMat, color: "bg-amber-500" },
                 { label: "Mano de Obra", value: grandMo, color: "bg-green-500" },
                 { label: "Servicios/Global", value: grandGlo, color: "bg-amber-500" },
               ].map((item) => (

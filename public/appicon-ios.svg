@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>MasterPlan Connect — App Icon iOS/iPadOS</title>
+
+  <!-- iOS Squircle: radius = 22.5% of side = 115.2px -->
+  <rect x="0" y="0" width="512" height="512" rx="115" ry="115" fill="#0A0A0A"/>
+
+  <!-- Isotipo al 65% del squircle, centrado.
+       Isotipo original: 220x220. Target: 332px. Scale: 1.509. Offset: 90. -->
+  <g transform="translate(90, 90) scale(1.509)">
+    <defs>
+      <mask id="icon-mask-ios">
+        <rect width="220" height="220" fill="white"/>
+        <polygon points="195,25 220,50 100,170 75,145" fill="black"/>
+        <polygon points="145,75 170,100 50,220 25,195" fill="black"/>
+      </mask>
+    </defs>
+    <g mask="url(#icon-mask-ios)">
+      <circle cx="110" cy="110" r="92" fill="#FFFFFF"/>
+      <circle cx="110" cy="110" r="50" fill="#0A0A0A"/>
+    </g>
+    <polygon points="195,25 210,25 90,145 75,145" fill="#E87722"/>
+    <polygon points="145,75 160,75 40,195 25,195" fill="#E87722"/>
+  </g>
+</svg>

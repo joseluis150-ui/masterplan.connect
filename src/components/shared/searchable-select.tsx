@@ -106,7 +106,7 @@ export function SearchableSelect({
         onClick={() => setOpen(!open)}
         className={cn(
           "flex items-center justify-between w-full h-8 px-2 py-1 text-sm border rounded-md bg-background",
-          "hover:border-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#1E3A8A] focus:ring-offset-1",
+          "hover:border-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#E87722] focus:ring-offset-1",
           !selected && "text-muted-foreground"
         )}
         style={{ borderColor: "#CBD5E1" }}
@@ -164,7 +164,7 @@ export function SearchableSelect({
                   onClick={() => handleSelect(emptyValue)}
                   className={cn(
                     "w-full text-left px-3 py-2 text-sm hover:bg-[#F5F5F5] transition-colors",
-                    value === emptyValue && "bg-[#DBEAFE] text-[#1E3A8A] font-medium"
+                    value === emptyValue && "bg-[#DBEAFE] text-[#E87722] font-medium"
                   )}
                 >
                   {emptyLabel || "(Ninguno)"}
@@ -182,7 +182,7 @@ export function SearchableSelect({
                     onClick={() => handleSelect(option.value)}
                     className={cn(
                       "w-full text-left px-3 py-2 text-sm hover:bg-[#F5F5F5] transition-colors flex items-center gap-2",
-                      value === option.value && "bg-[#DBEAFE] text-[#1E3A8A] font-medium"
+                      value === option.value && "bg-[#DBEAFE] text-[#E87722] font-medium"
                     )}
                   >
                     <span className="flex-1 break-words leading-snug">{option.label}</span>

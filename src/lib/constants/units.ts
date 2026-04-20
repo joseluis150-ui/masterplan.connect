@@ -50,16 +50,17 @@ export const PACKAGE_STATUSES = [
   { value: "aprobado", label: "Aprobado" },
 ] as const;
 
-// Módulo Compras
+// Módulo Compras — SC status is DERIVED from lines (not manually set):
+// pending = no OC yet / partial = some OC but not all / completed = fully ordered / cancelled = manual
 export const SC_STATUSES = [
   { value: "pending", label: "Pendiente", color: "#F59E0B" },
-  { value: "in_progress", label: "En proceso", color: "#3B82F6" },
+  { value: "partial", label: "Solicitud parcial", color: "#E87722" },
   { value: "completed", label: "Completada", color: "#10B981" },
   { value: "cancelled", label: "Cancelada", color: "#EF4444" },
 ] as const;
 
 export const OC_STATUSES = [
-  { value: "open", label: "Abierta", color: "#3B82F6" },
+  { value: "open", label: "Abierta", color: "#E87722" },
   { value: "closed", label: "Cerrada", color: "#10B981" },
   { value: "cancelled", label: "Cancelada", color: "#EF4444" },
 ] as const;

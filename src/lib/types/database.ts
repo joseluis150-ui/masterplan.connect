@@ -7,7 +7,7 @@ export type PackageStatus = "borrador" | "aprobado";
 export type DependencyType = "FS" | "SS" | "FF" | "SF";
 export type ProrationCriteria = "area" | "monto";
 
-export type PurchaseRequestStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type PurchaseRequestStatus = "pending" | "partial" | "completed" | "cancelled";
 export type PurchaseRequestOrigin = "package" | "manual";
 export type PurchaseOrderStatus = "open" | "closed" | "cancelled";
 export type AdvanceType = "amount" | "percentage";
@@ -84,6 +84,8 @@ export interface EdtTemplate {
   created_at: string;
 }
 
+export type InsumoOrigin = "planning" | "execution";
+
 export interface Insumo {
   id: string;
   project_id: string;
@@ -99,6 +101,7 @@ export interface Insumo {
   comment: string | null;
   reference: string | null;
   needs_review: boolean;
+  origin: InsumoOrigin;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -242,6 +245,9 @@ export interface PurchaseRequestLine {
   created_at: string;
 }
 
+export type PaymentTermsType = "contado" | "credito" | "contrato" | "contra_entrega";
+export type MeasurementFrequency = "semanal" | "quincenal" | "mensual";
+
 export interface PurchaseOrder {
   id: string;
   project_id: string;
@@ -258,6 +264,12 @@ export interface PurchaseOrder {
   retention_pct: number;
   return_condition: string | null;
   comment: string | null;
+  // Payment terms
+  payment_terms_type: PaymentTermsType;
+  credit_days: number | null;
+  measurement_frequency: MeasurementFrequency | null;
+  payment_notes: string | null;
+  audit_log: AuditEntry[];
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -266,11 +278,20 @@ export interface PurchaseOrder {
   request_number?: string;
 }
 
+export interface AuditEntry {
+  at: string;           // ISO date
+  by?: string | null;   // user id (optional)
+  changes: { field: string; from: string | number | boolean | null; to: string | number | boolean | null }[];
+  note?: string;
+}
+
 export interface PurchaseOrderLine {
   id: string;
   order_id: string;
   request_line_id: string | null;
   subcategory_id: string;
+  sector_id: string | null;
+  insumo_id: string | null;
   description: string;
   quantity: number;
   unit: string;
@@ -279,10 +300,29 @@ export interface PurchaseOrderLine {
   created_at: string;
 }
 
+export type ReceptionStatus = "pending_approval" | "received" | "invoiced" | "cancelled";
+export type ReceptionType = "regular" | "advance";
+
+export interface ReceptionNote {
+  id: string;
+  order_id: string;
+  number: number;
+  date: string;
+  status: ReceptionStatus;
+  type: ReceptionType;
+  comment: string | null;
+  created_by: string | null;
+  created_at: string;
+  // enriched
+  lines?: DeliveryNote[];
+  total_gross?: number;
+}
+
 export interface DeliveryNote {
   id: string;
-  order_line_id: string;
-  date: string;
+  reception_id: string | null;
+  order_line_id: string | null;
+  date: string | null;
   quantity_received: number;
   unit_price: number;
   gross_amount: number;
@@ -298,12 +338,16 @@ export interface DeliveryNote {
 
 export interface Invoice {
   id: string;
-  delivery_note_id: string;
+  project_id: string | null;
+  reception_id: string | null;
+  delivery_note_id: string | null;
   invoice_number: string;
   invoice_date: string;
   amount: number;
   status: InvoiceStatus;
   comment: string | null;
+  attachment_url: string | null;
+  attachment_name: string | null;
   created_by: string | null;
   created_at: string;
 }
@@ -316,6 +360,8 @@ export interface Payment {
   type: PaymentType;
   payment_date: string;
   amount: number;
+  currency: string | null;       // Currency of the payment (can differ from OC)
+  exchange_rate: number | null;  // Rate used at payment time (1 USD = N local)
   comment: string | null;
   created_by: string | null;
   created_at: string;

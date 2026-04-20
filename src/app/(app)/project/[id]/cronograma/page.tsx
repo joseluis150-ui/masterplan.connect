@@ -317,7 +317,7 @@ export default function CronogramaPage({ params }: { params: Promise<{ id: strin
                           ? <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                           : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
                         }
-                        <span className="font-mono text-xs font-bold" style={{ color: "#1E3A8A" }}>{cat.code}</span>
+                        <span className="font-mono text-xs font-bold" style={{ color: "#E87722" }}>{cat.code}</span>
                         <span className="text-sm font-semibold truncate">{cat.name}</span>
                         <span className="text-[10px] text-muted-foreground ml-auto shrink-0">
                           {catAllLines.length} líneas
@@ -329,7 +329,7 @@ export default function CronogramaPage({ params }: { params: Promise<{ id: strin
                           key={weekNum}
                           className={cn(
                             "w-9 shrink-0 border-r",
-                            catActiveWeeks.has(weekNum) ? "bg-[#1E3A8A]/20" : ""
+                            catActiveWeeks.has(weekNum) ? "bg-[#E87722]/20" : ""
                           )}
                           style={{ height: 28 }}
                         />
@@ -365,7 +365,7 @@ export default function CronogramaPage({ params }: { params: Promise<{ id: strin
                                 key={weekNum}
                                 className={cn(
                                   "w-9 shrink-0 border-r",
-                                  subActiveWeeks.has(weekNum) ? "bg-[#1E3A8A]/15" : ""
+                                  subActiveWeeks.has(weekNum) ? "bg-[#E87722]/15" : ""
                                 )}
                                 style={{ height: 24 }}
                               />
@@ -390,7 +390,7 @@ export default function CronogramaPage({ params }: { params: Promise<{ id: strin
                                   className={cn(
                                     "w-9 shrink-0 border-r cursor-pointer transition-colors",
                                     line.activeWeeks.has(weekNum)
-                                      ? "bg-[#1E3A8A] hover:bg-[#1E3A8A]/70"
+                                      ? "bg-[#E87722] hover:bg-[#E87722]/70"
                                       : "hover:bg-muted/40"
                                   )}
                                   onMouseDown={() => handleMouseDown(line.lineId, weekNum)}

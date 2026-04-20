@@ -372,7 +372,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: "#1E3A8A" }} />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: "#E87722" }} />
       </div>
     );
   }
@@ -423,7 +423,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                 </div>
                 <div className="flex items-center gap-6">
                   <span className="text-xs text-muted-foreground">{group.items.length} líneas</span>
-                  <span className="text-base font-bold font-mono" style={{ color: isSinFecha ? "#D97706" : "#1E3A8A" }}>
+                  <span className="text-base font-bold font-mono" style={{ color: isSinFecha ? "#D97706" : "#E87722" }}>
                     {fmtUsd(groupTotal)}
                   </span>
                 </div>
@@ -463,7 +463,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                               <div className="flex items-center gap-1.5">
                                 <span className={cn(
                                   "w-1.5 h-1.5 rounded-full shrink-0",
-                                  item.insumoType === "material" ? "bg-blue-400" :
+                                  item.insumoType === "material" ? "bg-neutral-700" :
                                   item.insumoType === "mano_de_obra" ? "bg-amber-400" :
                                   item.insumoType === "servicio" ? "bg-emerald-400" : "bg-gray-400"
                                 )} />
@@ -484,7 +484,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                         <td colSpan={5} className="px-5 py-2 text-right text-[10px] uppercase tracking-wider">
                           Subtotal {group.label}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-sm" style={{ color: "#1E3A8A" }}>
+                        <td className="px-3 py-2 text-right font-mono text-sm" style={{ color: "#E87722" }}>
                           ${formatNumber(groupTotal, 2)}
                         </td>
                         <td />
@@ -500,7 +500,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
         {/* Grand total */}
         <div className="border rounded-lg px-5 py-3 flex items-center justify-between" style={{ background: "#F0F2F5" }}>
           <span className="font-bold text-sm uppercase tracking-wider">Total General</span>
-          <span className="text-xl font-bold font-mono" style={{ color: "#1E3A8A" }}>{fmtUsd(grandTotal)}</span>
+          <span className="text-xl font-bold font-mono" style={{ color: "#E87722" }}>{fmtUsd(grandTotal)}</span>
         </div>
       </div>
 
@@ -510,7 +510,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
           {/* Chart header */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5" style={{ color: "#1E3A8A" }} />
+              <TrendingUp className="h-5 w-5" style={{ color: "#E87722" }} />
               <h2 className="text-lg font-bold">
                 Flujo de Efectivo — {
                   periodMode === "week" ? "Por semana" :
@@ -531,7 +531,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                   className={cn(
                     "flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors",
                     periodMode === opt.value
-                      ? "bg-[#1E3A8A] text-white"
+                      ? "bg-[#E87722] text-white"
                       : "hover:bg-muted/50 text-muted-foreground"
                   )}
                 >

@@ -37,12 +37,11 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4" style={{ background: "#0F0F0F" }}>
+    <div className="flex min-h-screen items-center justify-center p-4" style={{ background: "#0A0A0A" }}>
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/isotipo-black.svg" alt="MasterPlan Connect" className="h-14 mx-auto mb-2" />
-          <CardTitle className="text-xl font-bold">MasterPlan Connect</CardTitle>
+          <img src="/logo-vertical.svg" alt="MasterPlan Connect" className="h-20 mx-auto mb-3" />
           <CardDescription>
             {isSignUp ? "Crear cuenta nueva" : "Iniciar sesión"}
           </CardDescription>

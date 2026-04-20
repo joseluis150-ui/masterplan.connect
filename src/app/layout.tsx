@@ -1,18 +1,22 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Geist_Mono } from "next/font/google";
+import { Work_Sans, IBM_Plex_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
-const spaceGrotesk = Space_Grotesk({
+// MasterPlan Connect brand typography (per brandbook v.01):
+// Primary: Work Sans — display 700–800, body 400–500, emphasis 600
+// Secondary (data only): IBM Plex Mono — 400 metadata, 500 data/IDs
+const workSans = Work_Sans({
   variable: "--font-sans",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700", "800"],
 });
 
-const geistMono = Geist_Mono({
+const ibmPlexMono = IBM_Plex_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
@@ -31,7 +35,7 @@ export default function RootLayout({
   return (
     <html
       lang="es"
-      className={`${spaceGrotesk.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${workSans.variable} ${ibmPlexMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <TooltipProvider>

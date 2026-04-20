@@ -146,16 +146,16 @@ export function ColumnFilter({
         <span className="uppercase text-[11px] font-semibold tracking-wider">{label}</span>
         {isSorted ? (
           sortDirection === "asc" ? (
-            <ArrowUpNarrowWide className="h-3 w-3 shrink-0 text-[#1E3A8A]" />
+            <ArrowUpNarrowWide className="h-3 w-3 shrink-0 text-[#E87722]" />
           ) : (
-            <ArrowDownWideNarrow className="h-3 w-3 shrink-0 text-[#1E3A8A]" />
+            <ArrowDownWideNarrow className="h-3 w-3 shrink-0 text-[#E87722]" />
           )
         ) : (
           <ListFilter
             className={cn(
               "h-3 w-3 shrink-0 transition-colors",
               isFiltered
-                ? "text-[#1E3A8A]"
+                ? "text-[#E87722]"
                 : "text-muted-foreground/40 group-hover:text-muted-foreground"
             )}
           />
@@ -185,7 +185,7 @@ export function ColumnFilter({
                   onClick={() => handleSort("asc")}
                   className={cn(
                     "flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-[#F5F5F5] transition-colors",
-                    sortDirection === "asc" && "bg-[#EFF6FF] font-medium text-[#1E3A8A]"
+                    sortDirection === "asc" && "bg-[#EFF6FF] font-medium text-[#E87722]"
                   )}
                 >
                   <ArrowUpNarrowWide className="h-3.5 w-3.5" />
@@ -196,7 +196,7 @@ export function ColumnFilter({
                   onClick={() => handleSort("desc")}
                   className={cn(
                     "flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-[#F5F5F5] transition-colors",
-                    sortDirection === "desc" && "bg-[#EFF6FF] font-medium text-[#1E3A8A]"
+                    sortDirection === "desc" && "bg-[#EFF6FF] font-medium text-[#E87722]"
                   )}
                 >
                   <ArrowDownWideNarrow className="h-3.5 w-3.5" />
@@ -232,7 +232,7 @@ export function ColumnFilter({
               <button
                 type="button"
                 onClick={selectAll}
-                className="text-[#1E3A8A] hover:underline font-medium"
+                className="text-[#E87722] hover:underline font-medium"
               >
                 Todos
               </button>
@@ -240,7 +240,7 @@ export function ColumnFilter({
               <button
                 type="button"
                 onClick={deselectAll}
-                className="text-[#1E3A8A] hover:underline font-medium"
+                className="text-[#E87722] hover:underline font-medium"
               >
                 Ninguno
               </button>
@@ -277,7 +277,7 @@ export function ColumnFilter({
                       type="checkbox"
                       checked={isChecked(val)}
                       onChange={() => toggleValue(val)}
-                      className="h-3.5 w-3.5 rounded accent-[#1E3A8A] cursor-pointer"
+                      className="h-3.5 w-3.5 rounded accent-[#E87722] cursor-pointer"
                     />
                     <span className="truncate flex-1" title={val}>{val || "(Vacío)"}</span>
                   </label>

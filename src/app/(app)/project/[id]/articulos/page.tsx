@@ -832,7 +832,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                             />
                           </button>
                         </td>
-                        <td className="px-2 py-1.5 font-mono text-xs font-bold" style={{ color: "#1E3A8A" }}>{art.number}</td>
+                        <td className="px-2 py-1.5 font-mono text-xs font-bold" style={{ color: "#E87722" }}>{art.number}</td>
                         <td className="px-2 py-1.5 font-medium overflow-hidden text-ellipsis whitespace-nowrap" title={art.description}>{art.description}</td>
                         <td className="px-2 py-1.5 text-center text-xs">{art.unit}</td>
                         <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_mat)}</td>
@@ -892,7 +892,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                                             <button
                                               type="button"
                                               onClick={() => openInsumoEdit(comp.insumo)}
-                                              className="text-left hover:text-[#1E3A8A] hover:underline transition-colors cursor-pointer text-xs"
+                                              className="text-left hover:text-[#E87722] hover:underline transition-colors cursor-pointer text-xs"
                                               title={comp.insumo.description}
                                             >
                                               {comp.insumo.description}
@@ -1025,7 +1025,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-3">
                 <div className="border rounded-lg p-3">
-                  <p className="text-2xl font-bold" style={{ color: "#1E3A8A" }}>{importResult.articulos.length}</p>
+                  <p className="text-2xl font-bold" style={{ color: "#E87722" }}>{importResult.articulos.length}</p>
                   <p className="text-xs text-muted-foreground">Artículos</p>
                 </div>
                 <div className="border rounded-lg p-3">
@@ -1147,7 +1147,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
               <>
                 {loadingSourceArts ? (
                   <div className="flex items-center justify-center py-12">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2" style={{ borderColor: "#1E3A8A" }} />
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2" style={{ borderColor: "#E87722" }} />
                   </div>
                 ) : sourceArticulos.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-8">Este proyecto no tiene artículos</p>
@@ -1196,11 +1196,11 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                               return (
                                 <tr
                                   key={art.id}
-                                  className={`border-t cursor-pointer transition-colors ${isSelected ? "bg-[#1E3A8A]/5" : "hover:bg-muted/30"}`}
+                                  className={`border-t cursor-pointer transition-colors ${isSelected ? "bg-[#E87722]/5" : "hover:bg-muted/30"}`}
                                   onClick={() => toggleSourceArt(art.id)}
                                 >
                                   <td className="px-3 py-1.5 text-center">
-                                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${isSelected ? "bg-[#1E3A8A] border-[#1E3A8A]" : "border-muted-foreground/30"}`}>
+                                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${isSelected ? "bg-[#E87722] border-[#E87722]" : "border-muted-foreground/30"}`}>
                                       {isSelected && <Check className="h-3 w-3 text-white" />}
                                     </div>
                                   </td>
