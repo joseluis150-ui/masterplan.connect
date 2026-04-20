@@ -11,7 +11,8 @@ export type ActivityActionType =
   | "oc_closed"
   | "reception_created"
   | "invoice_registered"
-  | "payment_registered";
+  | "payment_registered"
+  | "supplier_created";
 
 export interface ActivityLogEntry {
   id: string;

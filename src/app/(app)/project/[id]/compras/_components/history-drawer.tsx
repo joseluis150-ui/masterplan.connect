@@ -17,6 +17,7 @@ import {
   Pencil,
   XCircle,
   CheckCircle2,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { markActivityUndone, type ActivityLogEntry, type ActivityActionType } from "@/lib/utils/activity-log";
@@ -39,6 +40,7 @@ const ICON_BY_ACTION: Record<ActivityActionType, typeof History> = {
   reception_created: PackageCheck,
   invoice_registered: Receipt,
   payment_registered: Wallet,
+  supplier_created: Users,
 };
 
 const COLOR_BY_ACTION: Record<ActivityActionType, string> = {
@@ -53,6 +55,7 @@ const COLOR_BY_ACTION: Record<ActivityActionType, string> = {
   reception_created: "text-amber-600",
   invoice_registered: "text-[#B85A0F]",
   payment_registered: "text-green-600",
+  supplier_created: "text-muted-foreground",
 };
 
 function relativeTime(iso: string): string {

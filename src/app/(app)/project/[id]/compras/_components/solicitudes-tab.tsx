@@ -50,6 +50,7 @@ import type {
   Sector,
 } from "@/lib/types/database";
 import { InsumoPicker } from "./insumo-picker";
+import { SupplierPicker } from "@/components/shared/supplier-picker";
 import { cn } from "@/lib/utils";
 import { logActivity } from "@/lib/utils/activity-log";
 import { createAdvanceReception, resolveAdvanceAmount } from "@/lib/utils/oc-advance";
@@ -104,6 +105,8 @@ export function SolicitudesTab({ projectId }: Props) {
   // Generate OC dialog (from a SC)
   const [generateOCFor, setGenerateOCFor] = useState<SCWithLines | null>(null);
   const [ocSupplier, setOcSupplier] = useState("");
+  const [ocSupplierId, setOcSupplierId] = useState<string | null>(null);
+  const [projectSuppliers, setProjectSuppliers] = useState<import("@/lib/types/database").Supplier[]>([]);
   const [ocCurrency, setOcCurrency] = useState("USD");
   // Payment terms
   const [ocPaymentType, setOcPaymentType] = useState<"contado" | "credito" | "contrato" | "contra_entrega">("contado");
@@ -138,7 +141,7 @@ export function SolicitudesTab({ projectId }: Props) {
   const [generatingOC, setGeneratingOC] = useState(false);
 
   const loadData = useCallback(async () => {
-    const [reqRes, catsRes, subsRes, ordersRes, insumosRes, projectRes, allOcLinesRes, sectorsRes] = await Promise.all([
+    const [reqRes, catsRes, subsRes, ordersRes, insumosRes, projectRes, allOcLinesRes, sectorsRes, supsRes] = await Promise.all([
       supabase
         .from("purchase_requests")
         .select("*, lines:purchase_request_lines(*)")
@@ -157,6 +160,7 @@ export function SolicitudesTab({ projectId }: Props) {
         .select("*, order:purchase_orders(number, supplier, currency, issue_date, project_id)")
         .order("created_at", { ascending: false }),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
+      supabase.from("suppliers").select("*").eq("project_id", projectId).order("name"),
     ]);
 
     setRequests((reqRes.data || []) as SCWithLines[]);
@@ -164,6 +168,7 @@ export function SolicitudesTab({ projectId }: Props) {
     setSubcategories(subsRes.data || []);
     setInsumos((insumosRes.data || []) as Insumo[]);
     setSectors((sectorsRes.data || []) as Sector[]);
+    setProjectSuppliers((supsRes.data || []) as import("@/lib/types/database").Supplier[]);
     if (projectRes.data) setProject(projectRes.data as Project);
 
     // Filter historical OC lines by project + enrich
@@ -440,6 +445,7 @@ export function SolicitudesTab({ projectId }: Props) {
   function openGenerateOC(sc: SCWithLines) {
     setGenerateOCFor(sc);
     setOcSupplier("");
+    setOcSupplierId(null);
     setOcCurrency(project?.local_currency || "USD");
     setOcPaymentType("contado");
     setOcCreditDays(30);
@@ -505,8 +511,8 @@ export function SolicitudesTab({ projectId }: Props) {
 
   async function submitGenerateOC() {
     if (!generateOCFor) return;
-    if (!ocSupplier.trim()) {
-      toast.error("Proveedor es requerido");
+    if (!ocSupplierId || !ocSupplier.trim()) {
+      toast.error("Proveedor es requerido — seleccionalo de la lista");
       return;
     }
 
@@ -582,6 +588,7 @@ export function SolicitudesTab({ projectId }: Props) {
           number,
           request_id: generateOCFor.id,
           supplier: ocSupplier.trim(),
+          supplier_id: ocSupplierId,
           currency: ocCurrency,
           has_advance: ocHasAdvance,
           advance_amount: ocHasAdvance ? ocAdvanceAmount : 0,
@@ -1416,11 +1423,16 @@ export function SolicitudesTab({ projectId }: Props) {
                     <div className="grid grid-cols-[1fr_120px] gap-3">
                       <div>
                         <label className="text-xs font-medium text-muted-foreground">Proveedor *</label>
-                        <Input
+                        <SupplierPicker
                           className="mt-1"
-                          value={ocSupplier}
-                          onChange={(e) => setOcSupplier(e.target.value)}
-                          placeholder="Nombre del proveedor"
+                          projectId={projectId}
+                          suppliers={projectSuppliers}
+                          selectedId={ocSupplierId}
+                          onSelect={(s) => {
+                            setOcSupplierId(s.id);
+                            setOcSupplier(s.name);
+                          }}
+                          onSupplierCreated={(s) => setProjectSuppliers((prev) => [...prev, s].sort((a, b) => a.name.localeCompare(b.name)))}
                         />
                       </div>
                       <div>

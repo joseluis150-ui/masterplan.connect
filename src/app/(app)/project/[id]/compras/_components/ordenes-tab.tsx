@@ -51,6 +51,7 @@ import type {
 } from "@/lib/types/database";
 import { InsumoPicker } from "./insumo-picker";
 import { ColumnFilter, matchesColumnFilter } from "./column-filter";
+import { SupplierPicker } from "@/components/shared/supplier-picker";
 import { cn } from "@/lib/utils";
 import { logActivity } from "@/lib/utils/activity-log";
 import { createAdvanceReception, resolveAdvanceAmount } from "@/lib/utils/oc-advance";
@@ -123,6 +124,8 @@ export function OrdenesTab({ projectId }: Props) {
   // Create OC dialog
   const [createOpen, setCreateOpen] = useState(false);
   const [newSupplier, setNewSupplier] = useState("");
+  const [newSupplierId, setNewSupplierId] = useState<string | null>(null);
+  const [suppliersList, setSuppliersList] = useState<import("@/lib/types/database").Supplier[]>([]);
   const [newCurrency, setNewCurrency] = useState("USD");
   const [newHasAdvance, setNewHasAdvance] = useState(false);
   const [newAdvanceAmount, setNewAdvanceAmount] = useState(0);
@@ -152,6 +155,7 @@ export function OrdenesTab({ projectId }: Props) {
   // Edit OC dialog
   const [editingOC, setEditingOC] = useState<OCWithLines | null>(null);
   const [editSupplier, setEditSupplier] = useState("");
+  const [editSupplierId, setEditSupplierId] = useState<string | null>(null);
   const [editCurrency, setEditCurrency] = useState("USD");
   const [editAmortPct, setEditAmortPct] = useState(0);
   const [editRetentionPct, setEditRetentionPct] = useState(0);
@@ -163,7 +167,7 @@ export function OrdenesTab({ projectId }: Props) {
   const [savingEdit, setSavingEdit] = useState(false);
 
   const loadData = useCallback(async () => {
-    const [ordRes, catsRes, subsRes, reqRes, sectorsRes, insumosRes, projectRes] = await Promise.all([
+    const [ordRes, catsRes, subsRes, reqRes, sectorsRes, insumosRes, projectRes, supsRes] = await Promise.all([
       supabase
         .from("purchase_orders")
         .select("*, lines:purchase_order_lines(*)")
@@ -179,7 +183,9 @@ export function OrdenesTab({ projectId }: Props) {
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.from("insumos").select("*").eq("project_id", projectId).order("code"),
       supabase.from("projects").select("*").eq("id", projectId).single(),
+      supabase.from("suppliers").select("*").eq("project_id", projectId).order("name"),
     ]);
+    setSuppliersList((supsRes.data || []) as import("@/lib/types/database").Supplier[]);
     const orderList = (ordRes.data || []) as OCWithLines[];
     setOrders(orderList);
     setCategories(catsRes.data || []);
@@ -216,8 +222,8 @@ export function OrdenesTab({ projectId }: Props) {
 
   // Create OC
   async function createOC() {
-    if (!newSupplier.trim()) {
-      toast.error("Proveedor es requerido");
+    if (!newSupplierId || !newSupplier.trim()) {
+      toast.error("Proveedor es requerido — seleccionalo de la lista");
       return;
     }
     if (newLines.length === 0) {
@@ -270,6 +276,7 @@ export function OrdenesTab({ projectId }: Props) {
           project_id: projectId,
           number,
           supplier: newSupplier.trim(),
+          supplier_id: newSupplierId,
           currency: newCurrency,
           has_advance: newHasAdvance,
           advance_amount: newHasAdvance ? newAdvanceAmount : 0,
@@ -352,6 +359,7 @@ export function OrdenesTab({ projectId }: Props) {
 
   function resetCreateForm() {
     setNewSupplier("");
+    setNewSupplierId(null);
     setNewCurrency(project?.local_currency || "USD");
     setNewHasAdvance(false);
     setNewAdvanceAmount(0);
@@ -564,6 +572,7 @@ export function OrdenesTab({ projectId }: Props) {
   function openEditDialog(oc: OCWithLines) {
     setEditingOC(oc);
     setEditSupplier(oc.supplier);
+    setEditSupplierId(oc.supplier_id || null);
     setEditCurrency(oc.currency);
     setEditAmortPct(Number(oc.amortization_pct || 0));
     setEditRetentionPct(Number(oc.retention_pct || 0));
@@ -686,6 +695,7 @@ export function OrdenesTab({ projectId }: Props) {
         .from("purchase_orders")
         .update({
           supplier: editSupplier.trim(),
+          supplier_id: editSupplierId,
           currency: editCurrency,
           amortization_pct: editAmortPct,
           retention_pct: editRetentionPct,
@@ -1757,11 +1767,13 @@ export function OrdenesTab({ projectId }: Props) {
             <div className="grid grid-cols-[1fr_160px] gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground">Proveedor *</label>
-                <Input
+                <SupplierPicker
                   className="mt-1"
-                  value={newSupplier}
-                  onChange={(e) => setNewSupplier(e.target.value)}
-                  placeholder="Nombre del proveedor"
+                  projectId={projectId}
+                  suppliers={suppliersList}
+                  selectedId={newSupplierId}
+                  onSelect={(s) => { setNewSupplierId(s.id); setNewSupplier(s.name); }}
+                  onSupplierCreated={(s) => setSuppliersList((prev) => [...prev, s].sort((a, b) => a.name.localeCompare(b.name)))}
                 />
               </div>
               <div>
@@ -2077,7 +2089,7 @@ export function OrdenesTab({ projectId }: Props) {
               <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>
                 Cancelar
               </Button>
-              <Button onClick={createOC} disabled={creating || newLines.length === 0 || !newSupplier.trim()}>
+              <Button onClick={createOC} disabled={creating || newLines.length === 0 || !newSupplierId}>
                 {creating ? "Creando..." : "Crear Orden"}
               </Button>
             </div>
@@ -2585,10 +2597,13 @@ export function OrdenesTab({ projectId }: Props) {
               <div className="grid grid-cols-[2fr_120px] gap-3">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground">Proveedor</label>
-                  <Input
+                  <SupplierPicker
                     className="mt-1"
-                    value={editSupplier}
-                    onChange={(e) => setEditSupplier(e.target.value)}
+                    projectId={projectId}
+                    suppliers={suppliersList}
+                    selectedId={editSupplierId}
+                    onSelect={(s) => { setEditSupplierId(s.id); setEditSupplier(s.name); }}
+                    onSupplierCreated={(s) => setSuppliersList((prev) => [...prev, s].sort((a, b) => a.name.localeCompare(b.name)))}
                   />
                 </div>
                 <div>

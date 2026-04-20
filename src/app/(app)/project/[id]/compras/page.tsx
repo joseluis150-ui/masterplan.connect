@@ -2,7 +2,8 @@
 
 import { useState, use } from "react";
 import { cn } from "@/lib/utils";
-import { FileText, ClipboardList, TrendingUp, Receipt, HandCoins } from "lucide-react";
+import { FileText, ClipboardList, TrendingUp, Receipt, HandCoins, Users } from "lucide-react";
+import { ProveedoresTab } from "./_components/proveedores-tab";
 import { SolicitudesTab } from "./_components/solicitudes-tab";
 import { OrdenesTab } from "./_components/ordenes-tab";
 import { FacturacionTab } from "./_components/facturacion-tab";
@@ -10,9 +11,10 @@ import { AnticiposTab } from "./_components/anticipos-tab";
 import { AvanceTab } from "./_components/avance-tab";
 import { HistoryDrawer } from "./_components/history-drawer";
 
-type TabKey = "solicitudes" | "ordenes" | "anticipos" | "facturacion" | "avance";
+type TabKey = "proveedores" | "solicitudes" | "ordenes" | "anticipos" | "facturacion" | "avance";
 
 const TABS: { key: TabKey; label: string; icon: typeof FileText }[] = [
+  { key: "proveedores", label: "Proveedores", icon: Users },
   { key: "solicitudes", label: "Solicitudes", icon: ClipboardList },
   { key: "ordenes", label: "Órdenes de Compra", icon: FileText },
   { key: "anticipos", label: "Anticipos dados", icon: HandCoins },
@@ -22,7 +24,7 @@ const TABS: { key: TabKey; label: string; icon: typeof FileText }[] = [
 
 export default function ComprasPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: projectId } = use(params);
-  const [activeTab, setActiveTab] = useState<TabKey>("solicitudes");
+  const [activeTab, setActiveTab] = useState<TabKey>("proveedores");
   // Force refresh of active tab when an undo happens
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -62,6 +64,7 @@ export default function ComprasPage({ params }: { params: Promise<{ id: string }
 
       {/* Tab content */}
       <div className="flex-1">
+        {activeTab === "proveedores" && <ProveedoresTab key={`prov-${refreshKey}`} projectId={projectId} />}
         {activeTab === "solicitudes" && <SolicitudesTab key={`sol-${refreshKey}`} projectId={projectId} />}
         {activeTab === "ordenes" && <OrdenesTab key={`ord-${refreshKey}`} projectId={projectId} />}
         {activeTab === "anticipos" && <AnticiposTab key={`ant-${refreshKey}`} projectId={projectId} />}

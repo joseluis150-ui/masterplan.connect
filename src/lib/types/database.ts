@@ -250,12 +250,29 @@ export interface PurchaseRequestLine {
 export type PaymentTermsType = "contado" | "credito" | "contrato" | "contra_entrega";
 export type MeasurementFrequency = "semanal" | "quincenal" | "mensual";
 
+export interface Supplier {
+  id: string;
+  project_id: string;
+  name: string;
+  name_normalized: string;
+  tax_id: string | null;
+  email: string | null;
+  phone: string | null;
+  payment_terms: PaymentTermsType | null;
+  credit_days: number | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PurchaseOrder {
   id: string;
   project_id: string;
   number: string;
   request_id: string | null;
   supplier: string;
+  supplier_id: string | null;
   issue_date: string;
   status: PurchaseOrderStatus;
   currency: string;
