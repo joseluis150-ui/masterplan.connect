@@ -260,6 +260,10 @@ export function OrdenesTab({ projectId }: Props) {
         toast.error(`Línea ${idx + 1}: Cantidad debe ser mayor a 0`);
         return;
       }
+      if (!line.unit_price || line.unit_price <= 0) {
+        toast.error(`Línea ${idx + 1}: Precio unitario es requerido`);
+        return;
+      }
     }
 
     setCreating(true);

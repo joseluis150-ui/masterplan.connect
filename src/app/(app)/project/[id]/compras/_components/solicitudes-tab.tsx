@@ -544,7 +544,7 @@ export function SolicitudesTab({ projectId }: Props) {
       return;
     }
 
-    // Validate sector & EDT on all lines
+    // Validate sector, EDT, and unit_price on all lines
     for (const scLine of selectedLines) {
       const sel = ocLineSel.get(scLine.id)!;
       if (!sel.sector_id) {
@@ -553,6 +553,10 @@ export function SolicitudesTab({ projectId }: Props) {
       }
       if (!sel.subcategory_id) {
         toast.error(`Línea "${scLine.description}" requiere EDT`);
+        return;
+      }
+      if (!sel.unitPrice || sel.unitPrice <= 0) {
+        toast.error(`Línea "${scLine.description}" requiere Precio Unitario`);
         return;
       }
     }
@@ -567,6 +571,10 @@ export function SolicitudesTab({ projectId }: Props) {
       }
       if (!ex.insumo_id) {
         toast.error(`Línea extra #${idx + 1}: Insumo es requerido`);
+        return;
+      }
+      if (!ex.unit_price || ex.unit_price <= 0) {
+        toast.error(`Línea extra #${idx + 1}: Precio Unitario es requerido`);
         return;
       }
     }
