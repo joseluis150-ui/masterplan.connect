@@ -26,6 +26,8 @@ import type {
   PurchaseOrderLine,
   ReceptionNote,
   DeliveryNote,
+  Invoice,
+  Payment,
   Project,
   PaymentTermsType,
 } from "@/lib/types/database";
@@ -92,18 +94,25 @@ export function ProveedoresTab({ projectId }: Props) {
   const [importChecked, setImportChecked] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
 
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+
   const loadData = useCallback(async () => {
-    const [projRes, supsRes, ordsRes] = await Promise.all([
+    const [projRes, supsRes, ordsRes, invRes, payRes] = await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).single(),
       supabase.from("suppliers").select("*").eq("project_id", projectId).order("name"),
       supabase
         .from("purchase_orders")
         .select("*, lines:purchase_order_lines(*), receptions:reception_notes(*, lines:delivery_notes(*))")
         .eq("project_id", projectId),
+      supabase.from("invoices").select("*").eq("project_id", projectId),
+      supabase.from("payments").select("*").eq("project_id", projectId),
     ]);
     if (projRes.data) setProject(projRes.data as Project);
     setSuppliers((supsRes.data || []) as Supplier[]);
     setOrders((ordsRes.data || []) as OCWithLinesAndRecs[]);
+    setInvoices((invRes.data || []) as Invoice[]);
+    setPayments((payRes.data || []) as Payment[]);
     setLoading(false);
   }, [projectId, supabase]);
 
@@ -689,27 +698,70 @@ export function ProveedoresTab({ projectId }: Props) {
                         <p className="text-xs text-muted-foreground italic text-center py-4">
                           Este proveedor no tiene OCs asociadas.
                         </p>
-                      ) : (
-                        <div className="border rounded-md overflow-hidden">
-                          <div className="grid grid-cols-[130px_110px_110px_80px_140px_140px] gap-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-2 bg-muted/40 border-b">
-                            <span>N° OC</span>
-                            <span>Fecha</span>
-                            <span>Estado</span>
-                            <span>Moneda</span>
-                            <span className="text-right">Total</span>
-                            <span className="text-right">Certificado</span>
-                          </div>
-                          {supplierOrders.map((oc) => {
-                            const total = oc.lines.reduce((s, l) => s + Number(l.total || 0), 0);
-                            const regularRecs = oc.receptions.filter((r) => r.type !== "advance" && r.status !== "cancelled");
-                            const certificado = regularRecs.reduce(
-                              (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
-                              0
-                            );
-                            return (
+                      ) : (() => {
+                        // Compute per-OC lifecycle amounts in the OC's currency
+                        const rows = supplierOrders.map((oc) => {
+                          const total = oc.lines.reduce((s, l) => s + Number(l.total || 0), 0);
+                          const regularRecs = oc.receptions.filter((r) => r.type !== "advance" && r.status !== "cancelled");
+                          const certificado = regularRecs.reduce(
+                            (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
+                            0
+                          );
+                          // Facturado: sum of invoices targeting any of this OC's receptions
+                          const recIds = new Set(oc.receptions.map((r) => r.id));
+                          const ocInvoices = invoices.filter((inv) =>
+                            inv.reception_id && recIds.has(inv.reception_id) && inv.status !== "cancelled"
+                          );
+                          const facturado = ocInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
+                          // Pagado: payments against those invoices (in OC currency)
+                          const invIds = new Set(ocInvoices.map((inv) => inv.id));
+                          const pagadoInOcCurrency = payments.reduce((s, p) => {
+                            if (!p.invoice_id || !invIds.has(p.invoice_id)) return s;
+                            // Convert payment to OC currency using payment's own rate when available
+                            const payCurr = p.currency || oc.currency;
+                            if (payCurr === oc.currency) return s + Number(p.amount || 0);
+                            const rate = Number(p.exchange_rate || 0) || tc;
+                            // Payment in USD, OC in local → multiply by rate
+                            if (payCurr === "USD" && oc.currency !== "USD" && rate > 0) {
+                              return s + Number(p.amount || 0) * rate;
+                            }
+                            // Payment in local, OC in USD → divide by rate
+                            if (oc.currency === "USD" && payCurr !== "USD" && rate > 0) {
+                              return s + Number(p.amount || 0) / rate;
+                            }
+                            return s + Number(p.amount || 0);
+                          }, 0);
+                          return { oc, total, certificado, facturado, pagado: pagadoInOcCurrency };
+                        });
+
+                        // Totals in USD equivalent (so we can sum across mixed-currency OCs)
+                        const totals = rows.reduce(
+                          (acc, r) => ({
+                            total: acc.total + toUsd(r.total, r.oc.currency),
+                            certificado: acc.certificado + toUsd(r.certificado, r.oc.currency),
+                            facturado: acc.facturado + toUsd(r.facturado, r.oc.currency),
+                            pagado: acc.pagado + toUsd(r.pagado, r.oc.currency),
+                          }),
+                          { total: 0, certificado: 0, facturado: 0, pagado: 0 }
+                        );
+
+                        const gridCols = "grid-cols-[130px_100px_100px_70px_130px_130px_130px_130px]";
+                        return (
+                          <div className="border rounded-md overflow-hidden">
+                            <div className={cn("grid gap-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-2 bg-muted/40 border-b", gridCols)}>
+                              <span>N° OC</span>
+                              <span>Fecha</span>
+                              <span>Estado</span>
+                              <span>Moneda</span>
+                              <span className="text-right">Total</span>
+                              <span className="text-right">Certificado</span>
+                              <span className="text-right">Facturado</span>
+                              <span className="text-right">Pagado</span>
+                            </div>
+                            {rows.map(({ oc, total, certificado, facturado, pagado }) => (
                               <div
                                 key={oc.id}
-                                className="grid grid-cols-[130px_110px_110px_80px_140px_140px] gap-2 text-xs px-3 py-1.5 items-center border-b last:border-b-0 hover:bg-muted/20"
+                                className={cn("grid gap-2 text-xs px-3 py-1.5 items-center border-b last:border-b-0 hover:bg-muted/20", gridCols)}
                               >
                                 <span className="font-mono font-semibold">{oc.number}</span>
                                 <span className="text-muted-foreground">{oc.issue_date}</span>
@@ -727,12 +779,22 @@ export function ProveedoresTab({ projectId }: Props) {
                                 </span>
                                 <span className="font-mono text-muted-foreground">{oc.currency}</span>
                                 <span className="text-right font-mono font-semibold">{fmt(total, 2)}</span>
-                                <span className="text-right font-mono text-[#E87722]">{fmt(certificado, 2)}</span>
+                                <span className="text-right font-mono text-[#E87722]">{certificado > 0 ? fmt(certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-[#B85A0F]">{facturado > 0 ? fmt(facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-emerald-700">{pagado > 0 ? fmt(pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                            ))}
+                            {/* Totals row in USD equivalent (because OCs may be in different currencies) */}
+                            <div className={cn("grid gap-2 text-xs px-3 py-2 items-center bg-muted/40 font-bold border-t-2", gridCols)}>
+                              <span className="col-span-4 text-right">TOTAL (USD eq.)</span>
+                              <span className="text-right font-mono">{fmt(totals.total, 2)}</span>
+                              <span className="text-right font-mono text-[#E87722]">{totals.certificado > 0 ? fmt(totals.certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                              <span className="text-right font-mono text-[#B85A0F]">{totals.facturado > 0 ? fmt(totals.facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                              <span className="text-right font-mono text-emerald-700">{totals.pagado > 0 ? fmt(totals.pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </section>
                 </div>
