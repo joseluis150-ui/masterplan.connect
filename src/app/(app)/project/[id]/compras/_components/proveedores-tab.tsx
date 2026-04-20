@@ -713,10 +713,15 @@ export function ProveedoresTab({ projectId }: Props) {
                             inv.reception_id && recIds.has(inv.reception_id) && inv.status !== "cancelled"
                           );
                           const facturado = ocInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
-                          // Pagado: payments against those invoices (in OC currency)
+                          // Pagado: cualquier salida de caja hacia esta OC
+                          //  - pagos vinculados a invoices de la OC (Facturación)
+                          //  - pagos sin invoice pero con order_id = OC (anticipos legacy `type='advance'`
+                          //    y devoluciones de retención `type='retention_return'`)
                           const invIds = new Set(ocInvoices.map((inv) => inv.id));
                           const pagadoInOcCurrency = payments.reduce((s, p) => {
-                            if (!p.invoice_id || !invIds.has(p.invoice_id)) return s;
+                            const matchesByInvoice = !!p.invoice_id && invIds.has(p.invoice_id);
+                            const matchesByOrder = !p.invoice_id && p.order_id === oc.id;
+                            if (!matchesByInvoice && !matchesByOrder) return s;
                             // Convert payment to OC currency using payment's own rate when available
                             const payCurr = p.currency || oc.currency;
                             if (payCurr === oc.currency) return s + Number(p.amount || 0);
