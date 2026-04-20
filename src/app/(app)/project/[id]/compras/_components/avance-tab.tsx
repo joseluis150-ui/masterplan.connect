@@ -654,45 +654,72 @@ export function AvanceTab({ projectId }: Props) {
         const grandPct = executionPct(grandTotal.presupuestado, grandEjecutado);
         const grandPctColor = executionPctColor(grandTotal.presupuestado, grandEjecutado);
         return (
-          <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
-            {([
-              { label: "Presupuestado", value: grandTotal.presupuestado, color: "text-foreground" },
-              { label: "Comprometido", value: grandTotal.comprometido, color: "text-[#737373]" },
-              { label: "Recibido", value: grandTotal.recibido, color: "text-[#E87722]" },
-              { label: "Facturado", value: grandTotal.facturado, color: "text-[#B85A0F]" },
-              { label: "Pagado", value: grandTotal.pagado, color: "text-emerald-600" },
-              { label: "Anticipos dados", value: grandTotal.anticipos, color: "text-amber-700" },
-              { label: "Ejecutado", value: grandEjecutado, color: "text-[#0A0A0A] font-bold", extra: grandPct, extraColor: grandPctColor },
-            ] as const).map((item) => (
-              <div key={item.label} className="bg-muted/40 rounded-lg p-3">
-                <p className="text-xs text-muted-foreground">{item.label}</p>
-                <p className={cn("text-lg font-bold", item.color, item.value <= 0.001 && "opacity-30")}>
-                  {item.value <= 0.001 ? "—" : formatMoney(item.value)}
-                </p>
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] text-muted-foreground">{currencyLabel}</p>
-                  {"extra" in item && item.extra && (
-                    <span className={cn("text-[11px] font-semibold", (item as { extraColor?: string }).extraColor)}>
-                      {item.extra}
-                    </span>
-                  )}
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+              {([
+                { label: "Presupuestado", value: grandTotal.presupuestado, color: "text-foreground", bg: "bg-slate-100 border-slate-300" },
+                { label: "Comprometido", value: grandTotal.comprometido, color: "text-[#737373]", bg: "bg-neutral-100 border-neutral-300" },
+                { label: "Recibido", value: grandTotal.recibido, color: "text-[#E87722]", bg: "bg-[#FFF4E6] border-[#FFD9B0]" },
+                { label: "Facturado", value: grandTotal.facturado, color: "text-[#B85A0F]", bg: "bg-[#FFEEDC] border-[#FFCFA0]" },
+                { label: "Pagado", value: grandTotal.pagado, color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
+                { label: "Ejecutado", value: grandEjecutado, color: "text-[#0A0A0A] font-bold", bg: "bg-[#0A0A0A] border-[#0A0A0A] text-white", extra: grandPct, extraColor: grandPctColor },
+              ] as const).map((item) => {
+                const isExec = item.label === "Ejecutado";
+                return (
+                  <div key={item.label} className={cn("rounded-lg p-3 border", item.bg)}>
+                    <p className={cn("text-xs", isExec ? "text-white/70" : "text-muted-foreground")}>{item.label}</p>
+                    <p className={cn(
+                      "text-lg font-bold",
+                      isExec ? "text-white" : item.color,
+                      item.value <= 0.001 && "opacity-40"
+                    )}>
+                      {item.value <= 0.001 ? "—" : formatMoney(item.value)}
+                    </p>
+                    <div className="flex items-center justify-between">
+                      <p className={cn("text-[10px]", isExec ? "text-white/60" : "text-muted-foreground")}>{currencyLabel}</p>
+                      {"extra" in item && item.extra && (
+                        <span className={cn("text-[11px] font-semibold", (item as { extraColor?: string }).extraColor)}>
+                          {item.extra}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Anticipos dados — línea paralela (no se suma a Ejecutado para evitar
+                doble conteo con futuras amortizaciones) */}
+            {grandTotal.anticipos > 0 && (
+              <div className="rounded-lg border border-amber-300 bg-[#FFF4E6] px-4 py-2.5 flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-amber-600" />
+                  <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">
+                    Anticipos dados
+                  </p>
                 </div>
+                <p className="text-sm font-bold text-amber-800 ml-auto">
+                  {formatMoney(grandTotal.anticipos)}
+                </p>
+                <span className="text-[10px] text-amber-700/70">{currencyLabel}</span>
+                <span className="text-[10px] text-muted-foreground italic ml-2">
+                  (no se suma a Ejecutado — se amortiza en las certificaciones)
+                </span>
               </div>
-            ))}
+            )}
           </div>
         );
       })()}
 
       {/* Table */}
       <div className="border rounded-lg overflow-hidden">
-        <div className="grid grid-cols-[1fr_120px_120px_120px_120px_120px_130px_160px] gap-0 bg-muted/60 text-xs font-medium text-muted-foreground">
+        <div className="grid grid-cols-[1fr_130px_130px_130px_130px_130px_170px] gap-0 bg-muted/60 text-xs font-medium text-muted-foreground">
           <div className="px-4 py-2.5 border-r border-border/40">EDT</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40">Presupuestado</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40" title="OC emitida aún no recibida">Comprometido</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40">Recibido</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40">Facturado</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40" title="Usa TC del pago cuando está registrado">Pagado</div>
-          <div className="px-3 py-2.5 text-right border-r border-border/40" title="Anticipos pagados (distribuidos proporcionalmente entre las líneas de la OC)">Anticipos dados</div>
           <div className="px-3 py-2.5 text-right" title="Suma de Comprometido + Recibido + Facturado + Pagado">Ejecutado</div>
         </div>
 
@@ -706,13 +733,13 @@ export function AvanceTab({ projectId }: Props) {
           const isCollapsed = collapsedCats.has(cat.categoryId);
           const hasValues =
             cat.presupuestado > 0 || cat.comprometido > 0 || cat.recibido > 0 ||
-            cat.facturado > 0 || cat.pagado > 0 || cat.anticipos > 0;
+            cat.facturado > 0 || cat.pagado > 0;
           return (
             <div key={cat.categoryId}>
               {/* Category row */}
               <div
                 className={cn(
-                  "grid grid-cols-[1fr_120px_120px_120px_120px_120px_130px_160px] gap-0 transition-colors border-t border-border",
+                  "grid grid-cols-[1fr_130px_130px_130px_130px_130px_170px] gap-0 transition-colors border-t border-border",
                   hasValues ? "bg-[#E8EDF5]/60 dark:bg-[#E87722]/10" : "bg-muted/20"
                 )}
               >
@@ -732,7 +759,6 @@ export function AvanceTab({ projectId }: Props) {
                 {renderHeaderCell(cat.recibido, "recibido", () => openCategoryBreakdown(cat, "recibido"))}
                 {renderHeaderCell(cat.facturado, "facturado", () => openCategoryBreakdown(cat, "facturado"))}
                 {renderHeaderCell(cat.pagado, "pagado", () => openCategoryBreakdown(cat, "pagado"))}
-                {renderHeaderCell(cat.anticipos, "anticipos", () => openCategoryBreakdown(cat, "anticipos"))}
                 {renderEjecutadoCell(
                   ejecutadoOf(cat),
                   cat.presupuestado,
@@ -746,7 +772,7 @@ export function AvanceTab({ projectId }: Props) {
                   <div
                     key={sub.subcategoryId}
                     className={cn(
-                      "grid grid-cols-[1fr_120px_120px_120px_120px_120px_130px_160px] gap-0 border-t border-border/40 transition-colors hover:bg-muted/30",
+                      "grid grid-cols-[1fr_130px_130px_130px_130px_130px_170px] gap-0 border-t border-border/40 transition-colors hover:bg-muted/30",
                       idx % 2 === 1 && "bg-muted/10"
                     )}
                   >
@@ -758,7 +784,6 @@ export function AvanceTab({ projectId }: Props) {
                     {renderCell(sub.recibido, "recibido", () => openSubcategoryBreakdown(sub, "recibido"))}
                     {renderCell(sub.facturado, "facturado", () => openSubcategoryBreakdown(sub, "facturado"))}
                     {renderCell(sub.pagado, "pagado", () => openSubcategoryBreakdown(sub, "pagado"))}
-                    {renderCell(sub.anticipos, "anticipos", () => openSubcategoryBreakdown(sub, "anticipos"))}
                     {renderEjecutadoCell(
                       ejecutadoOf(sub),
                       sub.presupuestado,
@@ -775,9 +800,9 @@ export function AvanceTab({ projectId }: Props) {
           const grandPct = executionPct(grandTotal.presupuestado, grandEjecutado);
           const grandPctColor = executionPctColor(grandTotal.presupuestado, grandEjecutado);
           return (
-            <div className="grid grid-cols-[1fr_120px_120px_120px_120px_120px_130px_160px] gap-0 border-t-2 bg-muted/40">
+            <div className="grid grid-cols-[1fr_130px_130px_130px_130px_130px_170px] gap-0 border-t-2 bg-muted/40">
               <div className="px-4 py-2.5 text-sm font-bold border-r border-border/40">TOTAL</div>
-              {(["presupuestado", "comprometido", "recibido", "facturado", "pagado", "anticipos"] as const).map((col) => {
+              {(["presupuestado", "comprometido", "recibido", "facturado", "pagado"] as const).map((col) => {
                 const value = grandTotal[col];
                 const isEmpty = value <= 0.001;
                 if (isEmpty) return <div key={col} className="px-3 py-2.5 text-right border-r border-border/40" />;
