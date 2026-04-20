@@ -974,13 +974,22 @@ export function OrdenesTab({ projectId }: Props) {
               <ColumnFilter label="Estado" values={allStatuses} valueLabels={statusLabels} selected={colFilterStatus} onChange={setColFilterStatus} />
               <ColumnFilter label="Proveedor" values={allSuppliers} selected={colFilterSupplier} onChange={setColFilterSupplier} />
               <ColumnFilter label="Fecha" values={allDates} selected={colFilterDate} onChange={setColFilterDate} />
-              <span className="text-right">Total USD</span>
-              <span className="text-right">Total {localCurr}</span>
+              <span className="text-right" title="Monto pendiente de certificar">Pend. cert. USD</span>
+              <span className="text-right" title="Monto pendiente de certificar">Pend. cert. {localCurr}</span>
               <span className="text-right">Acciones</span>
             </div>
             {filteredOrders.map((oc) => {
               const total = getOCTotal(oc);
               const isUsd = oc.currency === "USD";
+              // Compute certified and pending-to-certify from regular receptions (excl. advance, excl. cancelled)
+              const regularRecs = (receptions.get(oc.id) || []).filter(
+                (r) => r.type !== "advance" && r.status !== "cancelled"
+              );
+              const certificado = regularRecs.reduce(
+                (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
+                0
+              );
+              const pendienteCertificar = Math.max(0, total - certificado);
               return (
                 <div
                   key={oc.id}
@@ -991,11 +1000,17 @@ export function OrdenesTab({ projectId }: Props) {
                   <span>{getStatusBadge(oc.status)}</span>
                   <span className="truncate font-medium" title={oc.supplier}>{oc.supplier}</span>
                   <span className="text-muted-foreground">{oc.issue_date}</span>
-                  <span className="text-right font-mono font-semibold">
-                    {isUsd ? formatMoney(total, oc.currency) : <span className="text-muted-foreground/50">—</span>}
+                  <span
+                    className="text-right font-mono font-semibold"
+                    title={isUsd ? `Total OC: ${formatMoney(total, oc.currency)} · Certificado: ${formatMoney(certificado, oc.currency)}` : ""}
+                  >
+                    {isUsd ? formatMoney(pendienteCertificar, oc.currency) : <span className="text-muted-foreground/50">—</span>}
                   </span>
-                  <span className="text-right font-mono font-semibold">
-                    {!isUsd ? formatMoney(total, oc.currency) : <span className="text-muted-foreground/50">—</span>}
+                  <span
+                    className="text-right font-mono font-semibold"
+                    title={!isUsd ? `Total OC: ${formatMoney(total, oc.currency)} · Certificado: ${formatMoney(certificado, oc.currency)}` : ""}
+                  >
+                    {!isUsd ? formatMoney(pendienteCertificar, oc.currency) : <span className="text-muted-foreground/50">—</span>}
                   </span>
                   <div className="flex items-center justify-end gap-1.5">
                   {canEditOC(oc) && (
