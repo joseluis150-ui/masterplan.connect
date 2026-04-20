@@ -67,7 +67,8 @@ export function OrdenesTab({ projectId }: Props) {
   const [requests, setRequests] = useState<(PurchaseRequest & { lines: PurchaseRequestLine[] })[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // OC detail dialog — clicking a row opens this modal with full info + actions
+  const [detailOCId, setDetailOCId] = useState<string | null>(null);
 
   // Filters
   const [filterStatus, setFilterStatus] = useState<PurchaseOrderStatus | "all">("all");
@@ -449,13 +450,8 @@ export function OrdenesTab({ projectId }: Props) {
     toast.success("Orden de compra eliminada");
   }
 
-  function toggleExpand(id: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  function openDetail(id: string) {
+    setDetailOCId(id);
   }
 
   function getSubName(subId: string | null) {
@@ -945,36 +941,40 @@ export function OrdenesTab({ projectId }: Props) {
       )}
 
       {/* OC List */}
-      <div className="space-y-3">
+      <div className="border rounded-lg overflow-hidden">
+        {/* Column header */}
+        <div className="grid grid-cols-[130px_120px_1fr_160px_90px_170px_220px] gap-3 px-4 py-2 bg-muted/60 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <span>N° OC</span>
+          <span>Estado</span>
+          <span>Proveedor</span>
+          <span>Fecha</span>
+          <span className="text-right">Líneas</span>
+          <span className="text-right">Total</span>
+          <span className="text-right">Acciones</span>
+        </div>
         {filteredOrders.map((oc) => {
-          const isExpanded = expanded.has(oc.id);
           const total = getOCTotal(oc);
-          const linkedSC = requests.find((r) => r.id === oc.request_id);
+          const recCount = (receptions.get(oc.id) || []).filter((r) => r.status !== "cancelled").length;
           return (
-            <div key={oc.id} className="border rounded-lg overflow-hidden">
-              {/* OC Header */}
-              <div
-                className="flex items-center gap-3 px-4 py-3 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
-                onClick={() => toggleExpand(oc.id)}
-              >
-                {isExpanded ? (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+            <div
+              key={oc.id}
+              className="grid grid-cols-[130px_120px_1fr_160px_90px_170px_220px] gap-3 px-4 py-2.5 items-center text-xs border-t hover:bg-muted/20 cursor-pointer transition-colors"
+              onClick={() => openDetail(oc.id)}
+            >
+              <span className="font-mono text-sm font-semibold">{oc.number}</span>
+              <span>{getStatusBadge(oc.status)}</span>
+              <span className="truncate font-medium" title={oc.supplier}>{oc.supplier}</span>
+              <span className="text-muted-foreground">{oc.issue_date}</span>
+              <span className="text-right text-muted-foreground">
+                {oc.lines.length}
+                {recCount > 0 && (
+                  <span className="ml-1 text-[10px] text-emerald-700">· {recCount} rec.</span>
                 )}
-                <span className="font-mono text-sm font-semibold shrink-0">{oc.number}</span>
-                <span className="shrink-0">{getStatusBadge(oc.status)}</span>
-                {/* Supplier — prominent and unconstrained */}
-                <span className="text-sm font-medium truncate min-w-0 flex-1">{oc.supplier}</span>
-                <span className="text-xs text-muted-foreground shrink-0">
-                  {oc.issue_date} &middot; {oc.lines.length} línea(s)
-                </span>
-                {/* Amount — fixed-width column so it aligns vertically across rows */}
-                <span className="text-sm font-semibold w-[160px] text-right shrink-0">
-                  {formatMoney(total, oc.currency)}
-                </span>
-                {/* Actions — fixed-width column so amounts never shift */}
-                <div className="w-[240px] flex items-center justify-end gap-2 shrink-0">
+              </span>
+              <span className="text-right font-mono font-semibold">
+                {formatMoney(total, oc.currency)}
+              </span>
+              <div className="flex items-center justify-end gap-1.5">
                   {canEditOC(oc) && (
                     <Button
                       size="sm"
@@ -1022,9 +1022,45 @@ export function OrdenesTab({ projectId }: Props) {
                 </div>
               </div>
 
-              {/* OC Detail */}
-              {isExpanded && (
-                <div className="p-4 space-y-4">
+          );
+        })}
+      </div>
+
+      {/* ─────── OC Detail Dialog — full info + actions for a single OC ─────── */}
+      <Dialog open={detailOCId !== null} onOpenChange={(open) => !open && setDetailOCId(null)}>
+        <DialogContent className="sm:max-w-[90vw] w-[90vw] max-h-[92vh] p-0 gap-0 flex flex-col">
+          {(() => {
+            const oc = orders.find((o) => o.id === detailOCId);
+            if (!oc) return null;
+            const total = getOCTotal(oc);
+            const linkedSC = requests.find((r) => r.id === oc.request_id);
+            const ocReceptions = receptions.get(oc.id) || [];
+            const totalOrdered = oc.lines.reduce((s, l) => s + Number(l.quantity), 0);
+            const totalReceived = oc.lines.reduce((s, l) => s + getLineReceivedQty(l.id, oc.id), 0);
+            const hasPendingToReceive = oc.lines.some((l) => getLineRemainingToReceive(l, oc.id) > 0);
+            const hasReceptionsNonCancelled = ocReceptions.some((r) => r.status !== "cancelled");
+
+            return (
+              <>
+                {/* Header */}
+                <div className="flex-none px-6 py-4 border-b">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-3 flex-wrap">
+                      <FileText className="h-5 w-5" />
+                      <span className="font-mono">{oc.number}</span>
+                      {getStatusBadge(oc.status)}
+                      <span className="text-base font-medium text-muted-foreground">·</span>
+                      <span className="text-base font-medium">{oc.supplier}</span>
+                    </DialogTitle>
+                  </DialogHeader>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Emitida el {oc.issue_date} · {oc.lines.length} línea(s) · Total{" "}
+                    <span className="font-semibold text-foreground">{formatMoney(total, oc.currency)}</span>
+                  </p>
+                </div>
+
+                {/* Scrollable body */}
+                <div className="flex-1 overflow-auto px-6 py-4 space-y-4">
                   {/* Linked SC */}
                   {linkedSC && (
                     <div className="flex items-center gap-2 text-xs bg-muted/20 rounded-md px-3 py-2 border border-border/50">
@@ -1036,7 +1072,7 @@ export function OrdenesTab({ projectId }: Props) {
                     </div>
                   )}
 
-                  {/* Financial summary */}
+                  {/* Key financial info */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                     <div className="bg-muted/40 rounded-md p-2">
                       <span className="text-muted-foreground block">Moneda</span>
@@ -1062,7 +1098,11 @@ export function OrdenesTab({ projectId }: Props) {
                     </div>
                   </div>
 
-                  {/* Audit log / history */}
+                  {oc.comment && (
+                    <p className="text-xs text-muted-foreground italic">{oc.comment}</p>
+                  )}
+
+                  {/* Audit log */}
                   {oc.audit_log && oc.audit_log.length > 0 && (
                     <div className="text-[10px] text-muted-foreground">
                       <button
@@ -1097,250 +1137,200 @@ export function OrdenesTab({ projectId }: Props) {
                     </div>
                   )}
 
-                  {oc.comment && (
-                    <p className="text-xs text-muted-foreground italic">{oc.comment}</p>
-                  )}
-
-                  {/* Lines table header (READ-ONLY — OC is immutable once created) */}
+                  {/* Lines table */}
                   {oc.lines.length > 0 && (
-                    <div className="grid grid-cols-[1fr_2fr_90px_80px_110px_110px] gap-2 text-[10px] text-muted-foreground font-semibold uppercase tracking-wider px-2 pb-1 border-b">
-                      <span>EDT</span>
-                      <span>Descripción</span>
-                      <span className="text-right">Cantidad</span>
-                      <span className="text-center">Unidad</span>
-                      <span className="text-right">P. Unitario</span>
-                      <span className="text-right">Total</span>
-                    </div>
-                  )}
-
-                  {oc.lines.map((line) => (
-                    <div
-                      key={line.id}
-                      className="grid grid-cols-[1fr_2fr_90px_80px_110px_110px] gap-2 items-center px-2 py-1.5 text-xs rounded hover:bg-muted/20"
-                    >
-                      <span className="truncate text-muted-foreground" title={getSubName(line.subcategory_id)}>
-                        {getSubName(line.subcategory_id)}
-                      </span>
-                      <span className="truncate" title={line.description}>{line.description}</span>
-                      <span className="text-right font-mono">
-                        {Number(line.quantity).toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
-                      </span>
-                      <span className="text-center text-muted-foreground">{line.unit}</span>
-                      <span className="text-right font-mono">
-                        {formatMoney(Number(line.unit_price), oc.currency)}
-                      </span>
-                      <span className="text-right font-mono font-semibold">
-                        {formatMoney(Number(line.total || 0), oc.currency)}
-                      </span>
-                    </div>
-                  ))}
-
-                  {/* Totals row */}
-                  {oc.lines.length > 0 && (
-                    <div className="grid grid-cols-[1fr_2fr_90px_80px_110px_110px] gap-2 items-center px-2 pt-2 border-t">
-                      <div className="col-span-5 text-right text-xs font-semibold">TOTAL</div>
-                      <div className="text-right text-sm font-bold" style={{ color: "#E87722" }}>
-                        {formatMoney(total, oc.currency)}
+                    <div className="border rounded-md overflow-hidden">
+                      <div className="grid grid-cols-[1fr_2fr_90px_80px_110px_110px] gap-2 text-[10px] text-muted-foreground font-semibold uppercase tracking-wider px-3 py-2 bg-muted/40 border-b">
+                        <span>EDT</span>
+                        <span>Descripción</span>
+                        <span className="text-right">Cantidad</span>
+                        <span className="text-center">Unidad</span>
+                        <span className="text-right">P. Unitario</span>
+                        <span className="text-right">Total</span>
+                      </div>
+                      {oc.lines.map((line) => (
+                        <div
+                          key={line.id}
+                          className="grid grid-cols-[1fr_2fr_90px_80px_110px_110px] gap-2 items-center px-3 py-1.5 text-xs border-b last:border-b-0 hover:bg-muted/20"
+                        >
+                          <span className="truncate text-muted-foreground" title={getSubName(line.subcategory_id)}>
+                            {getSubName(line.subcategory_id)}
+                          </span>
+                          <span className="truncate" title={line.description}>{line.description}</span>
+                          <span className="text-right font-mono">
+                            {Number(line.quantity).toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-center text-muted-foreground">{line.unit}</span>
+                          <span className="text-right font-mono">
+                            {formatMoney(Number(line.unit_price), oc.currency)}
+                          </span>
+                          <span className="text-right font-mono font-semibold">
+                            {formatMoney(Number(line.total || 0), oc.currency)}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="grid grid-cols-[1fr_2fr_90px_80px_110px_110px] gap-2 items-center px-3 py-2 bg-muted/40 border-t">
+                        <div className="col-span-5 text-right text-xs font-semibold">TOTAL</div>
+                        <div className="text-right text-sm font-bold" style={{ color: "#E87722" }}>
+                          {formatMoney(total, oc.currency)}
+                        </div>
                       </div>
                     </div>
                   )}
 
-                  {/* ───── Receptions section ───── */}
-                  {oc.lines.length > 0 && (() => {
-                    const ocReceptions = receptions.get(oc.id) || [];
-                    const totalOrdered = oc.lines.reduce((s, l) => s + Number(l.quantity), 0);
-                    const totalReceived = oc.lines.reduce((s, l) => s + getLineReceivedQty(l.id, oc.id), 0);
-                    const hasPendingToReceive = oc.lines.some((l) => getLineRemainingToReceive(l, oc.id) > 0);
-
-                    return (
-                      <div className="mt-6 pt-4 border-t">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            <PackageCheck className="h-4 w-4" />
-                            <h4 className="text-sm font-semibold">
-                              Recepciones ({ocReceptions.length})
-                            </h4>
-                            <span className="text-xs text-muted-foreground">
-                              · {totalReceived.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} de {totalOrdered.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} unidades recibidas
-                            </span>
-                          </div>
-                          {hasPendingToReceive && oc.status === "open" && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={(e) => { e.stopPropagation(); openReceptionDialog(oc); }}
-                            >
-                              <Truck className="h-3.5 w-3.5 mr-1" />
-                              Nueva Recepción
-                            </Button>
-                          )}
+                  {/* Receptions */}
+                  {oc.lines.length > 0 && (
+                    <div className="pt-2">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <PackageCheck className="h-4 w-4" />
+                          <h4 className="text-sm font-semibold">Recepciones ({ocReceptions.length})</h4>
+                          <span className="text-xs text-muted-foreground">
+                            · {totalReceived.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} de {totalOrdered.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} unidades recibidas
+                          </span>
                         </div>
-
-                        {ocReceptions.length === 0 ? (
-                          <p className="text-xs text-muted-foreground italic">
-                            Sin recepciones registradas. Crea una para habilitar la facturación.
-                          </p>
-                        ) : (
-                          <div className="space-y-2">
-                            {ocReceptions.map((rec) => {
-                              const recTotal = rec.lines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
-                              const recPayable = rec.lines.reduce((s, l) => s + Number(l.payable_amount || 0), 0);
-                              const recAmort = rec.lines.reduce((s, l) => s + Number(l.amortization_amount || 0), 0);
-                              const recRetention = rec.lines.reduce((s, l) => s + Number(l.retention_amount || 0), 0);
-                              const isAdvance = rec.type === "advance";
-                              const statusLabel =
-                                rec.status === "received" ? "Recibido" :
-                                rec.status === "invoiced" ? "Facturado" :
-                                rec.status === "pending_approval" ? "Pendiente de aprobación" : "Cancelado";
-                              return (
-                                <div
-                                  key={rec.id}
-                                  className={cn(
-                                    "border rounded-md p-3",
-                                    isAdvance
-                                      ? "bg-amber-50/60 border-amber-300 ring-1 ring-amber-200"
-                                      : "bg-muted/20"
-                                  )}
-                                >
-                                  {isAdvance && (
-                                    <div className="flex items-center gap-1.5 mb-2 text-[11px] font-semibold text-[#B85A0F] uppercase tracking-wider">
-                                      <HandCoins className="h-3.5 w-3.5" />
-                                      Recepción de anticipo
-                                    </div>
-                                  )}
-                                  <div className="flex items-center gap-3 mb-2">
-                                    <span className="font-mono text-xs font-semibold">
-                                      {oc.number}-REC-{String(rec.number).padStart(3, "0")}
-                                    </span>
-                                    <Badge
-                                      className={cn(
-                                        "text-[10px]",
-                                        rec.status === "pending_approval" && "bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200",
-                                        rec.status === "received" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
-                                        rec.status === "invoiced" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
-                                        rec.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
-                                      )}
-                                    >
-                                      {statusLabel}
-                                    </Badge>
-                                    <span className="text-xs text-muted-foreground">
-                                      {new Date(rec.date).toLocaleDateString("es")} · {rec.lines.length} línea(s)
-                                    </span>
-                                    <div className="flex-1" />
-                                    <span className="text-sm font-bold" style={{ color: "#E87722" }}>
-                                      {formatMoney(recTotal, oc.currency)}
-                                    </span>
-                                  </div>
-                                  {rec.comment && (
-                                    <p className="text-[11px] text-muted-foreground italic mb-2">{rec.comment}</p>
-                                  )}
-                                  <div className="grid grid-cols-[1fr_80px_100px_80px_90px_90px_110px] gap-2 text-[10px] font-semibold text-muted-foreground uppercase px-2 py-1 border-b">
-                                    <span>Descripción</span>
-                                    <span className="text-right">Cantidad</span>
-                                    <span className="text-right">P. Unitario</span>
-                                    <span className="text-right">Bruto</span>
-                                    <span className="text-right">Amort.</span>
-                                    <span className="text-right">Retención</span>
-                                    <span className="text-right">A pagar</span>
-                                  </div>
-                                  {rec.lines.map((rl) => {
-                                    const ocLine = oc.lines.find((l) => l.id === rl.order_line_id);
-                                    return (
-                                      <div
-                                        key={rl.id}
-                                        className="grid grid-cols-[1fr_80px_100px_80px_90px_90px_110px] gap-2 text-xs px-2 py-1 items-center border-b last:border-b-0"
-                                      >
-                                        <span className="truncate" title={ocLine ? `${getSubName(ocLine.subcategory_id)} · ${ocLine.description}` : (isAdvance ? "Pago de anticipo" : "—")}>
-                                          {ocLine && (
-                                            <span className="text-muted-foreground text-[10px] font-mono mr-1.5">
-                                              {getSubName(ocLine.subcategory_id)}
-                                            </span>
-                                          )}
-                                          {ocLine?.description || (isAdvance ? (
-                                            <span className="italic text-[#B85A0F]">Pago de anticipo</span>
-                                          ) : "—")}
-                                        </span>
-                                        <span className="text-right font-mono">
-                                          {Number(rl.quantity_received).toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })}
-                                        </span>
-                                        <span className="text-right font-mono text-muted-foreground">
-                                          {formatMoney(Number(rl.unit_price), oc.currency)}
-                                        </span>
-                                        <span className="text-right font-mono">
-                                          {formatMoney(Number(rl.gross_amount || 0), oc.currency)}
-                                        </span>
-                                        <span className="text-right font-mono text-amber-700">
-                                          {Number(rl.amortization_amount || 0) > 0
-                                            ? formatMoney(Number(rl.amortization_amount), oc.currency)
-                                            : "—"}
-                                        </span>
-                                        <span className="text-right font-mono text-[#B85A0F]">
-                                          {Number(rl.retention_amount || 0) > 0
-                                            ? formatMoney(Number(rl.retention_amount), oc.currency)
-                                            : "—"}
-                                        </span>
-                                        <span className="text-right font-mono font-semibold text-emerald-700">
-                                          {formatMoney(Number(rl.payable_amount || 0), oc.currency)}
-                                        </span>
-                                      </div>
-                                    );
-                                  })}
-                                  {/* Reception totals */}
-                                  <div className="grid grid-cols-[1fr_80px_100px_80px_90px_90px_110px] gap-2 text-xs px-2 py-1.5 items-center bg-muted/40 font-semibold mt-1">
-                                    <span className="text-right col-span-3">TOTAL</span>
-                                    <span className="text-right font-mono">{formatMoney(recTotal, oc.currency)}</span>
-                                    <span className="text-right font-mono text-amber-700">
-                                      {recAmort > 0 ? formatMoney(recAmort, oc.currency) : "—"}
-                                    </span>
-                                    <span className="text-right font-mono text-[#B85A0F]">
-                                      {recRetention > 0 ? formatMoney(recRetention, oc.currency) : "—"}
-                                    </span>
-                                    <span className="text-right font-mono text-emerald-700">
-                                      {formatMoney(recPayable, oc.currency)}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between mt-2">
-                                    <p className="text-[10px] text-muted-foreground italic">
-                                      {rec.status === "pending_approval"
-                                        ? (isAdvance ? "Aprobar desde Anticipos dados ↗" : "Pendiente de aprobación")
-                                        : rec.status === "invoiced"
-                                          ? "Facturado"
-                                          : rec.status === "received"
-                                            ? `Pendiente de facturar · ${formatMoney(recPayable, oc.currency)}`
-                                            : "Cancelado"}
-                                    </p>
-                                    <Badge
-                                      className={cn(
-                                        "text-[10px]",
-                                        rec.status === "pending_approval" && "bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200",
-                                        rec.status === "invoiced" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
-                                        rec.status === "received" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
-                                        rec.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
-                                      )}
-                                    >
-                                      {rec.status === "pending_approval"
-                                        ? "Pendiente de aprobación"
-                                        : rec.status === "invoiced"
-                                          ? "Facturado"
-                                          : rec.status === "received"
-                                            ? "Recibido · No Facturado"
-                                            : "Cancelado"}
-                                    </Badge>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                        {hasPendingToReceive && oc.status === "open" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => { setDetailOCId(null); openReceptionDialog(oc); }}
+                          >
+                            <Truck className="h-3.5 w-3.5 mr-1" />
+                            Nueva Recepción
+                          </Button>
                         )}
                       </div>
+
+                      {ocReceptions.length === 0 ? (
+                        <p className="text-xs text-muted-foreground italic">
+                          Sin recepciones registradas. Crea una para habilitar la facturación.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {ocReceptions.map((rec) => {
+                            const recTotal = rec.lines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
+                            const recPayable = rec.lines.reduce((s, l) => s + Number(l.payable_amount || 0), 0);
+                            const recAmort = rec.lines.reduce((s, l) => s + Number(l.amortization_amount || 0), 0);
+                            const recRetention = rec.lines.reduce((s, l) => s + Number(l.retention_amount || 0), 0);
+                            const isAdvance = rec.type === "advance";
+                            const statusLabel =
+                              rec.status === "received" ? "Recibido · No Facturado" :
+                              rec.status === "invoiced" ? "Facturado" :
+                              rec.status === "pending_approval" ? "Pendiente de aprobación" : "Cancelado";
+                            return (
+                              <div
+                                key={rec.id}
+                                className={cn(
+                                  "border rounded-md p-3",
+                                  isAdvance
+                                    ? "bg-amber-50/60 border-amber-300 ring-1 ring-amber-200"
+                                    : "bg-muted/20"
+                                )}
+                              >
+                                {isAdvance && (
+                                  <div className="flex items-center gap-1.5 mb-2 text-[11px] font-semibold text-[#B85A0F] uppercase tracking-wider">
+                                    <HandCoins className="h-3.5 w-3.5" />
+                                    Recepción de anticipo
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-3 mb-2 flex-wrap">
+                                  <span className="font-mono text-xs font-semibold">
+                                    {oc.number}-REC-{String(rec.number).padStart(3, "0")}
+                                  </span>
+                                  <Badge
+                                    className={cn(
+                                      "text-[10px]",
+                                      rec.status === "pending_approval" && "bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200",
+                                      rec.status === "received" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
+                                      rec.status === "invoiced" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
+                                      rec.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
+                                    )}
+                                  >
+                                    {statusLabel}
+                                  </Badge>
+                                  <span className="text-xs text-muted-foreground">
+                                    {new Date(rec.date).toLocaleDateString("es")} · {rec.lines.length} línea(s)
+                                  </span>
+                                  <div className="flex-1" />
+                                  <span className="text-sm font-bold" style={{ color: "#E87722" }}>
+                                    {formatMoney(recTotal, oc.currency)}
+                                  </span>
+                                </div>
+                                {rec.comment && (
+                                  <p className="text-[11px] text-muted-foreground italic mb-2">{rec.comment}</p>
+                                )}
+                                <div className="text-[10px] text-muted-foreground flex gap-4 pt-1 border-t">
+                                  <span>Bruto: <span className="font-mono font-semibold text-foreground">{formatMoney(recTotal, oc.currency)}</span></span>
+                                  {recAmort > 0 && <span>Amort.: <span className="font-mono text-amber-700">{formatMoney(recAmort, oc.currency)}</span></span>}
+                                  {recRetention > 0 && <span>Retención: <span className="font-mono text-[#B85A0F]">{formatMoney(recRetention, oc.currency)}</span></span>}
+                                  <span className="ml-auto">A pagar: <span className="font-mono font-semibold text-emerald-700">{formatMoney(recPayable, oc.currency)}</span></span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer with actions */}
+                <div className="flex-none border-t bg-muted/30 px-6 py-3 flex items-center gap-2">
+                  <Button variant="outline" onClick={() => setDetailOCId(null)}>
+                    Cerrar
+                  </Button>
+                  <div className="flex-1" />
+                  {canEditOC(oc) && (
+                    <Button
+                      variant="outline"
+                      onClick={() => { setDetailOCId(null); openEditDialog(oc); }}
+                    >
+                      <Pencil className="h-3.5 w-3.5 mr-1" />
+                      Editar OC
+                    </Button>
+                  )}
+                  {hasPendingToReceive && oc.status === "open" && (
+                    <Button
+                      onClick={() => { setDetailOCId(null); openReceptionDialog(oc); }}
+                    >
+                      <Truck className="h-3.5 w-3.5 mr-1" />
+                      Nueva Recepción
+                    </Button>
+                  )}
+                  {oc.status === "open" && (() => {
+                    const targetStatus = hasReceptionsNonCancelled ? "closed" : "cancelled";
+                    const actionLabel = hasReceptionsNonCancelled ? "Cerrar OC" : "Cancelar OC";
+                    const confirmText = hasReceptionsNonCancelled
+                      ? "¿Cerrar esta OC manualmente? No se podrán registrar más recepciones."
+                      : "Esta OC no tiene recepciones. ¿Cancelarla? Queda registrada pero sin movimiento.";
+                    return (
+                      <Button
+                        variant="outline"
+                        onClick={async () => {
+                          if (confirm(confirmText)) {
+                            await updateOC(oc.id, "status", targetStatus);
+                            await logActivity({
+                              projectId,
+                              actionType: "oc_closed",
+                              entityType: "purchase_order",
+                              entityId: oc.id,
+                              description: `OC ${oc.number} ${targetStatus === "closed" ? "cerrada" : "cancelada"} manualmente`,
+                              metadata: { ocId: oc.id, ocNumber: oc.number, previousStatus: "open", newStatus: targetStatus },
+                            });
+                            setDetailOCId(null);
+                          }
+                        }}
+                      >
+                        {actionLabel}
+                      </Button>
                     );
                   })()}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
 
       {/* Create OC Dialog — full manual flow with line editor */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
