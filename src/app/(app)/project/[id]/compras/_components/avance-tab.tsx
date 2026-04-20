@@ -22,7 +22,7 @@ interface Props {
   projectId: string;
 }
 
-type ColumnKey = "presupuestado" | "ejecutado" | "comprometido" | "recibido" | "facturado" | "pagado";
+type ColumnKey = "presupuestado" | "ejecutado" | "comprometido" | "recibido" | "facturado" | "pagado" | "anticipos";
 
 interface BreakdownItem {
   // generic fields
@@ -46,6 +46,7 @@ interface SubcategoryFinance {
   recibido: number;
   facturado: number;
   pagado: number;
+  anticipos: number;
   details: Record<ColumnKey, BreakdownItem[]>;
 }
 
@@ -59,6 +60,7 @@ interface CategoryFinance {
   recibido: number;
   facturado: number;
   pagado: number;
+  anticipos: number;
 }
 
 interface BudgetSummaryRow {
@@ -79,6 +81,7 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
   recibido: "Recibido",
   facturado: "Facturado",
   pagado: "Pagado",
+  anticipos: "Anticipos dados",
 };
 
 // Brand-compliant color progression: Ash → Amber → Amber-dark → Emerald (success)
@@ -89,6 +92,7 @@ const COLUMN_COLORS: Record<ColumnKey, string> = {
   recibido: "text-[#E87722]",                  // Signal Amber (active)
   facturado: "text-[#B85A0F]",                 // Amber 700 (darker amber)
   pagado: "text-emerald-600",                  // Success
+  anticipos: "text-amber-700",                 // Amber darker — anticipated outflow
 };
 
 export function AvanceTab({ projectId }: Props) {
@@ -212,6 +216,7 @@ export function AvanceTab({ projectId }: Props) {
         recibido: 0,
         facturado: 0,
         pagado: 0,
+        anticipos: 0,
         details: {
           presupuestado: [],
           ejecutado: [],
@@ -219,6 +224,7 @@ export function AvanceTab({ projectId }: Props) {
           recibido: [],
           facturado: [],
           pagado: [],
+          anticipos: [],
         },
       });
     });
@@ -368,6 +374,48 @@ export function AvanceTab({ projectId }: Props) {
       }
     }
 
+    // ANTICIPOS DADOS — Compute the USD paid against advance receptions and distribute
+    // it across the OC's subcategories proportionally to line totals.
+    // (Advance delivery_notes have null order_line_id so they don't touch the regular
+    // buckets above; this makes "anticipos" a parallel column that doesn't double-count.)
+    const advancePaidUsdByOC = new Map<string, number>();
+    for (const rec of receptions) {
+      if (rec.type !== "advance") continue;
+      if (rec.status === "cancelled" || rec.status === "pending_approval") continue;
+      const inv = invoiceByReception.get(rec.id);
+      if (!inv) continue;
+      const paidUsd = paidUsdByInvoice.get(inv.id) || 0;
+      if (paidUsd <= 0) continue;
+      advancePaidUsdByOC.set(rec.order_id, (advancePaidUsdByOC.get(rec.order_id) || 0) + paidUsd);
+    }
+    for (const [orderId, advanceUsd] of advancePaidUsdByOC) {
+      const oc = ordersById.get(orderId);
+      const ocCurrency = oc?.currency || "USD";
+      const ocLines = orderLines.filter((ol) => ol.order_id === orderId);
+      const totalLineUsd = ocLines.reduce(
+        (s, ol) => s + toUSD(Number(ol.total || 0), ocCurrency),
+        0
+      );
+      if (totalLineUsd <= 0) continue;
+      for (const ol of ocLines) {
+        const sf = subFinance.get(ol.subcategory_id);
+        if (!sf) continue;
+        const lineUsd = toUSD(Number(ol.total || 0), ocCurrency);
+        const share = lineUsd / totalLineUsd;
+        const allocUsd = advanceUsd * share;
+        if (allocUsd <= 0.001) continue;
+        sf.anticipos += allocUsd;
+        sf.details.anticipos.push({
+          ref: oc?.number,
+          supplier: oc?.supplier,
+          description: ol.description,
+          amountUsd: allocUsd,
+          currency: ocCurrency,
+          note: `Anticipo pagado · distribución ${(share * 100).toFixed(1)}%`,
+        });
+      }
+    }
+
     // Populate "ejecutado" details (all items from comprometido/recibido/facturado/pagado, tagged)
     for (const sf of subFinance.values()) {
       const tagged: BreakdownItem[] = [
@@ -392,6 +440,7 @@ export function AvanceTab({ projectId }: Props) {
         recibido: catSubs.reduce((s, sf) => s + sf.recibido, 0),
         facturado: catSubs.reduce((s, sf) => s + sf.facturado, 0),
         pagado: catSubs.reduce((s, sf) => s + sf.pagado, 0),
+        anticipos: catSubs.reduce((s, sf) => s + sf.anticipos, 0),
       };
     });
 
@@ -472,8 +521,9 @@ export function AvanceTab({ projectId }: Props) {
       recibido: acc.recibido + cat.recibido,
       facturado: acc.facturado + cat.facturado,
       pagado: acc.pagado + cat.pagado,
+      anticipos: acc.anticipos + cat.anticipos,
     }),
-    { presupuestado: 0, comprometido: 0, recibido: 0, facturado: 0, pagado: 0 }
+    { presupuestado: 0, comprometido: 0, recibido: 0, facturado: 0, pagado: 0, anticipos: 0 }
   );
 
   if (loading) return <div className="p-6 text-muted-foreground">Cargando avance financiero...</div>;
@@ -604,13 +654,14 @@ export function AvanceTab({ projectId }: Props) {
         const grandPct = executionPct(grandTotal.presupuestado, grandEjecutado);
         const grandPctColor = executionPctColor(grandTotal.presupuestado, grandEjecutado);
         return (
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
             {([
               { label: "Presupuestado", value: grandTotal.presupuestado, color: "text-foreground" },
               { label: "Comprometido", value: grandTotal.comprometido, color: "text-[#737373]" },
               { label: "Recibido", value: grandTotal.recibido, color: "text-[#E87722]" },
               { label: "Facturado", value: grandTotal.facturado, color: "text-[#B85A0F]" },
               { label: "Pagado", value: grandTotal.pagado, color: "text-emerald-600" },
+              { label: "Anticipos dados", value: grandTotal.anticipos, color: "text-amber-700" },
               { label: "Ejecutado", value: grandEjecutado, color: "text-[#0A0A0A] font-bold", extra: grandPct, extraColor: grandPctColor },
             ] as const).map((item) => (
               <div key={item.label} className="bg-muted/40 rounded-lg p-3">
@@ -634,13 +685,14 @@ export function AvanceTab({ projectId }: Props) {
 
       {/* Table */}
       <div className="border rounded-lg overflow-hidden">
-        <div className="grid grid-cols-[1fr_130px_130px_130px_130px_130px_170px] gap-0 bg-muted/60 text-xs font-medium text-muted-foreground">
+        <div className="grid grid-cols-[1fr_120px_120px_120px_120px_120px_130px_160px] gap-0 bg-muted/60 text-xs font-medium text-muted-foreground">
           <div className="px-4 py-2.5 border-r border-border/40">EDT</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40">Presupuestado</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40" title="OC emitida aún no recibida">Comprometido</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40">Recibido</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40">Facturado</div>
           <div className="px-3 py-2.5 text-right border-r border-border/40" title="Usa TC del pago cuando está registrado">Pagado</div>
+          <div className="px-3 py-2.5 text-right border-r border-border/40" title="Anticipos pagados (distribuidos proporcionalmente entre las líneas de la OC)">Anticipos dados</div>
           <div className="px-3 py-2.5 text-right" title="Suma de Comprometido + Recibido + Facturado + Pagado">Ejecutado</div>
         </div>
 
@@ -654,13 +706,13 @@ export function AvanceTab({ projectId }: Props) {
           const isCollapsed = collapsedCats.has(cat.categoryId);
           const hasValues =
             cat.presupuestado > 0 || cat.comprometido > 0 || cat.recibido > 0 ||
-            cat.facturado > 0 || cat.pagado > 0;
+            cat.facturado > 0 || cat.pagado > 0 || cat.anticipos > 0;
           return (
             <div key={cat.categoryId}>
               {/* Category row */}
               <div
                 className={cn(
-                  "grid grid-cols-[1fr_130px_130px_130px_130px_130px_170px] gap-0 transition-colors border-t border-border",
+                  "grid grid-cols-[1fr_120px_120px_120px_120px_120px_130px_160px] gap-0 transition-colors border-t border-border",
                   hasValues ? "bg-[#E8EDF5]/60 dark:bg-[#E87722]/10" : "bg-muted/20"
                 )}
               >
@@ -680,6 +732,7 @@ export function AvanceTab({ projectId }: Props) {
                 {renderHeaderCell(cat.recibido, "recibido", () => openCategoryBreakdown(cat, "recibido"))}
                 {renderHeaderCell(cat.facturado, "facturado", () => openCategoryBreakdown(cat, "facturado"))}
                 {renderHeaderCell(cat.pagado, "pagado", () => openCategoryBreakdown(cat, "pagado"))}
+                {renderHeaderCell(cat.anticipos, "anticipos", () => openCategoryBreakdown(cat, "anticipos"))}
                 {renderEjecutadoCell(
                   ejecutadoOf(cat),
                   cat.presupuestado,
@@ -693,7 +746,7 @@ export function AvanceTab({ projectId }: Props) {
                   <div
                     key={sub.subcategoryId}
                     className={cn(
-                      "grid grid-cols-[1fr_130px_130px_130px_130px_130px_170px] gap-0 border-t border-border/40 transition-colors hover:bg-muted/30",
+                      "grid grid-cols-[1fr_120px_120px_120px_120px_120px_130px_160px] gap-0 border-t border-border/40 transition-colors hover:bg-muted/30",
                       idx % 2 === 1 && "bg-muted/10"
                     )}
                   >
@@ -705,6 +758,7 @@ export function AvanceTab({ projectId }: Props) {
                     {renderCell(sub.recibido, "recibido", () => openSubcategoryBreakdown(sub, "recibido"))}
                     {renderCell(sub.facturado, "facturado", () => openSubcategoryBreakdown(sub, "facturado"))}
                     {renderCell(sub.pagado, "pagado", () => openSubcategoryBreakdown(sub, "pagado"))}
+                    {renderCell(sub.anticipos, "anticipos", () => openSubcategoryBreakdown(sub, "anticipos"))}
                     {renderEjecutadoCell(
                       ejecutadoOf(sub),
                       sub.presupuestado,
@@ -721,9 +775,9 @@ export function AvanceTab({ projectId }: Props) {
           const grandPct = executionPct(grandTotal.presupuestado, grandEjecutado);
           const grandPctColor = executionPctColor(grandTotal.presupuestado, grandEjecutado);
           return (
-            <div className="grid grid-cols-[1fr_130px_130px_130px_130px_130px_170px] gap-0 border-t-2 bg-muted/40">
+            <div className="grid grid-cols-[1fr_120px_120px_120px_120px_120px_130px_160px] gap-0 border-t-2 bg-muted/40">
               <div className="px-4 py-2.5 text-sm font-bold border-r border-border/40">TOTAL</div>
-              {(["presupuestado", "comprometido", "recibido", "facturado", "pagado"] as const).map((col) => {
+              {(["presupuestado", "comprometido", "recibido", "facturado", "pagado", "anticipos"] as const).map((col) => {
                 const value = grandTotal[col];
                 const isEmpty = value <= 0.001;
                 if (isEmpty) return <div key={col} className="px-3 py-2.5 text-right border-r border-border/40" />;
