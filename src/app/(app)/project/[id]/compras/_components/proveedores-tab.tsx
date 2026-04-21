@@ -717,11 +717,6 @@ export function ProveedoresTab({ projectId }: Props) {
                           const liveRecs = oc.receptions.filter(
                             (r) => r.status === "received" || r.status === "invoiced"
                           );
-                          // Certificado: gross total de recepciones vivas
-                          const certificado = liveRecs.reduce(
-                            (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
-                            0
-                          );
                           // Recibido no facturado: payable_amount de status='received'
                           // (mismo criterio que la tarjeta "Recibido no Facturado" de Facturación)
                           const recibidoNoFacturado = liveRecs
@@ -770,7 +765,6 @@ export function ProveedoresTab({ projectId }: Props) {
                           return {
                             oc,
                             total,
-                            certificado,
                             recibidoNoFacturado,
                             facturadoSinPagar,
                             pagado,
@@ -781,7 +775,6 @@ export function ProveedoresTab({ projectId }: Props) {
                         // con la suma en su moneda nativa (sin conversión).
                         type Tots = {
                           total: number;
-                          certificado: number;
                           recibidoNoFacturado: number;
                           facturadoSinPagar: number;
                           pagado: number;
@@ -791,13 +784,11 @@ export function ProveedoresTab({ projectId }: Props) {
                           const curr = r.oc.currency;
                           const prev = totalsByCurrency.get(curr) || {
                             total: 0,
-                            certificado: 0,
                             recibidoNoFacturado: 0,
                             facturadoSinPagar: 0,
                             pagado: 0,
                           };
                           prev.total += r.total;
-                          prev.certificado += r.certificado;
                           prev.recibidoNoFacturado += r.recibidoNoFacturado;
                           prev.facturadoSinPagar += r.facturadoSinPagar;
                           prev.pagado += r.pagado;
@@ -808,7 +799,7 @@ export function ProveedoresTab({ projectId }: Props) {
                         );
 
                         const gridCols =
-                          "grid-cols-[130px_100px_100px_70px_130px_130px_150px_150px_130px]";
+                          "grid-cols-[130px_100px_100px_70px_130px_150px_150px_130px]";
                         return (
                           <div className="border rounded-md overflow-hidden">
                             <div className={cn("grid gap-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-2 bg-muted/40 border-b", gridCols)}>
@@ -817,12 +808,11 @@ export function ProveedoresTab({ projectId }: Props) {
                               <span>Estado</span>
                               <span>Moneda</span>
                               <span className="text-right">Total</span>
-                              <span className="text-right">Certificado</span>
                               <span className="text-right">Recibido no facturado</span>
                               <span className="text-right">Facturado sin pagar</span>
                               <span className="text-right">Pagado</span>
                             </div>
-                            {rows.map(({ oc, total, certificado, recibidoNoFacturado, facturadoSinPagar, pagado }) => (
+                            {rows.map(({ oc, total, recibidoNoFacturado, facturadoSinPagar, pagado }) => (
                               <div
                                 key={oc.id}
                                 className={cn("grid gap-2 text-xs px-3 py-1.5 items-center border-b last:border-b-0 hover:bg-muted/20", gridCols)}
@@ -843,7 +833,6 @@ export function ProveedoresTab({ projectId }: Props) {
                                 </span>
                                 <span className="font-mono text-muted-foreground">{oc.currency}</span>
                                 <span className="text-right font-mono font-semibold">{fmt(total, 2)}</span>
-                                <span className="text-right font-mono text-[#E87722]">{certificado > 0 ? fmt(certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
                                 <span className="text-right font-mono text-[#737373]">{recibidoNoFacturado > 0 ? fmt(recibidoNoFacturado, 2) : <span className="text-muted-foreground">—</span>}</span>
                                 <span className="text-right font-mono text-[#B85A0F]">{facturadoSinPagar > 0 ? fmt(facturadoSinPagar, 2) : <span className="text-muted-foreground">—</span>}</span>
                                 <span className="text-right font-mono text-emerald-700">{pagado > 0 ? fmt(pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
@@ -861,7 +850,6 @@ export function ProveedoresTab({ projectId }: Props) {
                               >
                                 <span className="col-span-4 text-right">TOTAL ({curr})</span>
                                 <span className="text-right font-mono">{fmt(t.total, 2)}</span>
-                                <span className="text-right font-mono text-[#E87722]">{t.certificado > 0 ? fmt(t.certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
                                 <span className="text-right font-mono text-[#737373]">{t.recibidoNoFacturado > 0 ? fmt(t.recibidoNoFacturado, 2) : <span className="text-muted-foreground">—</span>}</span>
                                 <span className="text-right font-mono text-[#B85A0F]">{t.facturadoSinPagar > 0 ? fmt(t.facturadoSinPagar, 2) : <span className="text-muted-foreground">—</span>}</span>
                                 <span className="text-right font-mono text-emerald-700">{t.pagado > 0 ? fmt(t.pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
