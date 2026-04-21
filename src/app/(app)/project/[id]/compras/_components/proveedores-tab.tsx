@@ -686,7 +686,7 @@ export function ProveedoresTab({ projectId }: Props) {
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                             {renderBucket(`Total OCs (${stats.ocCount})`, stats.total)}
                             {renderBucket("Certificado", stats.certificado, { subtitle: pct(stats.certificado.usdEq) })}
-                            {renderBucket("Desembolsado", stats.desembolsado, { subtitle: pct(stats.desembolsado.usdEq) })}
+                            {renderBucket("Aprobado para pago", stats.desembolsado, { subtitle: pct(stats.desembolsado.usdEq) })}
                             {renderBucket("Anticipo pendiente de amortizar", stats.advancePending, { subtitle: "Saldo del anticipo sin descontar" })}
                             {renderBucket("Retenciones", stats.retention, { subtitle: "Acumuladas en certificaciones" })}
                           </div>
@@ -699,55 +699,101 @@ export function ProveedoresTab({ projectId }: Props) {
                           Este proveedor no tiene OCs asociadas.
                         </p>
                       ) : (() => {
-                        // Compute per-OC lifecycle amounts in the OC's currency
+                        // Helper: convierte un monto al currency de la OC usando el tc del pago cuando corresponde
+                        const toOcCurrency = (amount: number, fromCurr: string, ocCurrency: string, rate: number) => {
+                          if (fromCurr === ocCurrency) return amount;
+                          const r = rate || tc;
+                          if (fromCurr === "USD" && ocCurrency !== "USD" && r > 0) return amount * r;
+                          if (ocCurrency === "USD" && fromCurr !== "USD" && r > 0) return amount / r;
+                          return amount;
+                        };
+
+                        // Compute per-OC lifecycle amounts (certification → invoice → payment)
+                        // en la moneda nativa de la OC. Sólo miramos recepciones regulares;
+                        // los anticipos se reportan aparte en los KPIs de arriba.
                         const rows = supplierOrders.map((oc) => {
                           const total = oc.lines.reduce((s, l) => s + Number(l.total || 0), 0);
-                          const regularRecs = oc.receptions.filter((r) => r.type !== "advance" && r.status !== "cancelled");
+                          const regularRecs = oc.receptions.filter(
+                            (r) => r.type !== "advance" && r.status !== "cancelled"
+                          );
+                          // Certificado: gross total de recepciones regulares vivas
                           const certificado = regularRecs.reduce(
                             (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
                             0
                           );
-                          // Facturado: sum of invoices targeting any of this OC's receptions
-                          const recIds = new Set(oc.receptions.map((r) => r.id));
-                          const ocInvoices = invoices.filter((inv) =>
-                            inv.reception_id && recIds.has(inv.reception_id) && inv.status !== "cancelled"
+                          // Recibido no facturado: recepciones regulares con status='received'
+                          const recibidoNoFacturado = regularRecs
+                            .filter((r) => r.status === "received")
+                            .reduce(
+                              (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
+                              0
+                            );
+                          // Invoices de recepciones regulares ya facturadas
+                          const invoicedRecIds = new Set(
+                            regularRecs.filter((r) => r.status === "invoiced").map((r) => r.id)
                           );
-                          const facturado = ocInvoices.reduce((s, inv) => s + Number(inv.amount || 0), 0);
-                          // Pagado: cualquier salida de caja hacia esta OC
-                          //  - pagos vinculados a invoices de la OC (Facturación)
-                          //  - pagos sin invoice pero con order_id = OC (anticipos legacy `type='advance'`
-                          //    y devoluciones de retención `type='retention_return'`)
-                          const invIds = new Set(ocInvoices.map((inv) => inv.id));
-                          const pagadoInOcCurrency = payments.reduce((s, p) => {
-                            const matchesByInvoice = !!p.invoice_id && invIds.has(p.invoice_id);
-                            const matchesByOrder = !p.invoice_id && p.order_id === oc.id;
-                            if (!matchesByInvoice && !matchesByOrder) return s;
-                            // Convert payment to OC currency using payment's own rate when available
-                            const payCurr = p.currency || oc.currency;
-                            if (payCurr === oc.currency) return s + Number(p.amount || 0);
-                            const rate = Number(p.exchange_rate || 0) || tc;
-                            // Payment in USD, OC in local → multiply by rate
-                            if (payCurr === "USD" && oc.currency !== "USD" && rate > 0) {
-                              return s + Number(p.amount || 0) * rate;
-                            }
-                            // Payment in local, OC in USD → divide by rate
-                            if (oc.currency === "USD" && payCurr !== "USD" && rate > 0) {
-                              return s + Number(p.amount || 0) / rate;
-                            }
-                            return s + Number(p.amount || 0);
-                          }, 0);
-                          return { oc, total, certificado, facturado, pagado: pagadoInOcCurrency };
+                          const regularInvoices = invoices.filter(
+                            (inv) =>
+                              inv.reception_id &&
+                              invoicedRecIds.has(inv.reception_id) &&
+                              inv.status !== "cancelled"
+                          );
+                          // Pagado por invoice (en moneda de la OC)
+                          const paidByInvoiceId = new Map<string, number>();
+                          for (const p of payments) {
+                            if (!p.invoice_id) continue;
+                            const amt = toOcCurrency(
+                              Number(p.amount || 0),
+                              p.currency || oc.currency,
+                              oc.currency,
+                              Number(p.exchange_rate || 0)
+                            );
+                            paidByInvoiceId.set(p.invoice_id, (paidByInvoiceId.get(p.invoice_id) || 0) + amt);
+                          }
+                          const pagado = regularInvoices.reduce(
+                            (s, inv) =>
+                              s + Math.min(Number(inv.amount || 0), paidByInvoiceId.get(inv.id) || 0),
+                            0
+                          );
+                          const facturadoSinPagar = regularInvoices.reduce(
+                            (s, inv) =>
+                              s +
+                              Math.max(0, Number(inv.amount || 0) - (paidByInvoiceId.get(inv.id) || 0)),
+                            0
+                          );
+                          return {
+                            oc,
+                            total,
+                            certificado,
+                            recibidoNoFacturado,
+                            facturadoSinPagar,
+                            pagado,
+                          };
                         });
 
                         // Totals per currency — una fila por moneda presente en la tabla,
                         // con la suma en su moneda nativa (sin conversión).
-                        const totalsByCurrency = new Map<string, { total: number; certificado: number; facturado: number; pagado: number }>();
+                        type Tots = {
+                          total: number;
+                          certificado: number;
+                          recibidoNoFacturado: number;
+                          facturadoSinPagar: number;
+                          pagado: number;
+                        };
+                        const totalsByCurrency = new Map<string, Tots>();
                         for (const r of rows) {
                           const curr = r.oc.currency;
-                          const prev = totalsByCurrency.get(curr) || { total: 0, certificado: 0, facturado: 0, pagado: 0 };
+                          const prev = totalsByCurrency.get(curr) || {
+                            total: 0,
+                            certificado: 0,
+                            recibidoNoFacturado: 0,
+                            facturadoSinPagar: 0,
+                            pagado: 0,
+                          };
                           prev.total += r.total;
                           prev.certificado += r.certificado;
-                          prev.facturado += r.facturado;
+                          prev.recibidoNoFacturado += r.recibidoNoFacturado;
+                          prev.facturadoSinPagar += r.facturadoSinPagar;
                           prev.pagado += r.pagado;
                           totalsByCurrency.set(curr, prev);
                         }
@@ -755,17 +801,8 @@ export function ProveedoresTab({ projectId }: Props) {
                           (a, b) => a[0].localeCompare(b[0])
                         );
 
-                        const gridCols = "grid-cols-[130px_100px_100px_70px_130px_130px_130px_130px_150px]";
-                        const fmtSigned = (n: number) =>
-                          n.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                        const balanceCell = (n: number) =>
-                          n === 0 ? (
-                            <span className="text-right font-mono text-muted-foreground">—</span>
-                          ) : (
-                            <span className={cn("text-right font-mono", n > 0 ? "text-emerald-700" : "text-red-600")}>
-                              {fmtSigned(n)}
-                            </span>
-                          );
+                        const gridCols =
+                          "grid-cols-[130px_100px_100px_70px_130px_130px_150px_150px_130px]";
                         return (
                           <div className="border rounded-md overflow-hidden">
                             <div className={cn("grid gap-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-2 bg-muted/40 border-b", gridCols)}>
@@ -775,61 +812,55 @@ export function ProveedoresTab({ projectId }: Props) {
                               <span>Moneda</span>
                               <span className="text-right">Total</span>
                               <span className="text-right">Certificado</span>
-                              <span className="text-right">Facturado</span>
+                              <span className="text-right">Recibido no facturado</span>
+                              <span className="text-right">Facturado sin pagar</span>
                               <span className="text-right">Pagado</span>
-                              <span className="text-right">Balance del proveedor</span>
                             </div>
-                            {rows.map(({ oc, total, certificado, facturado, pagado }) => {
-                              const balance = certificado - pagado;
-                              return (
-                                <div
-                                  key={oc.id}
-                                  className={cn("grid gap-2 text-xs px-3 py-1.5 items-center border-b last:border-b-0 hover:bg-muted/20", gridCols)}
-                                >
-                                  <span className="font-mono font-semibold">{oc.number}</span>
-                                  <span className="text-muted-foreground">{oc.issue_date}</span>
-                                  <span>
-                                    <Badge
-                                      className={cn(
-                                        "text-[10px]",
-                                        oc.status === "open" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
-                                        oc.status === "closed" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
-                                        oc.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
-                                      )}
-                                    >
-                                      {oc.status === "open" ? "Abierta" : oc.status === "closed" ? "Cerrada" : "Cancelada"}
-                                    </Badge>
-                                  </span>
-                                  <span className="font-mono text-muted-foreground">{oc.currency}</span>
-                                  <span className="text-right font-mono font-semibold">{fmt(total, 2)}</span>
-                                  <span className="text-right font-mono text-[#E87722]">{certificado > 0 ? fmt(certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                  <span className="text-right font-mono text-[#B85A0F]">{facturado > 0 ? fmt(facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                  <span className="text-right font-mono text-emerald-700">{pagado > 0 ? fmt(pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                  {balanceCell(balance)}
-                                </div>
-                              );
-                            })}
+                            {rows.map(({ oc, total, certificado, recibidoNoFacturado, facturadoSinPagar, pagado }) => (
+                              <div
+                                key={oc.id}
+                                className={cn("grid gap-2 text-xs px-3 py-1.5 items-center border-b last:border-b-0 hover:bg-muted/20", gridCols)}
+                              >
+                                <span className="font-mono font-semibold">{oc.number}</span>
+                                <span className="text-muted-foreground">{oc.issue_date}</span>
+                                <span>
+                                  <Badge
+                                    className={cn(
+                                      "text-[10px]",
+                                      oc.status === "open" && "bg-amber-100 text-amber-700 hover:bg-amber-100",
+                                      oc.status === "closed" && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
+                                      oc.status === "cancelled" && "bg-muted text-muted-foreground hover:bg-muted"
+                                    )}
+                                  >
+                                    {oc.status === "open" ? "Abierta" : oc.status === "closed" ? "Cerrada" : "Cancelada"}
+                                  </Badge>
+                                </span>
+                                <span className="font-mono text-muted-foreground">{oc.currency}</span>
+                                <span className="text-right font-mono font-semibold">{fmt(total, 2)}</span>
+                                <span className="text-right font-mono text-[#E87722]">{certificado > 0 ? fmt(certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-[#737373]">{recibidoNoFacturado > 0 ? fmt(recibidoNoFacturado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-[#B85A0F]">{facturadoSinPagar > 0 ? fmt(facturadoSinPagar, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-emerald-700">{pagado > 0 ? fmt(pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                              </div>
+                            ))}
                             {/* Una fila TOTAL por cada moneda presente, en su moneda nativa */}
-                            {totalsEntries.map(([curr, t], i) => {
-                              const balance = t.certificado - t.pagado;
-                              return (
-                                <div
-                                  key={curr}
-                                  className={cn(
-                                    "grid gap-2 text-xs px-3 py-2 items-center bg-muted/40 font-bold",
-                                    i === 0 ? "border-t-2" : "border-t",
-                                    gridCols
-                                  )}
-                                >
-                                  <span className="col-span-4 text-right">TOTAL ({curr})</span>
-                                  <span className="text-right font-mono">{fmt(t.total, 2)}</span>
-                                  <span className="text-right font-mono text-[#E87722]">{t.certificado > 0 ? fmt(t.certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                  <span className="text-right font-mono text-[#B85A0F]">{t.facturado > 0 ? fmt(t.facturado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                  <span className="text-right font-mono text-emerald-700">{t.pagado > 0 ? fmt(t.pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                  {balanceCell(balance)}
-                                </div>
-                              );
-                            })}
+                            {totalsEntries.map(([curr, t], i) => (
+                              <div
+                                key={curr}
+                                className={cn(
+                                  "grid gap-2 text-xs px-3 py-2 items-center bg-muted/40 font-bold",
+                                  i === 0 ? "border-t-2" : "border-t",
+                                  gridCols
+                                )}
+                              >
+                                <span className="col-span-4 text-right">TOTAL ({curr})</span>
+                                <span className="text-right font-mono">{fmt(t.total, 2)}</span>
+                                <span className="text-right font-mono text-[#E87722]">{t.certificado > 0 ? fmt(t.certificado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-[#737373]">{t.recibidoNoFacturado > 0 ? fmt(t.recibidoNoFacturado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-[#B85A0F]">{t.facturadoSinPagar > 0 ? fmt(t.facturadoSinPagar, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                <span className="text-right font-mono text-emerald-700">{t.pagado > 0 ? fmt(t.pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                              </div>
+                            ))}
                           </div>
                         );
                       })()}
