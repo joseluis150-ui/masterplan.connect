@@ -721,11 +721,12 @@ export function ProveedoresTab({ projectId }: Props) {
                             (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
                             0
                           );
-                          // Recibido no facturado: recepciones regulares con status='received'
+                          // Recibido no facturado: payable_amount de regs con status='received'
+                          // (mismo criterio que la tarjeta "Recibido no Facturado" de Facturación)
                           const recibidoNoFacturado = regularRecs
                             .filter((r) => r.status === "received")
                             .reduce(
-                              (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
+                              (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.payable_amount || 0), 0),
                               0
                             );
                           // Invoices de recepciones regulares ya facturadas
@@ -750,17 +751,21 @@ export function ProveedoresTab({ projectId }: Props) {
                             );
                             paidByInvoiceId.set(p.invoice_id, (paidByInvoiceId.get(p.invoice_id) || 0) + amt);
                           }
-                          const pagado = regularInvoices.reduce(
-                            (s, inv) =>
-                              s + Math.min(Number(inv.amount || 0), paidByInvoiceId.get(inv.id) || 0),
-                            0
-                          );
-                          const facturadoSinPagar = regularInvoices.reduce(
-                            (s, inv) =>
-                              s +
-                              Math.max(0, Number(inv.amount || 0) - (paidByInvoiceId.get(inv.id) || 0)),
-                            0
-                          );
+                          // Facturado sin pagar vs Pagado — mismo criterio que las tarjetas
+                          // de Facturación: una invoice "Pagada" requiere paid >= amount (con
+                          // tolerancia de 0.001). Invoices parcialmente pagadas van a
+                          // "Facturado sin pagar" con el saldo pendiente.
+                          let facturadoSinPagar = 0;
+                          let pagado = 0;
+                          for (const inv of regularInvoices) {
+                            const invAmount = Number(inv.amount || 0);
+                            const paid = paidByInvoiceId.get(inv.id) || 0;
+                            if (paid >= invAmount - 0.001) {
+                              pagado += paid;
+                            } else {
+                              facturadoSinPagar += Math.max(0, invAmount - paid);
+                            }
+                          }
                           return {
                             oc,
                             total,
