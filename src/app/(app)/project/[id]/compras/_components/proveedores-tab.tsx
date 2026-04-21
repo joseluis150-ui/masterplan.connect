@@ -709,31 +709,32 @@ export function ProveedoresTab({ projectId }: Props) {
                         };
 
                         // Compute per-OC lifecycle amounts (certification → invoice → payment)
-                        // en la moneda nativa de la OC. Sólo miramos recepciones regulares;
-                        // los anticipos se reportan aparte en los KPIs de arriba.
+                        // en la moneda nativa de la OC. Mismo alcance que las tarjetas de
+                        // Facturación: incluye anticipos y recepciones regulares, sólo
+                        // excluye las canceladas / pendientes de aprobación.
                         const rows = supplierOrders.map((oc) => {
                           const total = oc.lines.reduce((s, l) => s + Number(l.total || 0), 0);
-                          const regularRecs = oc.receptions.filter(
-                            (r) => r.type !== "advance" && r.status !== "cancelled"
+                          const liveRecs = oc.receptions.filter(
+                            (r) => r.status === "received" || r.status === "invoiced"
                           );
-                          // Certificado: gross total de recepciones regulares vivas
-                          const certificado = regularRecs.reduce(
+                          // Certificado: gross total de recepciones vivas
+                          const certificado = liveRecs.reduce(
                             (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0),
                             0
                           );
-                          // Recibido no facturado: payable_amount de regs con status='received'
+                          // Recibido no facturado: payable_amount de status='received'
                           // (mismo criterio que la tarjeta "Recibido no Facturado" de Facturación)
-                          const recibidoNoFacturado = regularRecs
+                          const recibidoNoFacturado = liveRecs
                             .filter((r) => r.status === "received")
                             .reduce(
                               (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.payable_amount || 0), 0),
                               0
                             );
-                          // Invoices de recepciones regulares ya facturadas
+                          // Invoices de recepciones con status='invoiced' (regular o anticipo)
                           const invoicedRecIds = new Set(
-                            regularRecs.filter((r) => r.status === "invoiced").map((r) => r.id)
+                            liveRecs.filter((r) => r.status === "invoiced").map((r) => r.id)
                           );
-                          const regularInvoices = invoices.filter(
+                          const ocInvoices = invoices.filter(
                             (inv) =>
                               inv.reception_id &&
                               invoicedRecIds.has(inv.reception_id) &&
@@ -757,7 +758,7 @@ export function ProveedoresTab({ projectId }: Props) {
                           // "Facturado sin pagar" con el saldo pendiente.
                           let facturadoSinPagar = 0;
                           let pagado = 0;
-                          for (const inv of regularInvoices) {
+                          for (const inv of ocInvoices) {
                             const invAmount = Number(inv.amount || 0);
                             const paid = paidByInvoiceId.get(inv.id) || 0;
                             if (paid >= invAmount - 0.001) {
