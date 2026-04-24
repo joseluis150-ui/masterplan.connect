@@ -729,6 +729,9 @@ export function ProveedoresTab({ projectId }: Props) {
                           const invoicedRecIds = new Set(
                             liveRecs.filter((r) => r.status === "invoiced").map((r) => r.id)
                           );
+                          const advanceRecIds = new Set(
+                            liveRecs.filter((r) => r.type === "advance").map((r) => r.id)
+                          );
                           const ocInvoices = invoices.filter(
                             (inv) =>
                               inv.reception_id &&
@@ -751,13 +754,19 @@ export function ProveedoresTab({ projectId }: Props) {
                           // de Facturación: una invoice "Pagada" requiere paid >= amount (con
                           // tolerancia de 0.001). Invoices parcialmente pagadas van a
                           // "Facturado sin pagar" con el saldo pendiente.
+                          // Además separamos la porción del Pagado que corresponde a anticipos
+                          // para poder marcarla sutilmente en la columna Pagado.
                           let facturadoSinPagar = 0;
                           let pagado = 0;
+                          let pagadoAnticipo = 0;
                           for (const inv of ocInvoices) {
                             const invAmount = Number(inv.amount || 0);
                             const paid = paidByInvoiceId.get(inv.id) || 0;
                             if (paid >= invAmount - 0.001) {
                               pagado += paid;
+                              if (inv.reception_id && advanceRecIds.has(inv.reception_id)) {
+                                pagadoAnticipo += paid;
+                              }
                             } else {
                               facturadoSinPagar += Math.max(0, invAmount - paid);
                             }
@@ -768,6 +777,7 @@ export function ProveedoresTab({ projectId }: Props) {
                             recibidoNoFacturado,
                             facturadoSinPagar,
                             pagado,
+                            pagadoAnticipo,
                           };
                         });
 
@@ -778,6 +788,7 @@ export function ProveedoresTab({ projectId }: Props) {
                           recibidoNoFacturado: number;
                           facturadoSinPagar: number;
                           pagado: number;
+                          pagadoAnticipo: number;
                         };
                         const totalsByCurrency = new Map<string, Tots>();
                         for (const r of rows) {
@@ -787,11 +798,13 @@ export function ProveedoresTab({ projectId }: Props) {
                             recibidoNoFacturado: 0,
                             facturadoSinPagar: 0,
                             pagado: 0,
+                            pagadoAnticipo: 0,
                           };
                           prev.total += r.total;
                           prev.recibidoNoFacturado += r.recibidoNoFacturado;
                           prev.facturadoSinPagar += r.facturadoSinPagar;
                           prev.pagado += r.pagado;
+                          prev.pagadoAnticipo += r.pagadoAnticipo;
                           totalsByCurrency.set(curr, prev);
                         }
                         const totalsEntries = Array.from(totalsByCurrency.entries()).sort(
@@ -812,7 +825,7 @@ export function ProveedoresTab({ projectId }: Props) {
                               <span className="text-right">Facturado sin pagar</span>
                               <span className="text-right">Pagado</span>
                             </div>
-                            {rows.map(({ oc, total, recibidoNoFacturado, facturadoSinPagar, pagado }) => (
+                            {rows.map(({ oc, total, recibidoNoFacturado, facturadoSinPagar, pagado, pagadoAnticipo }) => (
                               <div
                                 key={oc.id}
                                 className={cn("grid gap-2 text-xs px-3 py-1.5 items-center border-b last:border-b-0 hover:bg-muted/20", gridCols)}
@@ -835,7 +848,18 @@ export function ProveedoresTab({ projectId }: Props) {
                                 <span className="text-right font-mono font-semibold">{fmt(total, 2)}</span>
                                 <span className="text-right font-mono text-[#737373]">{recibidoNoFacturado > 0 ? fmt(recibidoNoFacturado, 2) : <span className="text-muted-foreground">—</span>}</span>
                                 <span className="text-right font-mono text-[#B85A0F]">{facturadoSinPagar > 0 ? fmt(facturadoSinPagar, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                <span className="text-right font-mono text-emerald-700">{pagado > 0 ? fmt(pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                {pagado > 0 ? (
+                                  <div className="flex flex-col items-end font-mono text-emerald-700 leading-tight">
+                                    <span>{fmt(pagado, 2)}</span>
+                                    {pagadoAnticipo > 0 && (
+                                      <span className="text-[9px] font-normal italic text-muted-foreground" title="Parte del Pagado que corresponde al anticipo">
+                                        incl. anticipo {fmt(pagadoAnticipo, 2)}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-right font-mono text-muted-foreground">—</span>
+                                )}
                               </div>
                             ))}
                             {/* Una fila TOTAL por cada moneda presente, en su moneda nativa */}
@@ -852,7 +876,18 @@ export function ProveedoresTab({ projectId }: Props) {
                                 <span className="text-right font-mono">{fmt(t.total, 2)}</span>
                                 <span className="text-right font-mono text-[#737373]">{t.recibidoNoFacturado > 0 ? fmt(t.recibidoNoFacturado, 2) : <span className="text-muted-foreground">—</span>}</span>
                                 <span className="text-right font-mono text-[#B85A0F]">{t.facturadoSinPagar > 0 ? fmt(t.facturadoSinPagar, 2) : <span className="text-muted-foreground">—</span>}</span>
-                                <span className="text-right font-mono text-emerald-700">{t.pagado > 0 ? fmt(t.pagado, 2) : <span className="text-muted-foreground">—</span>}</span>
+                                {t.pagado > 0 ? (
+                                  <div className="flex flex-col items-end font-mono text-emerald-700 leading-tight">
+                                    <span>{fmt(t.pagado, 2)}</span>
+                                    {t.pagadoAnticipo > 0 && (
+                                      <span className="text-[9px] font-normal italic text-muted-foreground" title="Parte del Pagado que corresponde a anticipos">
+                                        incl. anticipo {fmt(t.pagadoAnticipo, 2)}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-right font-mono text-muted-foreground">—</span>
+                                )}
                               </div>
                             ))}
                           </div>
