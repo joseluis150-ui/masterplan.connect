@@ -141,6 +141,11 @@ export function AvanceTab({ projectId }: Props) {
   };
   // Total amount amortized against advances across all regular certifications (USD).
   const [amortizedUsd, setAmortizedUsd] = useState(0);
+  // Retención acumulada en certificaciones regulares y monto ya devuelto vía
+  // payments tipo 'retention_return'. La diferencia es lo que está actualmente
+  // retenido en garantía del proveedor.
+  const [retainedUsd, setRetainedUsd] = useState(0);
+  const [retentionReturnedUsd, setRetentionReturnedUsd] = useState(0);
 
   // Breakdown dialog state
   const [breakdownOpen, setBreakdownOpen] = useState(false);
@@ -458,6 +463,7 @@ export function AvanceTab({ projectId }: Props) {
     // Total amortizado USD — sum of amortization_amount across regular delivery_notes
     // (advance delivery_notes have order_line_id=null and don't amortize themselves).
     let amortizedTotalUsd = 0;
+    let retentionAccumulatedUsd = 0;
     for (const dn of deliveryNotes) {
       if (!dn.order_line_id) continue;
       const ol = orderLines.find((l) => l.id === dn.order_line_id);
@@ -465,8 +471,22 @@ export function AvanceTab({ projectId }: Props) {
       const oc = ordersById.get(ol.order_id);
       const ocCurrency = oc?.currency || "USD";
       amortizedTotalUsd += toUSD(Number(dn.amortization_amount || 0), ocCurrency);
+      retentionAccumulatedUsd += toUSD(Number(dn.retention_amount || 0), ocCurrency);
     }
     setAmortizedUsd(amortizedTotalUsd);
+    setRetainedUsd(retentionAccumulatedUsd);
+
+    // Retenciones devueltas vía pagos tipo 'retention_return'. Usa el TC de
+    // cada pago cuando está registrado; si no, cae al TC del proyecto.
+    let retentionReturnedTotalUsd = 0;
+    for (const p of payments) {
+      if (p.type !== "retention_return") continue;
+      const paymentCurrency = p.currency || projectData?.local_currency || "USD";
+      const paymentRate = p.exchange_rate && p.exchange_rate > 0 ? Number(p.exchange_rate) : tc;
+      const amt = Number(p.amount || 0);
+      retentionReturnedTotalUsd += paymentCurrency === "USD" ? amt : (paymentRate > 0 ? amt / paymentRate : 0);
+    }
+    setRetentionReturnedUsd(retentionReturnedTotalUsd);
 
     // Populate "ejecutado" details (all items from comprometido/recibido/facturado/pagado, tagged)
     for (const sf of subFinance.values()) {
@@ -810,6 +830,71 @@ export function AvanceTab({ projectId }: Props) {
                       </div>
                       <p className="text-[10px] text-muted-foreground mt-0.5">
                         {pct(pendienteAmort)} del anticipo
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Retenciones — línea paralela. Lo retenido al proveedor en cada
+                certificación, lo ya devuelto, y el saldo en garantía. */}
+            {(retainedUsd > 0.001 || retentionReturnedUsd > 0.001) && (() => {
+              const enGarantia = Math.max(0, retainedUsd - retentionReturnedUsd);
+              const pctRet = (v: number) =>
+                retainedUsd > 0 ? `${((v / retainedUsd) * 100).toFixed(1)}%` : "—";
+              return (
+                <div className="rounded-lg border border-neutral-300 bg-neutral-100 px-4 py-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="h-2 w-2 rounded-full bg-[#737373]" />
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Retenciones
+                    </p>
+                    <span className="text-[10px] text-muted-foreground italic ml-auto">
+                      retenido al proveedor en garantía
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-md bg-background border border-neutral-300 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
+                        Retenido acumulado
+                      </p>
+                      <div className="flex items-baseline gap-2 mt-0.5">
+                        <p className="text-base font-bold text-foreground">
+                          {formatMoney(retainedUsd)}
+                        </p>
+                        <span className="text-[10px] text-muted-foreground">{currencyLabel}</span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">100%</p>
+                    </div>
+
+                    <div className="rounded-md bg-background border border-neutral-300 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
+                        Devuelto
+                      </p>
+                      <div className="flex items-baseline gap-2 mt-0.5">
+                        <p className="text-base font-bold text-emerald-700">
+                          {formatMoney(retentionReturnedUsd)}
+                        </p>
+                        <span className="text-[10px] text-muted-foreground">{currencyLabel}</span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        {pctRet(retentionReturnedUsd)} de lo retenido
+                      </p>
+                    </div>
+
+                    <div className="rounded-md bg-background border border-neutral-300 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
+                        En garantía
+                      </p>
+                      <div className="flex items-baseline gap-2 mt-0.5">
+                        <p className="text-base font-bold text-[#B85A0F]">
+                          {formatMoney(enGarantia)}
+                        </p>
+                        <span className="text-[10px] text-muted-foreground">{currencyLabel}</span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        {pctRet(enGarantia)} sin devolver
                       </p>
                     </div>
                   </div>
