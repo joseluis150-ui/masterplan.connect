@@ -26,7 +26,9 @@ import {
   AlertCircle,
   Wallet,
   DollarSign,
+  FileSpreadsheet,
 } from "lucide-react";
+import { downloadBlob } from "@/lib/utils/excel";
 import { toast } from "sonner";
 import { CURRENCIES } from "@/lib/constants/units";
 import type {
@@ -407,6 +409,129 @@ export function FacturacionTab({ projectId }: Props) {
     setFilterInvoice(new Set());
   }
 
+  async function handleExportExcel() {
+    const localCurr = project?.local_currency || "PYG";
+    const projRate = Number(project?.exchange_rate || 0);
+
+    type ExportRow = Record<string, string | number>;
+    const localCol = `Monto ${localCurr}`;
+
+    function emptyRow(estado: string, ocNum: string, recRef: string, supplier: string, fecha: string): ExportRow {
+      return {
+        Estado: estado,
+        "N° OC": ocNum,
+        "N° Recepción": recRef,
+        Proveedor: supplier,
+        Fecha: fecha,
+        "Monto USD": 0,
+        [localCol]: 0,
+        "Equiv. USD": 0,
+      };
+    }
+
+    function bucketByOcCurrency(amount: number, currency: string, row: ExportRow) {
+      if (currency === "USD") {
+        row["Monto USD"] = amount;
+        row["Equiv. USD"] = amount;
+      } else {
+        row[localCol] = amount;
+        row["Equiv. USD"] = projRate > 0 ? amount / projRate : 0;
+      }
+    }
+
+    // Re-compute paid breakdown by invoice (handles per-payment currency)
+    const breakdownByInvoiceLocal = new Map<string, { local: number; usd: number; usdEq: number }>();
+    for (const p of allPayments) {
+      if (!p.invoice_id) continue;
+      const amt = Number(p.amount || 0);
+      const curr = p.currency || localCurr;
+      const rate = Number(p.exchange_rate || 0) || projRate;
+      const prev = breakdownByInvoiceLocal.get(p.invoice_id) || { local: 0, usd: 0, usdEq: 0 };
+      if (curr === "USD") {
+        prev.usd += amt;
+        prev.usdEq += amt;
+      } else {
+        prev.local += amt;
+        prev.usdEq += rate > 0 ? amt / rate : 0;
+      }
+      breakdownByInvoiceLocal.set(p.invoice_id, prev);
+    }
+
+    const rows: ExportRow[] = [];
+
+    // 1. Recibido no Facturado — payable_amount en moneda de la OC, fecha = recepción
+    for (const r of pendingReceptions) {
+      const amount = r.lines.reduce((s, l) => s + Number(l.payable_amount || 0), 0);
+      const row = emptyRow(
+        "1. Recibido no Facturado",
+        r.order.number,
+        receptionRef(r),
+        r.order.supplier,
+        r.date
+      );
+      bucketByOcCurrency(amount, r.order.currency, row);
+      rows.push(row);
+    }
+
+    // 2. Facturado sin Pagar — saldo (invoice.amount - paid) en moneda de la OC, fecha = factura
+    for (const r of invoicedReceptions) {
+      if (!r.invoice) continue;
+      const amount = Math.max(0, Number(r.invoice.amount) - (r.paidAmount || 0));
+      const row = emptyRow(
+        "2. Facturado sin Pagar",
+        r.order.number,
+        receptionRef(r),
+        r.order.supplier,
+        r.invoice.invoice_date
+      );
+      bucketByOcCurrency(amount, r.order.currency, row);
+      rows.push(row);
+    }
+
+    // 3. Pagado — montos efectivamente pagados, separados por la moneda de cada pago
+    for (const r of paidReceptions) {
+      if (!r.invoice) continue;
+      const b = breakdownByInvoiceLocal.get(r.invoice.id) || { local: 0, usd: 0, usdEq: 0 };
+      const row = emptyRow(
+        "3. Pagado",
+        r.order.number,
+        receptionRef(r),
+        r.order.supplier,
+        r.invoice.invoice_date
+      );
+      row["Monto USD"] = b.usd;
+      row[localCol] = b.local;
+      row["Equiv. USD"] = b.usdEq;
+      rows.push(row);
+    }
+
+    if (rows.length === 0) {
+      toast.error("No hay datos para exportar");
+      return;
+    }
+
+    const XLSX = await import("xlsx");
+    const ws = XLSX.utils.json_to_sheet(rows, {
+      header: ["Estado", "N° OC", "N° Recepción", "Proveedor", "Fecha", "Monto USD", localCol, "Equiv. USD"],
+    });
+    ws["!cols"] = [
+      { wch: 24 }, // Estado
+      { wch: 16 }, // OC
+      { wch: 22 }, // Recepción
+      { wch: 28 }, // Proveedor
+      { wch: 12 }, // Fecha
+      { wch: 14 }, // USD
+      { wch: 16 }, // Local
+      { wch: 14 }, // Equiv
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Facturación");
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const date = new Date().toISOString().slice(0, 10);
+    downloadBlob(buf, `facturacion_${date}.xlsx`);
+    toast.success(`Exportado: ${rows.length} fila${rows.length === 1 ? "" : "s"}`);
+  }
+
   // Summary
   const pendingTotal = pendingReceptions.reduce(
     (s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.payable_amount || 0), 0),
@@ -456,11 +581,23 @@ export function FacturacionTab({ projectId }: Props) {
 
   return (
     <div className="py-6 space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold">Facturación</h2>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Gestiona las facturas asociadas a recepciones. Cada recepción habilita al proveedor a facturar el monto pagable.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Facturación</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Gestiona las facturas asociadas a recepciones. Cada recepción habilita al proveedor a facturar el monto pagable.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExportExcel}
+          disabled={receptions.length === 0}
+          title="Exportar los 3 estados (Recibido no Facturado, Facturado sin Pagar, Pagado) a un archivo Excel"
+        >
+          <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" />
+          Exportar Excel
+        </Button>
       </div>
 
       {/* Summary cards */}
