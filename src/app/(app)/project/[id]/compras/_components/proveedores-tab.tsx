@@ -18,7 +18,7 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
-import { Plus, Users, Trash2, Mail, Phone, Hash, Download, FileText } from "lucide-react";
+import { Plus, Users, Trash2, Mail, Phone, Hash, Download, FileText, Printer } from "lucide-react";
 import { toast } from "sonner";
 import type {
   Supplier,
@@ -503,6 +503,28 @@ export function ProveedoresTab({ projectId }: Props) {
               .sort((a, b) => (b.issue_date || "").localeCompare(a.issue_date || ""));
             const ocCount = supplierOrders.filter((o) => o.status !== "cancelled").length;
 
+            function printSupplierReport() {
+              if (!project) return;
+              const html = buildSupplierReportHtml({
+                supplier: s!,
+                project,
+                stats,
+                supplierOrders,
+                invoices,
+                payments,
+                tc,
+                paymentTermsLabel: s!.payment_terms ? PAYMENT_TERMS_LABELS[s!.payment_terms] : null,
+              });
+              const w = window.open("", "_blank", "width=1024,height=768");
+              if (!w) {
+                toast.error("El navegador bloqueó la ventana de impresión. Permití pop-ups e intentá de nuevo.");
+                return;
+              }
+              w.document.open();
+              w.document.write(html);
+              w.document.close();
+            }
+
             return (
               <>
                 {/* Header */}
@@ -900,6 +922,10 @@ export function ProveedoresTab({ projectId }: Props) {
                 {/* Footer */}
                 <div className="flex-none border-t bg-muted/30 px-6 py-3 flex items-center gap-2">
                   <Button variant="outline" onClick={() => setDetailId(null)}>Cerrar</Button>
+                  <Button variant="outline" onClick={printSupplierReport}>
+                    <Printer className="h-3.5 w-3.5 mr-1" />
+                    Imprimir / PDF
+                  </Button>
                   <div className="flex-1" />
                   <Button
                     variant="ghost"
@@ -1027,4 +1053,361 @@ export function ProveedoresTab({ projectId }: Props) {
       </Dialog>
     </div>
   );
+}
+
+/* ───────────────────────── Printable supplier report ───────────────────────── */
+
+interface ReportInput {
+  supplier: Supplier;
+  project: Project;
+  stats: SupplierStats;
+  supplierOrders: OCWithLinesAndRecs[];
+  invoices: Invoice[];
+  payments: Payment[];
+  tc: number;
+  paymentTermsLabel: string | null;
+}
+
+function buildSupplierReportHtml(input: ReportInput): string {
+  const { supplier, project, stats, supplierOrders, invoices, payments, tc, paymentTermsLabel } = input;
+  const locale = getNumberLocale();
+  const esc = (v: string | null | undefined) =>
+    (v == null ? "" : String(v)).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] || c)
+    );
+  const fmt = (n: number, dec = 0) =>
+    n > 0 ? n.toLocaleString(locale, { minimumFractionDigits: dec, maximumFractionDigits: dec }) : "—";
+  const today = new Date().toLocaleDateString(locale, { year: "numeric", month: "long", day: "numeric" });
+  const localCurrency = project.local_currency || "PYG";
+
+  const toOcCurrency = (amount: number, fromCurr: string, ocCurrency: string, rate: number) => {
+    if (fromCurr === ocCurrency) return amount;
+    const r = rate || tc;
+    if (fromCurr === "USD" && ocCurrency !== "USD" && r > 0) return amount * r;
+    if (ocCurrency === "USD" && fromCurr !== "USD" && r > 0) return amount / r;
+    return amount;
+  };
+
+  // ── KPIs ──
+  const kpis: { label: string; bucket: { local: number; usd: number; usdEq: number }; subtitle?: string }[] = [
+    { label: `Total OCs (${stats.ocCount})`, bucket: stats.total },
+    { label: "Certificado", bucket: stats.certificado, subtitle: stats.total.usdEq > 0 ? `${((stats.certificado.usdEq / stats.total.usdEq) * 100).toFixed(1)}% del total` : "" },
+    { label: "Aprobado para pago", bucket: stats.desembolsado, subtitle: stats.total.usdEq > 0 ? `${((stats.desembolsado.usdEq / stats.total.usdEq) * 100).toFixed(1)}% del total` : "" },
+    { label: "Anticipo pendiente de amortizar", bucket: stats.advancePending, subtitle: "Saldo del anticipo sin descontar" },
+    { label: "Retenciones", bucket: stats.retention, subtitle: "Acumuladas en certificaciones" },
+  ];
+  const kpiBlocks = kpis.map((k) => `
+    <div class="kpi">
+      <div class="kpi-label">${esc(k.label)}</div>
+      <div class="kpi-grid">
+        <div><div class="bucket-label">${esc(localCurrency)}</div><div class="bucket-value">${fmt(k.bucket.local, 0)}</div></div>
+        <div><div class="bucket-label">USD</div><div class="bucket-value">${fmt(k.bucket.usd, 2)}</div></div>
+        <div class="border-l"><div class="bucket-label">Equiv. USD</div><div class="bucket-value">${fmt(k.bucket.usdEq, 2)}</div></div>
+      </div>
+      ${k.subtitle ? `<div class="kpi-subtitle">${esc(k.subtitle)}</div>` : ""}
+    </div>
+  `).join("");
+
+  // ── Per-OC rows (mismo cálculo que la tabla en pantalla) ──
+  type Row = {
+    oc: OCWithLinesAndRecs;
+    total: number;
+    recibidoNoFacturado: number;
+    facturadoSinPagar: number;
+    pagado: number;
+    pagadoAnticipo: number;
+  };
+  const rows: Row[] = supplierOrders.map((oc) => {
+    const total = oc.lines.reduce((s, l) => s + Number(l.total || 0), 0);
+    const liveRecs = oc.receptions.filter((r) => r.status === "received" || r.status === "invoiced");
+    const recibidoNoFacturado = liveRecs
+      .filter((r) => r.status === "received")
+      .reduce((s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.payable_amount || 0), 0), 0);
+    const invoicedRecIds = new Set(liveRecs.filter((r) => r.status === "invoiced").map((r) => r.id));
+    const advanceRecIds = new Set(liveRecs.filter((r) => r.type === "advance").map((r) => r.id));
+    const ocInvoices = invoices.filter(
+      (inv) => inv.reception_id && invoicedRecIds.has(inv.reception_id) && inv.status !== "cancelled"
+    );
+    const paidByInvoiceId = new Map<string, number>();
+    for (const p of payments) {
+      if (!p.invoice_id) continue;
+      const amt = toOcCurrency(Number(p.amount || 0), p.currency || oc.currency, oc.currency, Number(p.exchange_rate || 0));
+      paidByInvoiceId.set(p.invoice_id, (paidByInvoiceId.get(p.invoice_id) || 0) + amt);
+    }
+    let facturadoSinPagar = 0;
+    let pagado = 0;
+    let pagadoAnticipo = 0;
+    for (const inv of ocInvoices) {
+      const invAmount = Number(inv.amount || 0);
+      const paid = paidByInvoiceId.get(inv.id) || 0;
+      if (paid >= invAmount - 0.001) {
+        pagado += paid;
+        if (inv.reception_id && advanceRecIds.has(inv.reception_id)) pagadoAnticipo += paid;
+      } else {
+        facturadoSinPagar += Math.max(0, invAmount - paid);
+      }
+    }
+    return { oc, total, recibidoNoFacturado, facturadoSinPagar, pagado, pagadoAnticipo };
+  });
+
+  const ocRowsHtml = rows.map((r) => `
+    <tr>
+      <td class="mono">${esc(r.oc.number)}</td>
+      <td class="muted">${esc(r.oc.issue_date)}</td>
+      <td>${r.oc.status === "open" ? "Abierta" : r.oc.status === "closed" ? "Cerrada" : "Cancelada"}</td>
+      <td class="mono muted">${esc(r.oc.currency)}</td>
+      <td class="right mono bold">${fmt(r.total, 2)}</td>
+      <td class="right mono">${fmt(r.recibidoNoFacturado, 2)}</td>
+      <td class="right mono">${fmt(r.facturadoSinPagar, 2)}</td>
+      <td class="right mono">
+        ${fmt(r.pagado, 2)}
+        ${r.pagadoAnticipo > 0 ? `<div class="anticipo-note">incl. anticipo ${fmt(r.pagadoAnticipo, 2)}</div>` : ""}
+      </td>
+    </tr>
+  `).join("");
+
+  // Totales por moneda
+  type Tots = { total: number; recibidoNoFacturado: number; facturadoSinPagar: number; pagado: number; pagadoAnticipo: number };
+  const totalsByCurrency = new Map<string, Tots>();
+  for (const r of rows) {
+    const curr = r.oc.currency;
+    const prev = totalsByCurrency.get(curr) || { total: 0, recibidoNoFacturado: 0, facturadoSinPagar: 0, pagado: 0, pagadoAnticipo: 0 };
+    prev.total += r.total;
+    prev.recibidoNoFacturado += r.recibidoNoFacturado;
+    prev.facturadoSinPagar += r.facturadoSinPagar;
+    prev.pagado += r.pagado;
+    prev.pagadoAnticipo += r.pagadoAnticipo;
+    totalsByCurrency.set(curr, prev);
+  }
+  const totalsRowsHtml = Array.from(totalsByCurrency.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([curr, t]) => `
+      <tr class="total-row">
+        <td colspan="4" class="right">TOTAL (${esc(curr)})</td>
+        <td class="right mono">${fmt(t.total, 2)}</td>
+        <td class="right mono">${fmt(t.recibidoNoFacturado, 2)}</td>
+        <td class="right mono">${fmt(t.facturadoSinPagar, 2)}</td>
+        <td class="right mono">
+          ${fmt(t.pagado, 2)}
+          ${t.pagadoAnticipo > 0 ? `<div class="anticipo-note">incl. anticipo ${fmt(t.pagadoAnticipo, 2)}</div>` : ""}
+        </td>
+      </tr>
+    `).join("");
+
+  const ocTableHtml = supplierOrders.length === 0
+    ? `<p class="empty-state">Este proveedor no tiene OCs asociadas.</p>`
+    : `<table class="oc-table">
+        <thead>
+          <tr>
+            <th>N° OC</th><th>Fecha</th><th>Estado</th><th>Moneda</th>
+            <th class="right">Total</th>
+            <th class="right">Recibido no facturado</th>
+            <th class="right">Facturado sin pagar</th>
+            <th class="right">Pagado</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${ocRowsHtml}
+          ${totalsRowsHtml}
+        </tbody>
+      </table>`;
+
+  // ── Ficha rows ──
+  const fichaRows: { label: string; value: string }[] = [
+    { label: "Nombre", value: supplier.name },
+    { label: "N° Fiscal / RUC", value: supplier.tax_id || "—" },
+    { label: "Email", value: supplier.email || "—" },
+    { label: "Teléfono", value: supplier.phone || "—" },
+    {
+      label: "Forma de pago",
+      value: paymentTermsLabel
+        ? supplier.payment_terms === "credito" && supplier.credit_days
+          ? `${paymentTermsLabel} · ${supplier.credit_days} días`
+          : paymentTermsLabel
+        : "—",
+    },
+  ];
+  if (supplier.notes) fichaRows.push({ label: "Notas", value: supplier.notes });
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Estado de cuenta — ${esc(supplier.name)}</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    padding: 24px 32px;
+    color: #0A0A0A;
+    font-size: 11px;
+    background: #fff;
+  }
+  h1 { font-size: 22px; margin: 0; }
+  h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #737373;
+    margin: 22px 0 10px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #E5E5E5;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 2px solid #E87722;
+    padding-bottom: 12px;
+    margin-bottom: 4px;
+  }
+  .header .meta { text-align: right; font-size: 10px; color: #737373; line-height: 1.5; }
+  .summary { font-size: 11px; color: #737373; margin-top: 4px; }
+  .ficha {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 24px;
+    margin-bottom: 4px;
+  }
+  .ficha-row { display: flex; flex-direction: column; padding: 4px 0; }
+  .ficha-row .label {
+    font-size: 9px;
+    color: #737373;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+  .ficha-row .value { font-size: 11px; }
+  .ficha-row.notas { grid-column: span 2; }
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .kpi {
+    border: 1px solid #D4D4D4;
+    background: #FAFAFA;
+    border-radius: 4px;
+    padding: 8px 10px;
+  }
+  .kpi-label {
+    font-size: 9px;
+    color: #737373;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .kpi-grid .border-l { border-left: 1px solid #E5E5E5; padding-left: 6px; }
+  .bucket-label { font-size: 8px; color: #737373; text-transform: uppercase; }
+  .bucket-value { font-size: 11px; font-weight: 700; }
+  .kpi-subtitle { font-size: 9px; color: #737373; margin-top: 4px; }
+  table.oc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10px;
+  }
+  table.oc-table th {
+    background: #FEF3E8;
+    color: #B85A0F;
+    text-align: left;
+    text-transform: uppercase;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    padding: 6px 8px;
+    border-bottom: 1px solid #E5E5E5;
+  }
+  table.oc-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #EEE;
+  }
+  .right { text-align: right; }
+  .mono { font-family: "SF Mono", Menlo, Consolas, monospace; }
+  .bold { font-weight: 700; }
+  .muted { color: #737373; }
+  tr.total-row td {
+    background: #FCE8D6;
+    border-top: 2px solid #E87722;
+    border-bottom: 1px solid #E87722;
+    font-weight: 700;
+  }
+  .anticipo-note {
+    font-size: 8px;
+    color: #737373;
+    font-style: italic;
+    font-weight: 400;
+    margin-top: 1px;
+  }
+  .empty-state { color: #737373; font-style: italic; padding: 16px 0; }
+  .footer {
+    margin-top: 28px;
+    padding-top: 8px;
+    border-top: 1px solid #E5E5E5;
+    font-size: 9px;
+    color: #A3A3A3;
+    display: flex;
+    justify-content: space-between;
+  }
+  @page { size: A4 landscape; margin: 12mm; }
+  @media print {
+    body { padding: 0; }
+    h2 { page-break-after: avoid; }
+    table.oc-table { page-break-inside: auto; }
+    table.oc-table tr { page-break-inside: avoid; }
+    .kpi { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>${esc(supplier.name)}</h1>
+      <div class="summary">
+        Estado de cuenta · ${esc(project.name)} ·
+        ${stats.ocCount} OC${stats.ocCount === 1 ? "" : "s"} activa${stats.ocCount === 1 ? "" : "s"} ·
+        Total ${fmt(stats.total.usdEq, 2)} USD equivalente
+      </div>
+    </div>
+    <div class="meta">
+      MasterPlan Connect<br />
+      Generado el ${esc(today)}
+    </div>
+  </div>
+
+  <h2>Ficha del proveedor</h2>
+  <div class="ficha">
+    ${fichaRows.map((r) => `
+      <div class="ficha-row${r.label === "Notas" ? " notas" : ""}">
+        <span class="label">${esc(r.label)}</span>
+        <span class="value">${esc(r.value)}</span>
+      </div>
+    `).join("")}
+  </div>
+
+  <h2>Estado de cuenta</h2>
+  <div class="kpis">
+    ${kpiBlocks}
+  </div>
+
+  <h2>Órdenes de compra</h2>
+  ${ocTableHtml}
+
+  <div class="footer">
+    <span>${esc(supplier.name)} · ${esc(project.name)}</span>
+    <span>Generado el ${esc(today)}</span>
+  </div>
+
+  <script>
+    window.addEventListener("load", () => {
+      setTimeout(() => {
+        window.print();
+      }, 100);
+    });
+    window.addEventListener("afterprint", () => {
+      window.close();
+    });
+  </script>
+</body>
+</html>`;
 }
