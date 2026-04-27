@@ -458,6 +458,18 @@ export function FacturacionTab({ projectId }: Props) {
       breakdownByInvoiceLocal.set(p.invoice_id, prev);
     }
 
+    // Pre-compute invoice amount in USD at PROJECT rate (lo que Avance usa como
+    // base para las cuentas de Pagado y Facturado sin Pagar).
+    const invAmountUsdByInvoice = new Map<string, number>();
+    for (const r of [...invoicedReceptions, ...paidReceptions]) {
+      if (!r.invoice) continue;
+      const invAmount = Number(r.invoice.amount);
+      const invUsd = r.order.currency === "USD"
+        ? invAmount
+        : projRate > 0 ? invAmount / projRate : 0;
+      invAmountUsdByInvoice.set(r.invoice.id, invUsd);
+    }
+
     const rows: ExportRow[] = [];
 
     // 1. Recibido no Facturado — gross_amount en moneda de la OC (alineado con
@@ -477,7 +489,10 @@ export function FacturacionTab({ projectId }: Props) {
       rows.push(row);
     }
 
-    // 2. Facturado sin Pagar — saldo (invoice.amount - paid) en moneda de la OC, fecha = factura
+    // 2. Facturado sin Pagar — saldo en moneda OC. Para alinear con Avance,
+    // el Equiv. USD se calcula como invAmountUsd (al TC proyecto) − paidUsd (al TC
+    // de cada pago), que puede diferir de saldo/TC_proyecto cuando un pago se
+    // registró con TC distinto al del proyecto.
     for (const r of invoicedReceptions) {
       if (!r.invoice) continue;
       const amount = Math.max(0, Number(r.invoice.amount) - (r.paidAmount || 0));
@@ -490,13 +505,21 @@ export function FacturacionTab({ projectId }: Props) {
         r.invoice.invoice_date
       );
       bucketByOcCurrency(amount, r.order.currency, row);
+      // Override Equiv. USD usando criterio de Avance Financiero
+      const invUsd = invAmountUsdByInvoice.get(r.invoice.id) || 0;
+      const paidUsdEq = (breakdownByInvoiceLocal.get(r.invoice.id)?.usdEq) || 0;
+      row["Equiv. USD"] = Math.max(0, invUsd - paidUsdEq);
       rows.push(row);
     }
 
-    // 3. Pagado — montos efectivamente pagados, separados por la moneda de cada pago
+    // 3. Pagado — montos efectivamente pagados, separados por la moneda de cada
+    // pago. El Equiv. USD se topa al valor USD de la factura al TC del proyecto
+    // (mismo criterio que Avance Financiero), de modo que ganancias cambiarias
+    // por pagar a un TC distinto no inflen el Pagado.
     for (const r of paidReceptions) {
       if (!r.invoice) continue;
       const b = breakdownByInvoiceLocal.get(r.invoice.id) || { local: 0, usd: 0, usdEq: 0 };
+      const invUsd = invAmountUsdByInvoice.get(r.invoice.id) || 0;
       const row = emptyRow(
         "3. Pagado",
         r.type === "advance",
@@ -507,7 +530,7 @@ export function FacturacionTab({ projectId }: Props) {
       );
       row["Monto USD"] = b.usd;
       row[localCol] = b.local;
-      row["Equiv. USD"] = b.usdEq;
+      row["Equiv. USD"] = Math.min(b.usdEq, invUsd);
       rows.push(row);
     }
 
