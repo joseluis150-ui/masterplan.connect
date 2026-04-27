@@ -416,9 +416,10 @@ export function FacturacionTab({ projectId }: Props) {
     type ExportRow = Record<string, string | number>;
     const localCol = `Monto ${localCurr}`;
 
-    function emptyRow(estado: string, ocNum: string, recRef: string, supplier: string, fecha: string): ExportRow {
+    function emptyRow(estado: string, isAnticipo: boolean, ocNum: string, recRef: string, supplier: string, fecha: string): ExportRow {
       return {
         Estado: estado,
+        Anticipo: isAnticipo ? "Sí" : "No",
         "N° OC": ocNum,
         "N° Recepción": recRef,
         Proveedor: supplier,
@@ -464,6 +465,7 @@ export function FacturacionTab({ projectId }: Props) {
       const amount = r.lines.reduce((s, l) => s + Number(l.payable_amount || 0), 0);
       const row = emptyRow(
         "1. Recibido no Facturado",
+        r.type === "advance",
         r.order.number,
         receptionRef(r),
         r.order.supplier,
@@ -479,6 +481,7 @@ export function FacturacionTab({ projectId }: Props) {
       const amount = Math.max(0, Number(r.invoice.amount) - (r.paidAmount || 0));
       const row = emptyRow(
         "2. Facturado sin Pagar",
+        r.type === "advance",
         r.order.number,
         receptionRef(r),
         r.order.supplier,
@@ -494,6 +497,7 @@ export function FacturacionTab({ projectId }: Props) {
       const b = breakdownByInvoiceLocal.get(r.invoice.id) || { local: 0, usd: 0, usdEq: 0 };
       const row = emptyRow(
         "3. Pagado",
+        r.type === "advance",
         r.order.number,
         receptionRef(r),
         r.order.supplier,
@@ -512,10 +516,11 @@ export function FacturacionTab({ projectId }: Props) {
 
     const XLSX = await import("xlsx");
     const ws = XLSX.utils.json_to_sheet(rows, {
-      header: ["Estado", "N° OC", "N° Recepción", "Proveedor", "Fecha", "Monto USD", localCol, "Equiv. USD"],
+      header: ["Estado", "Anticipo", "N° OC", "N° Recepción", "Proveedor", "Fecha", "Monto USD", localCol, "Equiv. USD"],
     });
     ws["!cols"] = [
       { wch: 24 }, // Estado
+      { wch: 10 }, // Anticipo
       { wch: 16 }, // OC
       { wch: 22 }, // Recepción
       { wch: 28 }, // Proveedor
