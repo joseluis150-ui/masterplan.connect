@@ -460,9 +460,11 @@ export function FacturacionTab({ projectId }: Props) {
 
     const rows: ExportRow[] = [];
 
-    // 1. Recibido no Facturado — payable_amount en moneda de la OC, fecha = recepción
+    // 1. Recibido no Facturado — gross_amount en moneda de la OC (alineado con
+    // el KPI "Recibido" de Avance Financiero, que también usa gross). Las
+    // retenciones y amortizaciones se descuentan recién al facturar.
     for (const r of pendingReceptions) {
-      const amount = r.lines.reduce((s, l) => s + Number(l.payable_amount || 0), 0);
+      const amount = r.lines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
       const row = emptyRow(
         "1. Recibido no Facturado",
         r.type === "advance",
