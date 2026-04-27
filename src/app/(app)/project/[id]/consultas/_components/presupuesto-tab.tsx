@@ -206,13 +206,28 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
               <TableRow>
                 <TableHead className="w-[110px]">Código</TableHead>
                 <TableHead>Descripción</TableHead>
-                {sectorList.map((s) => (
-                  <TableHead key={s.id} className="text-right whitespace-nowrap">
-                    {s.name}
-                  </TableHead>
-                ))}
+                {sectorList.map((s) => {
+                  const m2 = Number(s.area_m2 || 0);
+                  return (
+                    <TableHead key={s.id} className="text-right whitespace-nowrap">
+                      <div className="leading-tight">
+                        <div>{s.name}</div>
+                        <div className="text-[10px] font-normal text-muted-foreground">
+                          {m2 > 0 ? `${formatNumber(m2, 0)} m²` : "sin m²"}
+                        </div>
+                      </div>
+                    </TableHead>
+                  );
+                })}
                 <TableHead className="text-right whitespace-nowrap">Total ({currency})</TableHead>
-                <TableHead className="text-right whitespace-nowrap">{currency}/m²</TableHead>
+                <TableHead className="text-right whitespace-nowrap">
+                  <div className="leading-tight">
+                    <div>{currency}/m²</div>
+                    <div className="text-[10px] font-normal text-muted-foreground">
+                      {totalAreaM2 > 0 ? `${formatNumber(totalAreaM2, 0)} m² total` : "sin m²"}
+                    </div>
+                  </div>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
