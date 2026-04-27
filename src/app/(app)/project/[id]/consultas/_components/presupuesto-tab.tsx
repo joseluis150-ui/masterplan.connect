@@ -15,8 +15,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { formatNumber, convertCurrency } from "@/lib/utils/formula";
-import type { Project, Sector } from "@/lib/types/database";
-import { DollarSign, ChevronDown, ChevronRight } from "lucide-react";
+import type { Project, Sector, Articulo } from "@/lib/types/database";
+import { DollarSign, ChevronDown, ChevronRight, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface BudgetRow {
@@ -33,6 +33,24 @@ interface BudgetRow {
   total_mat: number;
   total_mo: number;
   total_glo: number;
+}
+
+interface QLine {
+  id: string;
+  articulo_id: string | null;
+  subcategory_id: string;
+  sector_id: string;
+  quantity: number | null;
+}
+
+interface ArticuloRollup {
+  articuloId: string;
+  number: number;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitCost: number;
+  total: number;
 }
 
 interface SubAgg {
@@ -53,16 +71,27 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
   const [budgetData, setBudgetData] = useState<BudgetRow[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [sectors, setSectors] = useState<Sector[]>([]);
+  const [qLines, setQLines] = useState<QLine[]>([]);
+  const [articulos, setArticulos] = useState<Articulo[]>([]);
+  const [articuloCosts, setArticuloCosts] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [showLocal, setShowLocal] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set()); // category ids con desglose visible
+  const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set()); // subcategory ids con artículos visibles
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
-    const [projRes, sectorsRes, budgetRes] = await Promise.all([
+    const [projRes, sectorsRes, budgetRes, qlRes, artsRes, costsRes] = await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).single(),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.rpc("get_budget_summary", { p_project_id: projectId }),
+      supabase
+        .from("quantification_lines")
+        .select("id, articulo_id, subcategory_id, sector_id, quantity")
+        .eq("project_id", projectId)
+        .is("deleted_at", null),
+      supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
+      supabase.rpc("get_project_articulo_totals", { p_project_id: projectId }),
     ]);
     if (projRes.data) setProject(projRes.data);
     setSectors(sectorsRes.data || []);
@@ -73,6 +102,13 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
       total_mo: Number(r.total_mo),
       total_glo: Number(r.total_glo),
     })) as BudgetRow[]);
+    setQLines(((qlRes.data || []) as QLine[]).map((q) => ({ ...q, quantity: q.quantity == null ? 0 : Number(q.quantity) })));
+    setArticulos((artsRes.data || []) as Articulo[]);
+    const costMap = new Map<string, number>();
+    for (const r of (costsRes.data || []) as { articulo_id: string; pu_costo: number | string }[]) {
+      costMap.set(r.articulo_id, Number(r.pu_costo) || 0);
+    }
+    setArticuloCosts(costMap);
     setLoading(false);
   }, [projectId]);
 
@@ -128,12 +164,54 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
       return next;
     });
   }
+  function toggleExpandedSub(subId: string) {
+    setExpandedSubs((prev) => {
+      const next = new Set(prev);
+      if (next.has(subId)) next.delete(subId); else next.add(subId);
+      return next;
+    });
+  }
   function expandAll() {
     setExpanded(new Set(Array.from(categoryTotals.keys())));
   }
   function collapseAll() {
     setExpanded(new Set());
+    setExpandedSubs(new Set());
   }
+
+  // Articulos agrupados por subcategoría — qty total y costo total
+  const articulosBySub = (() => {
+    const m = new Map<string, ArticuloRollup[]>();
+    const artMap = new Map(articulos.map((a) => [a.id, a]));
+    // Acumulado de qty por (subcategory_id, articulo_id)
+    const qtyMap = new Map<string, Map<string, number>>();
+    for (const ql of qLines) {
+      if (!ql.articulo_id) continue;
+      const subMap = qtyMap.get(ql.subcategory_id) || new Map<string, number>();
+      subMap.set(ql.articulo_id, (subMap.get(ql.articulo_id) || 0) + Number(ql.quantity || 0));
+      qtyMap.set(ql.subcategory_id, subMap);
+    }
+    for (const [subId, byArt] of qtyMap.entries()) {
+      const list: ArticuloRollup[] = [];
+      for (const [artId, qty] of byArt.entries()) {
+        const art = artMap.get(artId);
+        if (!art) continue;
+        const unitCost = articuloCosts.get(artId) || 0;
+        list.push({
+          articuloId: artId,
+          number: art.number,
+          description: art.description,
+          unit: art.unit,
+          quantity: qty,
+          unitCost,
+          total: qty * unitCost,
+        });
+      }
+      list.sort((a, b) => a.number - b.number);
+      m.set(subId, list);
+    }
+    return m;
+  })();
 
   if (loading) return <div className="animate-pulse h-96 bg-muted rounded-lg" />;
 
@@ -265,27 +343,101 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                         {totalAreaM2 > 0 ? fmt(perM2(cat.total)) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
                     </TableRow>
-                    {isOpen && Array.from(cat.subs.entries()).map(([subId, sub]) => (
-                      <TableRow key={subId} className="bg-background">
-                        <TableCell className="pl-8 text-muted-foreground">{sub.code}</TableCell>
-                        <TableCell className="pl-8">{sub.name}</TableCell>
-                        {sectorList.map((s) => {
-                          const v = sub.bySector.get(s.id) || 0;
-                          return (
-                            <TableCell key={s.id} className="text-right font-mono text-sm">
-                              {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
+                    {isOpen && Array.from(cat.subs.entries()).map(([subId, sub]) => {
+                      const subOpen = expandedSubs.has(subId);
+                      const arts = articulosBySub.get(subId) || [];
+                      const colSpanFull = 5 + sectorList.length; // toda la fila
+                      return (
+                        <React.Fragment key={subId}>
+                          <TableRow
+                            className="bg-background cursor-pointer hover:bg-muted/30"
+                            onClick={() => toggleExpandedSub(subId)}
+                          >
+                            <TableCell className="pl-8 text-muted-foreground">
+                              <span className="inline-flex items-center gap-1">
+                                {arts.length > 0
+                                  ? (subOpen
+                                    ? <ChevronDown className="h-3 w-3" />
+                                    : <ChevronRight className="h-3 w-3" />)
+                                  : <span className="inline-block w-3" />}
+                                {sub.code}
+                              </span>
                             </TableCell>
-                          );
-                        })}
-                        <TableCell className="text-right font-mono text-sm">{fmt(sub.total)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                          {grandTotal > 0 ? `${((sub.total / grandTotal) * 100).toFixed(1)}%` : "—"}
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-sm">
-                          {totalAreaM2 > 0 ? fmt(perM2(sub.total)) : <span className="text-muted-foreground">—</span>}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                            <TableCell className="pl-8">{sub.name}</TableCell>
+                            {sectorList.map((s) => {
+                              const v = sub.bySector.get(s.id) || 0;
+                              return (
+                                <TableCell key={s.id} className="text-right font-mono text-sm">
+                                  {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
+                                </TableCell>
+                              );
+                            })}
+                            <TableCell className="text-right font-mono text-sm">{fmt(sub.total)}</TableCell>
+                            <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                              {grandTotal > 0 ? `${((sub.total / grandTotal) * 100).toFixed(1)}%` : "—"}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm">
+                              {totalAreaM2 > 0 ? fmt(perM2(sub.total)) : <span className="text-muted-foreground">—</span>}
+                            </TableCell>
+                          </TableRow>
+                          {subOpen && (
+                            <TableRow className="bg-muted/20 hover:bg-muted/20">
+                              <TableCell colSpan={colSpanFull} className="p-0">
+                                <div className="px-10 py-3">
+                                  <div className="flex items-center gap-2 mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">
+                                    <Package className="h-3.5 w-3.5" />
+                                    Artículos en {sub.code} {sub.name}
+                                    <span className="text-[10px] normal-case text-muted-foreground/80">
+                                      ({arts.length} {arts.length === 1 ? "artículo" : "artículos"})
+                                    </span>
+                                  </div>
+                                  {arts.length === 0 ? (
+                                    <p className="text-xs italic text-muted-foreground py-2">
+                                      Esta subcategoría no tiene artículos cuantificados.
+                                    </p>
+                                  ) : (
+                                    <div className="border rounded-md overflow-hidden bg-background">
+                                      <table className="w-full text-xs">
+                                        <thead>
+                                          <tr className="bg-amber-50">
+                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[80px]">Cód.</th>
+                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F]">Artículo</th>
+                                            <th className="text-center px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[60px]">Unidad</th>
+                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[100px]">Cantidad</th>
+                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[110px]">P.U. ({currency})</th>
+                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[120px]">Total ({currency})</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {arts.map((a) => (
+                                            <tr key={a.articuloId} className="border-t hover:bg-muted/10">
+                                              <td className="px-3 py-2 font-mono text-muted-foreground">{a.number}</td>
+                                              <td className="px-3 py-2">{a.description}</td>
+                                              <td className="px-3 py-2 text-center text-muted-foreground">{a.unit}</td>
+                                              <td className="px-3 py-2 text-right font-mono">{formatNumber(a.quantity)}</td>
+                                              <td className="px-3 py-2 text-right font-mono">{fmt(a.unitCost)}</td>
+                                              <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(a.total)}</td>
+                                            </tr>
+                                          ))}
+                                          <tr className="border-t-2 border-amber-300 bg-amber-100 font-bold">
+                                            <td colSpan={5} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[#0A0A0A]">
+                                              Subtotal
+                                            </td>
+                                            <td className="px-3 py-2 text-right font-mono text-[#0A0A0A]">
+                                              {fmt(arts.reduce((s, a) => s + a.total, 0))}
+                                            </td>
+                                          </tr>
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </React.Fragment>
                 );
               })}
