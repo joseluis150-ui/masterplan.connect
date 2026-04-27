@@ -203,27 +203,28 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
         <div className="border rounded-lg overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead className="w-[110px]">Código</TableHead>
-                <TableHead>Descripción</TableHead>
+              <TableRow className="bg-amber-50 hover:bg-amber-50">
+                <TableHead className="w-[110px] text-[#B85A0F] font-semibold">Código</TableHead>
+                <TableHead className="text-[#B85A0F] font-semibold">Descripción</TableHead>
                 {sectorList.map((s) => {
                   const m2 = Number(s.area_m2 || 0);
                   return (
-                    <TableHead key={s.id} className="text-right whitespace-nowrap">
+                    <TableHead key={s.id} className="text-right whitespace-nowrap text-[#B85A0F] font-semibold">
                       <div className="leading-tight">
                         <div>{s.name}</div>
-                        <div className="text-[10px] font-normal text-muted-foreground">
+                        <div className="text-[10px] font-normal text-amber-800/70">
                           {m2 > 0 ? `${formatNumber(m2, 0)} m²` : "sin m²"}
                         </div>
                       </div>
                     </TableHead>
                   );
                 })}
-                <TableHead className="text-right whitespace-nowrap">Total ({currency})</TableHead>
-                <TableHead className="text-right whitespace-nowrap">
+                <TableHead className="text-right whitespace-nowrap text-[#B85A0F] font-semibold">Total ({currency})</TableHead>
+                <TableHead className="text-right whitespace-nowrap text-[#B85A0F] font-semibold w-[80px]">%</TableHead>
+                <TableHead className="text-right whitespace-nowrap text-[#B85A0F] font-semibold">
                   <div className="leading-tight">
                     <div>{currency}/m²</div>
-                    <div className="text-[10px] font-normal text-muted-foreground">
+                    <div className="text-[10px] font-normal text-amber-800/70">
                       {totalAreaM2 > 0 ? `${formatNumber(totalAreaM2, 0)} m² total` : "sin m²"}
                     </div>
                   </div>
@@ -257,6 +258,9 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                         );
                       })}
                       <TableCell className="text-right font-mono">{fmt(cat.total)}</TableCell>
+                      <TableCell className="text-right font-mono text-muted-foreground">
+                        {grandTotal > 0 ? `${((cat.total / grandTotal) * 100).toFixed(1)}%` : "—"}
+                      </TableCell>
                       <TableCell className="text-right font-mono">
                         {totalAreaM2 > 0 ? fmt(perM2(cat.total)) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
@@ -274,6 +278,9 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                           );
                         })}
                         <TableCell className="text-right font-mono text-sm">{fmt(sub.total)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                          {grandTotal > 0 ? `${((sub.total / grandTotal) * 100).toFixed(1)}%` : "—"}
+                        </TableCell>
                         <TableCell className="text-right font-mono text-sm">
                           {totalAreaM2 > 0 ? fmt(perM2(sub.total)) : <span className="text-muted-foreground">—</span>}
                         </TableCell>
@@ -283,19 +290,20 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                 );
               })}
               {/* Fila TOTAL */}
-              <TableRow className={cn("font-bold border-t-2 bg-muted/40")}>
+              <TableRow className={cn("font-bold border-t-2 border-amber-300 bg-amber-100 hover:bg-amber-100")}>
                 <TableCell></TableCell>
-                <TableCell>TOTAL</TableCell>
+                <TableCell className="text-[#0A0A0A]">TOTAL</TableCell>
                 {sectorList.map((s) => {
                   const v = grandBySector.get(s.id) || 0;
                   return (
-                    <TableCell key={s.id} className="text-right font-mono">
+                    <TableCell key={s.id} className="text-right font-mono text-[#0A0A0A]">
                       {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                   );
                 })}
-                <TableCell className="text-right font-mono">{fmt(grandTotal)}</TableCell>
-                <TableCell className="text-right font-mono">
+                <TableCell className="text-right font-mono text-[#0A0A0A]">{fmt(grandTotal)}</TableCell>
+                <TableCell className="text-right font-mono text-[#0A0A0A]">100.0%</TableCell>
+                <TableCell className="text-right font-mono text-[#0A0A0A]">
                   {totalAreaM2 > 0 ? fmt(perM2(grandTotal)) : <span className="text-muted-foreground">—</span>}
                 </TableCell>
               </TableRow>
