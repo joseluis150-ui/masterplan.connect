@@ -24,8 +24,11 @@ import {
 } from "@/components/ui/select";
 import { CURRENCIES } from "@/lib/constants/units";
 import type { Project, ProjectType } from "@/lib/types/database";
-import { Plus, Building2, LogOut } from "lucide-react";
+import { Plus, Building2, LogOut, Copy, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+
+type DuplicateScope = "planning" | "all";
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -37,6 +40,11 @@ export default function ProjectsPage() {
     local_currency: "PYG",
     exchange_rate: "7350",
   });
+  // Duplicate dialog state
+  const [duplicateSource, setDuplicateSource] = useState<Project | null>(null);
+  const [duplicateName, setDuplicateName] = useState("");
+  const [duplicateScope, setDuplicateScope] = useState<DuplicateScope>("planning");
+  const [duplicating, setDuplicating] = useState(false);
   const supabase = createClient();
   const router = useRouter();
 
@@ -88,6 +96,38 @@ export default function ProjectsPage() {
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();
+  }
+
+  function openDuplicateDialog(project: Project) {
+    setDuplicateSource(project);
+    setDuplicateName(`${project.name} (Copia)`);
+    setDuplicateScope("planning");
+  }
+
+  async function submitDuplicate() {
+    if (!duplicateSource || duplicating) return;
+    const name = duplicateName.trim();
+    if (!name) {
+      toast.error("Ingresá un nombre para la copia");
+      return;
+    }
+    setDuplicating(true);
+    try {
+      const { data, error } = await supabase.rpc("duplicate_project", {
+        p_source_id: duplicateSource.id,
+        p_new_name: name,
+        p_include_compras: duplicateScope === "all",
+      });
+      if (error) {
+        toast.error(`Error al duplicar: ${error.message}`);
+        return;
+      }
+      toast.success("Proyecto duplicado");
+      setDuplicateSource(null);
+      router.push(`/project/${data}/settings`);
+    } finally {
+      setDuplicating(false);
+    }
   }
 
   const currencySymbol = (code: string) =>
@@ -214,11 +254,20 @@ export default function ProjectsPage() {
             {projects.map((project) => (
               <Card
                 key={project.id}
-                className="cursor-pointer hover:border-primary/50 transition-colors"
+                className="cursor-pointer hover:border-primary/50 transition-colors relative group"
                 onClick={() => router.push(`/project/${project.id}/settings`)}
               >
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute top-2 right-2 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={(e) => { e.stopPropagation(); openDuplicateDialog(project); }}
+                  title="Duplicar proyecto"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
                 <CardHeader>
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start justify-between pr-7">
                     <CardTitle className="text-lg">{project.name}</CardTitle>
                     <Badge variant={project.project_type === "venta" ? "default" : "secondary"}>
                       {project.project_type === "venta" ? "Venta" : "Costo"}
@@ -239,6 +288,80 @@ export default function ProjectsPage() {
             ))}
           </div>
         )}
+
+        {/* Duplicate Dialog */}
+        <Dialog
+          open={duplicateSource !== null}
+          onOpenChange={(open) => {
+            if (!open && duplicating) return;
+            if (!open) setDuplicateSource(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Duplicar proyecto</DialogTitle>
+              <DialogDescription>
+                Se creará una copia de <span className="font-medium">{duplicateSource?.name}</span> con todos los datos del módulo seleccionado.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Nombre de la copia</Label>
+                <Input
+                  value={duplicateName}
+                  onChange={(e) => setDuplicateName(e.target.value)}
+                  disabled={duplicating}
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Qué copiar</Label>
+                <div className="space-y-2">
+                  <label className={`flex items-start gap-3 p-3 border rounded-md cursor-pointer transition-colors ${duplicateScope === "planning" ? "border-primary bg-primary/5" : "hover:bg-muted/40"}`}>
+                    <input
+                      type="radio"
+                      name="dupScope"
+                      value="planning"
+                      checked={duplicateScope === "planning"}
+                      onChange={() => setDuplicateScope("planning")}
+                      disabled={duplicating}
+                      className="mt-1"
+                    />
+                    <div>
+                      <p className="text-sm font-medium">Sólo módulo de Planificación</p>
+                      <p className="text-xs text-muted-foreground">Sectores, EDT, insumos, artículos, cuantificación, cronograma, paquetes de compra. <em>No</em> copia proveedores, OCs, recepciones, facturas ni pagos.</p>
+                    </div>
+                  </label>
+                  <label className={`flex items-start gap-3 p-3 border rounded-md cursor-pointer transition-colors ${duplicateScope === "all" ? "border-primary bg-primary/5" : "hover:bg-muted/40"}`}>
+                    <input
+                      type="radio"
+                      name="dupScope"
+                      value="all"
+                      checked={duplicateScope === "all"}
+                      onChange={() => setDuplicateScope("all")}
+                      disabled={duplicating}
+                      className="mt-1"
+                    />
+                    <div>
+                      <p className="text-sm font-medium">Planificación + Compras</p>
+                      <p className="text-xs text-muted-foreground">Todo lo anterior más proveedores, solicitudes, órdenes, recepciones, facturas, pagos y contadores de documentos.</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setDuplicateSource(null)} disabled={duplicating}>
+                  Cancelar
+                </Button>
+                <Button onClick={submitDuplicate} disabled={duplicating || !duplicateName.trim()}>
+                  {duplicating
+                    ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Duplicando…</>
+                    : <><Copy className="h-4 w-4 mr-2" /> Duplicar</>}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );
