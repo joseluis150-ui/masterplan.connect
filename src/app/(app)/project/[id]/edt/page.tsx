@@ -23,6 +23,7 @@ import {
   Upload,
   Download,
   FileSpreadsheet,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { generateEdtTemplate, parseEdtExcel, downloadBlob } from "@/lib/utils/excel";
@@ -40,6 +41,8 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
   const [templateName, setTemplateName] = useState("");
+  const [applyingTemplateId, setApplyingTemplateId] = useState<string | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState(false);
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
@@ -172,28 +175,101 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
   }
 
   async function saveAsTemplate() {
-    if (!templateName.trim()) return;
-    const data = categories.map((cat) => ({ name: cat.name, subcategories: cat.subcategories.map((s) => s.name) }));
-    const { error } = await supabase.from("edt_templates").insert({ name: templateName, data });
-    if (!error) { toast.success("Template guardado"); setTemplateName(""); setTemplateDialogOpen(false); loadTemplates(); }
+    if (!templateName.trim() || savingTemplate) return;
+    setSavingTemplate(true);
+    try {
+      const data = categories.map((cat) => ({ name: cat.name, subcategories: cat.subcategories.map((s) => s.name) }));
+      const { error } = await supabase.from("edt_templates").insert({ name: templateName, data });
+      if (error) {
+        toast.error(`Error al guardar template: ${error.message}`);
+        return;
+      }
+      toast.success("Template guardado");
+      setTemplateName("");
+      setTemplateDialogOpen(false);
+      loadTemplates();
+    } finally {
+      setSavingTemplate(false);
+    }
   }
 
   async function loadTemplate(templateId: string) {
-    const { data: template } = await supabase.from("edt_templates").select("*").eq("id", templateId).single();
-    if (!template) return;
-    await supabase.from("edt_categories").delete().eq("project_id", projectId);
-    const tplData = template.data as { name: string; subcategories: string[] }[];
-    for (let ci = 0; ci < tplData.length; ci++) {
-      const { data: newCat } = await supabase.from("edt_categories").insert({ project_id: projectId, code: String(ci + 1), name: tplData[ci].name, order: ci }).select().single();
-      if (newCat) {
-        for (let si = 0; si < tplData[ci].subcategories.length; si++) {
-          await supabase.from("edt_subcategories").insert({ category_id: newCat.id, project_id: projectId, code: `${ci + 1}.${si + 1}`, name: tplData[ci].subcategories[si], order: si });
+    // Guarda contra clicks repetidos: si ya hay una aplicación en curso,
+    // ignorar el siguiente click hasta que termine.
+    if (applyingTemplateId !== null) return;
+    setApplyingTemplateId(templateId);
+    try {
+      const { data: template } = await supabase.from("edt_templates").select("*").eq("id", templateId).single();
+      if (!template) {
+        toast.error("Template no encontrado");
+        return;
+      }
+      // FK edt_subcategories.category_id tiene ON DELETE CASCADE → un solo
+      // delete sobre edt_categories limpia todo el EDT del proyecto.
+      const { error: delErr } = await supabase
+        .from("edt_categories")
+        .delete()
+        .eq("project_id", projectId);
+      if (delErr) {
+        toast.error(`Error al limpiar EDT: ${delErr.message}`);
+        return;
+      }
+
+      const tplData = template.data as { name: string; subcategories: string[] }[];
+
+      // Insert categorías en un solo batch
+      const catRows = tplData.map((c, ci) => ({
+        project_id: projectId,
+        code: String(ci + 1),
+        name: c.name,
+        order: ci,
+      }));
+      const { data: newCats, error: catsErr } = await supabase
+        .from("edt_categories")
+        .insert(catRows)
+        .select();
+      if (catsErr || !newCats) {
+        toast.error(`Error al cargar categorías: ${catsErr?.message}`);
+        return;
+      }
+
+      // Insert subcategorías en un solo batch, mapeando por order para no
+      // depender del orden de retorno del insert.
+      const catByOrder = new Map(newCats.map((c) => [c.order as number, c]));
+      const subRows: {
+        category_id: string;
+        project_id: string;
+        code: string;
+        name: string;
+        order: number;
+      }[] = [];
+      tplData.forEach((c, ci) => {
+        const cat = catByOrder.get(ci);
+        if (!cat) return;
+        c.subcategories.forEach((sn, si) => {
+          subRows.push({
+            category_id: cat.id,
+            project_id: projectId,
+            code: `${ci + 1}.${si + 1}`,
+            name: sn,
+            order: si,
+          });
+        });
+      });
+      if (subRows.length > 0) {
+        const { error: subsErr } = await supabase.from("edt_subcategories").insert(subRows);
+        if (subsErr) {
+          toast.error(`Error al cargar subcategorías: ${subsErr.message}`);
+          return;
         }
       }
+
+      await loadData();
+      setTemplateDialogOpen(false);
+      toast.success("Template aplicado");
+    } finally {
+      setApplyingTemplateId(null);
     }
-    await loadData();
-    setTemplateDialogOpen(false);
-    toast.success("Template aplicado");
   }
 
   function handleDownloadTemplate() {
@@ -369,7 +445,14 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
         </div>
       )}
 
-      <Dialog open={templateDialogOpen} onOpenChange={setTemplateDialogOpen}>
+      <Dialog
+        open={templateDialogOpen}
+        onOpenChange={(open) => {
+          // Bloquear cierre mientras se aplica un template
+          if (!open && applyingTemplateId !== null) return;
+          setTemplateDialogOpen(open);
+        }}
+      >
         <DialogContent>
           <DialogHeader><DialogTitle>Templates EDT</DialogTitle></DialogHeader>
           <div className="space-y-4">
@@ -377,8 +460,21 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
               <div className="space-y-2">
                 <h4 className="text-sm font-medium">Guardar EDT actual como template</h4>
                 <div className="flex gap-2">
-                  <Input value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="Nombre del template" />
-                  <Button onClick={saveAsTemplate} disabled={!templateName.trim()}><Save className="h-4 w-4 mr-1" /> Guardar</Button>
+                  <Input
+                    value={templateName}
+                    onChange={(e) => setTemplateName(e.target.value)}
+                    placeholder="Nombre del template"
+                    disabled={savingTemplate || applyingTemplateId !== null}
+                  />
+                  <Button
+                    onClick={saveAsTemplate}
+                    disabled={!templateName.trim() || savingTemplate || applyingTemplateId !== null}
+                  >
+                    {savingTemplate
+                      ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      : <Save className="h-4 w-4 mr-1" />}
+                    {savingTemplate ? "Guardando…" : "Guardar"}
+                  </Button>
                 </div>
               </div>
             )}
@@ -387,11 +483,24 @@ export default function EdtPage({ params }: { params: Promise<{ id: string }> })
                 <Separator />
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium">Cargar template</h4>
-                  {templates.map((t) => (
-                    <Button key={t.id} variant="outline" className="w-full justify-start" onClick={() => loadTemplate(t.id)}>
-                      <FolderTree className="h-4 w-4 mr-2" /> {t.name}
-                    </Button>
-                  ))}
+                  {templates.map((t) => {
+                    const isApplying = applyingTemplateId === t.id;
+                    const anyApplying = applyingTemplateId !== null;
+                    return (
+                      <Button
+                        key={t.id}
+                        variant="outline"
+                        className="w-full justify-start"
+                        disabled={anyApplying || savingTemplate}
+                        onClick={() => loadTemplate(t.id)}
+                      >
+                        {isApplying
+                          ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          : <FolderTree className="h-4 w-4 mr-2" />}
+                        {t.name}{isApplying && " — aplicando…"}
+                      </Button>
+                    );
+                  })}
                 </div>
               </>
             )}
