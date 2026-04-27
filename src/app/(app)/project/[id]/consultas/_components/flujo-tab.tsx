@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/utils/formula";
@@ -13,7 +13,7 @@ import type {
   EdtCategory,
   EdtSubcategory,
 } from "@/lib/types/database";
-import { DollarSign, TrendingUp, Calendar } from "lucide-react";
+import { DollarSign, TrendingUp, Calendar, ChevronDown, ChevronRight } from "lucide-react";
 import {
   addWeeks, addDays, startOfWeek, startOfMonth, format, isBefore, isAfter,
   differenceInCalendarMonths,
@@ -64,6 +64,15 @@ export function FlujoTab({ projectId }: { projectId: string }) {
 
   // UI state
   const [periodMode, setPeriodMode] = useState<PeriodMode>("biweekly");
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
+
+  function toggleMonth(key: string) {
+    setExpandedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   const supabase = createClient();
 
@@ -515,20 +524,97 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                 const planificado = group.items.reduce((s, i) => s + i.totalCost, 0);
                 const real = 0; // Se conectará con la ejecución real (pagos) más adelante.
                 const isSinFecha = group.key === "sin-fecha";
+                const isExpanded = expandedMonths.has(group.key);
+                const sortedItems = [...group.items].sort((a, b) => {
+                  if (a.paymentDate && b.paymentDate) return a.paymentDate.getTime() - b.paymentDate.getTime();
+                  if (a.paymentDate) return -1;
+                  if (b.paymentDate) return 1;
+                  return 0;
+                });
                 return (
-                  <tr key={group.key} className="border-t">
-                    <td className="px-5 py-2.5">
-                      <span className={cn("capitalize", isSinFecha && "italic text-muted-foreground")}>
-                        {group.label}
-                      </span>
-                    </td>
-                    <td className="px-5 py-2.5 text-right font-mono" style={{ color: isSinFecha ? "#D97706" : "#E87722" }}>
-                      {fmtUsd(planificado)}
-                    </td>
-                    <td className="px-5 py-2.5 text-right font-mono text-muted-foreground">
-                      {real > 0 ? fmtUsd(real) : "—"}
-                    </td>
-                  </tr>
+                  <React.Fragment key={group.key}>
+                    <tr
+                      className="border-t cursor-pointer hover:bg-muted/20 transition-colors"
+                      onClick={() => toggleMonth(group.key)}
+                    >
+                      <td className="px-5 py-2.5">
+                        <span className="inline-flex items-center gap-2">
+                          {isExpanded
+                            ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                            : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                          <span className={cn("capitalize", isSinFecha && "italic text-muted-foreground")}>
+                            {group.label}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            ({group.items.length} línea{group.items.length === 1 ? "" : "s"})
+                          </span>
+                        </span>
+                      </td>
+                      <td className="px-5 py-2.5 text-right font-mono" style={{ color: isSinFecha ? "#D97706" : "#E87722" }}>
+                        {fmtUsd(planificado)}
+                      </td>
+                      <td className="px-5 py-2.5 text-right font-mono text-muted-foreground">
+                        {real > 0 ? fmtUsd(real) : "—"}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="border-t" style={{ background: "#FAFAFA" }}>
+                        <td colSpan={3} className="p-0">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr style={{ background: "#F0F0F0" }}>
+                                <th className="text-left px-5 py-2 font-semibold text-[10px] uppercase tracking-wider w-[260px]">Actividad</th>
+                                <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider">Insumo</th>
+                                <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[90px]">Cantidad</th>
+                                <th className="text-center px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[60px]">Unidad</th>
+                                <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[90px]">P.U.</th>
+                                <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[110px]">Planificado</th>
+                                <th className="text-right px-5 py-2 font-semibold text-[10px] uppercase tracking-wider w-[110px]">Fecha necesidad</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sortedItems.map((item) => (
+                                <tr key={item.compositionId} className="border-t hover:bg-muted/10 transition-colors">
+                                  <td className="px-5 py-2 text-xs">
+                                    <span className="text-muted-foreground">{item.catCode}.</span>{" "}
+                                    <span>{item.catName}</span>
+                                    <span className="text-muted-foreground"> – {item.subCode} {item.subName}</span>
+                                  </td>
+                                  <td className="px-3 py-2 text-xs">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={cn(
+                                        "w-1.5 h-1.5 rounded-full shrink-0",
+                                        item.insumoType === "material" ? "bg-neutral-700" :
+                                        item.insumoType === "mano_de_obra" ? "bg-amber-400" :
+                                        item.insumoType === "servicio" ? "bg-emerald-400" : "bg-gray-400"
+                                      )} />
+                                      {item.insumoDescription}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-mono">{formatNumber(item.quantity)}</td>
+                                  <td className="px-3 py-2 text-center text-muted-foreground">{item.insumoUnit}</td>
+                                  <td className="px-3 py-2 text-right font-mono">${formatNumber(item.unitCost)}</td>
+                                  <td className="px-3 py-2 text-right font-mono font-semibold">${formatNumber(item.totalCost)}</td>
+                                  <td className="px-5 py-2 text-right text-muted-foreground">
+                                    {item.needDate ? format(item.needDate, "dd MMM yy", { locale: es }) : "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr className="border-t-2 font-bold" style={{ background: "#F0F0F0", borderColor: "#D4D4D4" }}>
+                                <td colSpan={5} className="px-5 py-2 text-right text-[10px] uppercase tracking-wider">
+                                  Subtotal {group.label}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono text-sm" style={{ color: "#E87722" }}>
+                                  ${formatNumber(planificado, 2)}
+                                </td>
+                                <td />
+                              </tr>
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
               <tr className="border-t-2 font-bold" style={{ background: "#F0F2F5", borderColor: "#D4D4D4" }}>
