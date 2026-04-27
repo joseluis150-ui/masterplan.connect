@@ -13,7 +13,7 @@ import type {
   EdtCategory,
   EdtSubcategory,
 } from "@/lib/types/database";
-import { ChevronDown, ChevronRight, DollarSign, TrendingUp, Calendar, Package } from "lucide-react";
+import { DollarSign, TrendingUp, Calendar } from "lucide-react";
 import {
   addWeeks, addDays, startOfWeek, startOfMonth, format, isBefore, isAfter,
   differenceInCalendarMonths,
@@ -63,7 +63,6 @@ export function FlujoTab({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true);
 
   // UI state
-  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const [periodMode, setPeriodMode] = useState<PeriodMode>("biweekly");
 
   const supabase = createClient();
@@ -359,14 +358,6 @@ export function FlujoTab({ projectId }: { projectId: string }) {
     return "$" + Math.round(v).toLocaleString("en-US");
   }
 
-  function toggleMonth(key: string) {
-    setExpandedMonths((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  }
-
   const grandTotal = items.reduce((s, i) => s + i.totalCost, 0);
 
   if (loading) {
@@ -399,115 +390,9 @@ export function FlujoTab({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-8">
-      {/* ── Monthly collapsible list ── */}
-      <div className="space-y-0">
-        {monthlyGroups.map((group) => {
-          const isExpanded = expandedMonths.has(group.key);
-          const groupTotal = group.items.reduce((s, i) => s + i.totalCost, 0);
-          const isSinFecha = group.key === "sin-fecha";
-
-          return (
-            <div key={group.key} className={cn("border rounded-lg", isExpanded ? "mb-3" : "mb-2")}>
-              {/* Month header row */}
-              <div
-                className="flex items-center justify-between px-5 py-3 cursor-pointer hover:bg-muted/20 transition-colors"
-                onClick={() => toggleMonth(group.key)}
-              >
-                <div className="flex items-center gap-3">
-                  {isExpanded
-                    ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    : <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  }
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-semibold text-sm capitalize">{group.label}</span>
-                </div>
-                <div className="flex items-center gap-6">
-                  <span className="text-xs text-muted-foreground">{group.items.length} líneas</span>
-                  <span className="text-base font-bold font-mono" style={{ color: isSinFecha ? "#D97706" : "#E87722" }}>
-                    {fmtUsd(groupTotal)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Expanded detail table */}
-              {isExpanded && (
-                <div className="border-t">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr style={{ background: "#F5F5F5" }}>
-                        <th className="text-left px-5 py-2 font-semibold text-[10px] uppercase tracking-wider w-[260px]">Actividad</th>
-                        <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider">Insumo</th>
-                        <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[90px]">Cantidad</th>
-                        <th className="text-center px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[60px]">Unidad</th>
-                        <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[90px]">P.U.</th>
-                        <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[100px]">Total</th>
-                        <th className="text-right px-5 py-2 font-semibold text-[10px] uppercase tracking-wider w-[100px]">Fecha necesidad</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.items
-                        .sort((a, b) => {
-                          if (a.paymentDate && b.paymentDate) return a.paymentDate.getTime() - b.paymentDate.getTime();
-                          if (a.paymentDate) return -1;
-                          if (b.paymentDate) return 1;
-                          return 0;
-                        })
-                        .map((item) => (
-                          <tr key={item.compositionId} className="border-t hover:bg-muted/10 transition-colors">
-                            <td className="px-5 py-2.5 text-xs">
-                              <span className="text-muted-foreground">{item.catCode}.</span>{" "}
-                              <span>{item.catName}</span>
-                              <span className="text-muted-foreground"> – {item.subCode} {item.subName}</span>
-                            </td>
-                            <td className="px-3 py-2.5 text-xs">
-                              <div className="flex items-center gap-1.5">
-                                <span className={cn(
-                                  "w-1.5 h-1.5 rounded-full shrink-0",
-                                  item.insumoType === "material" ? "bg-neutral-700" :
-                                  item.insumoType === "mano_de_obra" ? "bg-amber-400" :
-                                  item.insumoType === "servicio" ? "bg-emerald-400" : "bg-gray-400"
-                                )} />
-                                {item.insumoDescription}
-                              </div>
-                            </td>
-                            <td className="px-3 py-2.5 text-right font-mono">{formatNumber(item.quantity)}</td>
-                            <td className="px-3 py-2.5 text-center text-muted-foreground">{item.insumoUnit}</td>
-                            <td className="px-3 py-2.5 text-right font-mono">${formatNumber(item.unitCost)}</td>
-                            <td className="px-3 py-2.5 text-right font-mono font-semibold">${formatNumber(item.totalCost)}</td>
-                            <td className="px-5 py-2.5 text-right text-muted-foreground">
-                              {item.needDate ? format(item.needDate, "dd MMM yy", { locale: es }) : "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      {/* Subtotal */}
-                      <tr className="border-t-2 font-bold" style={{ background: "#F5F5F5", borderColor: "#D4D4D4" }}>
-                        <td colSpan={5} className="px-5 py-2 text-right text-[10px] uppercase tracking-wider">
-                          Subtotal {group.label}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-sm" style={{ color: "#E87722" }}>
-                          ${formatNumber(groupTotal, 2)}
-                        </td>
-                        <td />
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {/* Grand total */}
-        <div className="border rounded-lg px-5 py-3 flex items-center justify-between" style={{ background: "#F0F2F5" }}>
-          <span className="font-bold text-sm uppercase tracking-wider">Total General</span>
-          <span className="text-xl font-bold font-mono" style={{ color: "#E87722" }}>{fmtUsd(grandTotal)}</span>
-        </div>
-      </div>
-
-      {/* ── Chart section ── */}
+      {/* ── Chart section (top) ── */}
       {periodBuckets.length > 0 && (
         <div>
-          {/* Chart header */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <TrendingUp className="h-5 w-5" style={{ color: "#E87722" }} />
@@ -521,10 +406,10 @@ export function FlujoTab({ projectId }: { projectId: string }) {
             </div>
             <div className="flex items-center gap-1 border rounded-lg overflow-hidden">
               {([
-                { value: "week", label: "Semana", icon: "📆" },
-                { value: "biweekly", label: "15 días", icon: "📆" },
-                { value: "month", label: "Mes", icon: "📆" },
-              ] as { value: PeriodMode; label: string; icon: string }[]).map((opt) => (
+                { value: "week", label: "Semana" },
+                { value: "biweekly", label: "15 días" },
+                { value: "month", label: "Mes" },
+              ] as { value: PeriodMode; label: string }[]).map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => setPeriodMode(opt.value)}
@@ -542,7 +427,6 @@ export function FlujoTab({ projectId }: { projectId: string }) {
             </div>
           </div>
 
-          {/* Chart */}
           <div className="border rounded-lg p-4" style={{ background: "#FAFBFC" }}>
             <ResponsiveContainer width="100%" height={360}>
               <ComposedChart data={chartData} margin={{ top: 10, right: 60, left: 20, bottom: 60 }}>
@@ -593,7 +477,6 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                 />
               </ComposedChart>
             </ResponsiveContainer>
-            {/* Legend */}
             <div className="flex items-center justify-center gap-6 mt-2 text-xs text-muted-foreground">
               <div className="flex items-center gap-1.5">
                 <div className="w-3 h-3 rounded-sm" style={{ background: "#9CA3AF" }} />
@@ -608,6 +491,57 @@ export function FlujoTab({ projectId }: { projectId: string }) {
           </div>
         </div>
       )}
+
+      {/* ── Monthly summary table (bottom): Planificado vs Real ── */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <Calendar className="h-5 w-5 text-muted-foreground" />
+          <h2 className="text-lg font-bold">Resumen mensual — Planificado vs Real</h2>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">
+          La columna <span className="font-medium">Real</span> se completará automáticamente cuando exista ejecución de pagos vinculada a este flujo. Hoy refleja sólo lo planificado.
+        </p>
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ background: "#F5F5F5" }}>
+                <th className="text-left px-5 py-2.5 font-semibold text-[11px] uppercase tracking-wider">Mes</th>
+                <th className="text-right px-5 py-2.5 font-semibold text-[11px] uppercase tracking-wider w-[180px]">Planificado</th>
+                <th className="text-right px-5 py-2.5 font-semibold text-[11px] uppercase tracking-wider w-[180px]">Real</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthlyGroups.map((group) => {
+                const planificado = group.items.reduce((s, i) => s + i.totalCost, 0);
+                const real = 0; // Se conectará con la ejecución real (pagos) más adelante.
+                const isSinFecha = group.key === "sin-fecha";
+                return (
+                  <tr key={group.key} className="border-t">
+                    <td className="px-5 py-2.5">
+                      <span className={cn("capitalize", isSinFecha && "italic text-muted-foreground")}>
+                        {group.label}
+                      </span>
+                    </td>
+                    <td className="px-5 py-2.5 text-right font-mono" style={{ color: isSinFecha ? "#D97706" : "#E87722" }}>
+                      {fmtUsd(planificado)}
+                    </td>
+                    <td className="px-5 py-2.5 text-right font-mono text-muted-foreground">
+                      {real > 0 ? fmtUsd(real) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr className="border-t-2 font-bold" style={{ background: "#F0F2F5", borderColor: "#D4D4D4" }}>
+                <td className="px-5 py-3 uppercase text-[11px] tracking-wider">Total general</td>
+                <td className="px-5 py-3 text-right font-mono" style={{ color: "#E87722" }}>
+                  {fmtUsd(grandTotal)}
+                </td>
+                <td className="px-5 py-3 text-right font-mono text-muted-foreground">—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
