@@ -402,7 +402,7 @@ export function ProveedoresTab({ projectId }: Props) {
         </div>
       ) : (
         <div className="border rounded-lg overflow-hidden">
-          <div className="grid grid-cols-[1fr_140px_200px_130px_140px_90px_160px_80px] gap-3 px-4 py-2 bg-muted/60 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <div className="grid grid-cols-[minmax(180px,1fr)_140px_200px_130px_140px_90px_160px_80px] gap-3 px-4 py-2 bg-muted/60 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             <ColumnFilter label="Nombre" values={allNames} selected={colFilterName} onChange={setColFilterName} />
             <ColumnFilter label="N° Fiscal" values={allTaxIds} selected={colFilterTaxId} onChange={setColFilterTaxId} />
             <span>Email</span>
@@ -417,10 +417,10 @@ export function ProveedoresTab({ projectId }: Props) {
             return (
               <div
                 key={s.id}
-                className="grid grid-cols-[1fr_140px_200px_130px_140px_90px_160px_80px] gap-3 px-4 py-2.5 items-center text-xs border-t hover:bg-muted/20 cursor-pointer transition-colors"
+                className="grid grid-cols-[minmax(180px,1fr)_140px_200px_130px_140px_90px_160px_80px] gap-3 px-4 py-2.5 items-center text-xs border-t hover:bg-muted/20 cursor-pointer transition-colors"
                 onClick={() => setDetailId(s.id)}
               >
-                <span className="font-medium truncate" title={s.name}>{s.name}</span>
+                <span className="font-medium truncate min-w-0" title={s.name}>{s.name}</span>
                 <span className="font-mono text-muted-foreground truncate" title={s.tax_id || ""}>
                   {s.tax_id || <span className="opacity-50">—</span>}
                 </span>
