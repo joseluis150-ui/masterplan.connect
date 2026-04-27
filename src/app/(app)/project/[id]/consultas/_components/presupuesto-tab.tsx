@@ -3,15 +3,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -24,7 +16,8 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { formatNumber, convertCurrency } from "@/lib/utils/formula";
 import type { Project, Sector } from "@/lib/types/database";
-import { DollarSign } from "lucide-react";
+import { DollarSign, ChevronDown, ChevronRight } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface BudgetRow {
   category_id: string;
@@ -36,21 +29,33 @@ interface BudgetRow {
   sector_id: string;
   sector_name: string;
   total_usd: number;
+  // MAT/MO/GLO existen en la RPC pero ya no se muestran
   total_mat: number;
   total_mo: number;
   total_glo: number;
 }
 
-type ViewMode = "categories" | "expanded" | "collapsed";
+interface SubAgg {
+  code: string;
+  name: string;
+  total: number;
+  bySector: Map<string, number>;
+}
+interface CatAgg {
+  code: string;
+  name: string;
+  total: number;
+  bySector: Map<string, number>;
+  subs: Map<string, SubAgg>;
+}
 
 export function PresupuestoTab({ projectId }: { projectId: string }) {
   const [budgetData, setBudgetData] = useState<BudgetRow[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<ViewMode>("expanded");
   const [showLocal, setShowLocal] = useState(false);
-  const [filterSector, setFilterSector] = useState("all");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set()); // category ids con desglose visible
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
@@ -79,89 +84,105 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
     : formatNumber(val);
   const currency = showLocal ? project?.local_currency || "LOCAL" : "USD";
 
-  const filteredData = filterSector === "all" ? budgetData : budgetData.filter((r) => r.sector_id === filterSector);
-
-  const categoryTotals = new Map<string, { code: string; name: string; total: number; mat: number; mo: number; glo: number; subs: Map<string, { code: string; name: string; total: number; mat: number; mo: number; glo: number }> }>();
-
-  for (const row of filteredData) {
+  // Agregación por categoría (con desglose por sector y subcategorías)
+  const categoryTotals = new Map<string, CatAgg>();
+  for (const row of budgetData) {
     if (!categoryTotals.has(row.category_id)) {
-      categoryTotals.set(row.category_id, { code: row.category_code, name: row.category_name, total: 0, mat: 0, mo: 0, glo: 0, subs: new Map() });
+      categoryTotals.set(row.category_id, {
+        code: row.category_code,
+        name: row.category_name,
+        total: 0,
+        bySector: new Map(),
+        subs: new Map(),
+      });
     }
     const cat = categoryTotals.get(row.category_id)!;
     cat.total += row.total_usd;
-    cat.mat += row.total_mat;
-    cat.mo += row.total_mo;
-    cat.glo += row.total_glo;
+    cat.bySector.set(row.sector_id, (cat.bySector.get(row.sector_id) || 0) + row.total_usd);
 
     if (!cat.subs.has(row.subcategory_id)) {
-      cat.subs.set(row.subcategory_id, { code: row.subcategory_code, name: row.subcategory_name, total: 0, mat: 0, mo: 0, glo: 0 });
+      cat.subs.set(row.subcategory_id, {
+        code: row.subcategory_code,
+        name: row.subcategory_name,
+        total: 0,
+        bySector: new Map(),
+      });
     }
     const sub = cat.subs.get(row.subcategory_id)!;
     sub.total += row.total_usd;
-    sub.mat += row.total_mat;
-    sub.mo += row.total_mo;
-    sub.glo += row.total_glo;
+    sub.bySector.set(row.sector_id, (sub.bySector.get(row.sector_id) || 0) + row.total_usd);
   }
 
-  const grandTotal = filteredData.reduce((s, r) => s + r.total_usd, 0);
-  const grandMat = filteredData.reduce((s, r) => s + r.total_mat, 0);
-  const grandMo = filteredData.reduce((s, r) => s + r.total_mo, 0);
-  const grandGlo = filteredData.reduce((s, r) => s + r.total_glo, 0);
+  const grandTotal = budgetData.reduce((s, r) => s + r.total_usd, 0);
+  const grandBySector = new Map<string, number>();
+  for (const r of budgetData) {
+    grandBySector.set(r.sector_id, (grandBySector.get(r.sector_id) || 0) + r.total_usd);
+  }
+  const totalAreaM2 = sectors.reduce((s, sc) => s + Number(sc.area_m2 || 0), 0);
+  const perM2 = (val: number) => (totalAreaM2 > 0 ? val / totalAreaM2 : 0);
 
-  const sectorTotals = new Map<string, number>();
-  for (const row of budgetData) {
-    sectorTotals.set(row.sector_id, (sectorTotals.get(row.sector_id) || 0) + row.total_usd);
+  function toggleExpanded(catId: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(catId)) next.delete(catId); else next.add(catId);
+      return next;
+    });
+  }
+  function expandAll() {
+    setExpanded(new Set(Array.from(categoryTotals.keys())));
+  }
+  function collapseAll() {
+    setExpanded(new Set());
   }
 
   if (loading) return <div className="animate-pulse h-96 bg-muted rounded-lg" />;
 
+  // Sectores que efectivamente tienen al menos una línea de presupuesto
+  const sectorsWithData = sectors.filter((s) => grandBySector.has(s.id));
+  const sectorList = sectorsWithData.length > 0 ? sectorsWithData : sectors;
+
   return (
     <div className="space-y-6">
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-sm text-muted-foreground mb-1">Total</p>
-            <p className="text-2xl font-bold">{fmt(grandTotal)} <span className="text-sm font-normal">{currency}</span></p>
+            <p className="text-2xl font-bold">
+              {fmt(grandTotal)} <span className="text-sm font-normal">{currency}</span>
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-muted-foreground mb-1">Materiales</p>
-            <p className="text-lg font-bold">{fmt(grandMat)}<span className="text-xs ml-1">{grandTotal > 0 ? `(${((grandMat / grandTotal) * 100).toFixed(1)}%)` : ""}</span></p>
+            <p className="text-sm text-muted-foreground mb-1">Área total</p>
+            <p className="text-2xl font-bold">
+              {totalAreaM2 > 0
+                ? <>{formatNumber(totalAreaM2, 0)} <span className="text-sm font-normal">m²</span></>
+                : <span className="text-muted-foreground text-base font-normal">— sin áreas cargadas</span>}
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-muted-foreground mb-1">Mano de Obra</p>
-            <p className="text-lg font-bold">{fmt(grandMo)}<span className="text-xs ml-1">{grandTotal > 0 ? `(${((grandMo / grandTotal) * 100).toFixed(1)}%)` : ""}</span></p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-muted-foreground mb-1">Servicios/Global</p>
-            <p className="text-lg font-bold">{fmt(grandGlo)}<span className="text-xs ml-1">{grandTotal > 0 ? `(${((grandGlo / grandTotal) * 100).toFixed(1)}%)` : ""}</span></p>
+            <p className="text-sm text-muted-foreground mb-1">Costo por m²</p>
+            <p className="text-2xl font-bold">
+              {totalAreaM2 > 0
+                ? <>{fmt(perM2(grandTotal))} <span className="text-sm font-normal">{currency}/m²</span></>
+                : <span className="text-muted-foreground text-base font-normal">—</span>}
+            </p>
           </CardContent>
         </Card>
       </div>
 
       {/* Controls */}
-      <div className="flex gap-4 items-center flex-wrap">
-        <Select value={viewMode} onValueChange={(v) => v && setViewMode(v as ViewMode)}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="collapsed">Colapsado</SelectItem>
-            <SelectItem value="categories">Por categorias</SelectItem>
-            <SelectItem value="expanded">Expandido</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={filterSector} onValueChange={(v) => v && setFilterSector(v)}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos los sectores</SelectItem>
-            {sectors.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
+      <div className="flex gap-2 items-center flex-wrap">
+        <Button variant="outline" size="sm" onClick={expandAll} disabled={categoryTotals.size === 0}>
+          Expandir todo
+        </Button>
+        <Button variant="outline" size="sm" onClick={collapseAll} disabled={expanded.size === 0}>
+          Colapsar todo
+        </Button>
         <div className="flex items-center gap-2 ml-auto">
           <Label className="text-sm">USD</Label>
           <Switch checked={showLocal} onCheckedChange={setShowLocal} />
@@ -169,88 +190,100 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      {/* Sector summary */}
-      {sectors.length > 1 && (
-        <div className="flex gap-2 flex-wrap">
-          {sectors.map((s) => (
-            <Badge key={s.id} variant="outline" className="text-sm py-1 px-3">
-              {s.name}: {fmt(sectorTotals.get(s.id) || 0)} {currency}
-            </Badge>
-          ))}
-        </div>
-      )}
-
-      {/* Budget Table */}
-      {filteredData.length === 0 ? (
+      {/* Tabla */}
+      {budgetData.length === 0 ? (
         <Card className="text-center py-12">
           <CardContent>
             <DollarSign className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium mb-2">Sin datos de presupuesto</h3>
-            <p className="text-muted-foreground">Agrega lineas de cuantificacion para ver el presupuesto</p>
+            <p className="text-muted-foreground">Agregá líneas de cuantificación para ver el presupuesto</p>
           </CardContent>
         </Card>
       ) : (
-        <div className="border rounded-lg">
+        <div className="border rounded-lg overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Codigo</TableHead>
-                <TableHead>Descripcion</TableHead>
-                <TableHead className="text-right">MAT</TableHead>
-                <TableHead className="text-right">MO</TableHead>
-                <TableHead className="text-right">GLO</TableHead>
-                <TableHead className="text-right">Total ({currency})</TableHead>
-                <TableHead className="text-right">%</TableHead>
+                <TableHead className="w-[110px]">Código</TableHead>
+                <TableHead>Descripción</TableHead>
+                {sectorList.map((s) => (
+                  <TableHead key={s.id} className="text-right whitespace-nowrap">
+                    {s.name}
+                  </TableHead>
+                ))}
+                <TableHead className="text-right whitespace-nowrap">Total ({currency})</TableHead>
+                <TableHead className="text-right whitespace-nowrap">{currency}/m²</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {viewMode === "collapsed" ? (
-                <TableRow className="font-bold">
-                  <TableCell></TableCell>
-                  <TableCell>TOTAL PROYECTO</TableCell>
-                  <TableCell className="text-right">{fmt(grandMat)}</TableCell>
-                  <TableCell className="text-right">{fmt(grandMo)}</TableCell>
-                  <TableCell className="text-right">{fmt(grandGlo)}</TableCell>
-                  <TableCell className="text-right">{fmt(grandTotal)}</TableCell>
-                  <TableCell className="text-right">100%</TableCell>
-                </TableRow>
-              ) : (
-                Array.from(categoryTotals.entries()).map(([catId, cat]) => (
+              {Array.from(categoryTotals.entries()).map(([catId, cat]) => {
+                const isOpen = expanded.has(catId);
+                return (
                   <React.Fragment key={catId}>
-                    <TableRow className="font-semibold bg-muted/30">
-                      <TableCell>{cat.code}</TableCell>
+                    <TableRow
+                      className="font-semibold bg-muted/30 cursor-pointer hover:bg-muted/50"
+                      onClick={() => toggleExpanded(catId)}
+                    >
+                      <TableCell>
+                        <span className="inline-flex items-center gap-1">
+                          {isOpen
+                            ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                            : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                          {cat.code}
+                        </span>
+                      </TableCell>
                       <TableCell>{cat.name}</TableCell>
-                      <TableCell className="text-right">{fmt(cat.mat)}</TableCell>
-                      <TableCell className="text-right">{fmt(cat.mo)}</TableCell>
-                      <TableCell className="text-right">{fmt(cat.glo)}</TableCell>
-                      <TableCell className="text-right">{fmt(cat.total)}</TableCell>
-                      <TableCell className="text-right">{grandTotal > 0 ? `${((cat.total / grandTotal) * 100).toFixed(1)}%` : ""}</TableCell>
+                      {sectorList.map((s) => {
+                        const v = cat.bySector.get(s.id) || 0;
+                        return (
+                          <TableCell key={s.id} className="text-right font-mono">
+                            {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
+                          </TableCell>
+                        );
+                      })}
+                      <TableCell className="text-right font-mono">{fmt(cat.total)}</TableCell>
+                      <TableCell className="text-right font-mono">
+                        {totalAreaM2 > 0 ? fmt(perM2(cat.total)) : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
                     </TableRow>
-                    {viewMode === "expanded" && Array.from(cat.subs.entries()).map(([subId, sub]) => (
-                      <TableRow key={subId}>
+                    {isOpen && Array.from(cat.subs.entries()).map(([subId, sub]) => (
+                      <TableRow key={subId} className="bg-background">
                         <TableCell className="pl-8 text-muted-foreground">{sub.code}</TableCell>
                         <TableCell className="pl-8">{sub.name}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{fmt(sub.mat)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{fmt(sub.mo)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{fmt(sub.glo)}</TableCell>
+                        {sectorList.map((s) => {
+                          const v = sub.bySector.get(s.id) || 0;
+                          return (
+                            <TableCell key={s.id} className="text-right font-mono text-sm">
+                              {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
+                            </TableCell>
+                          );
+                        })}
                         <TableCell className="text-right font-mono text-sm">{fmt(sub.total)}</TableCell>
-                        <TableCell className="text-right text-sm">{grandTotal > 0 ? `${((sub.total / grandTotal) * 100).toFixed(1)}%` : ""}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          {totalAreaM2 > 0 ? fmt(perM2(sub.total)) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </React.Fragment>
-                ))
-              )}
-              {viewMode !== "collapsed" && (
-                <TableRow className="font-bold border-t-2">
-                  <TableCell></TableCell>
-                  <TableCell>TOTAL</TableCell>
-                  <TableCell className="text-right">{fmt(grandMat)}</TableCell>
-                  <TableCell className="text-right">{fmt(grandMo)}</TableCell>
-                  <TableCell className="text-right">{fmt(grandGlo)}</TableCell>
-                  <TableCell className="text-right">{fmt(grandTotal)}</TableCell>
-                  <TableCell className="text-right">100%</TableCell>
-                </TableRow>
-              )}
+                );
+              })}
+              {/* Fila TOTAL */}
+              <TableRow className={cn("font-bold border-t-2 bg-muted/40")}>
+                <TableCell></TableCell>
+                <TableCell>TOTAL</TableCell>
+                {sectorList.map((s) => {
+                  const v = grandBySector.get(s.id) || 0;
+                  return (
+                    <TableCell key={s.id} className="text-right font-mono">
+                      {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                  );
+                })}
+                <TableCell className="text-right font-mono">{fmt(grandTotal)}</TableCell>
+                <TableCell className="text-right font-mono">
+                  {totalAreaM2 > 0 ? fmt(perM2(grandTotal)) : <span className="text-muted-foreground">—</span>}
+                </TableCell>
+              </TableRow>
             </TableBody>
           </Table>
         </div>
