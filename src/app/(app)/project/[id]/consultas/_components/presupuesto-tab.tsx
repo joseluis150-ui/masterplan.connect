@@ -281,28 +281,28 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
         <div className="border rounded-lg overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="bg-amber-50 hover:bg-amber-50">
-                <TableHead className="w-[110px] text-[#B85A0F] font-semibold">Código</TableHead>
-                <TableHead className="text-[#B85A0F] font-semibold">Descripción</TableHead>
+              <TableRow className="bg-neutral-900 hover:bg-neutral-900">
+                <TableHead className="w-[110px] text-white font-semibold">Código</TableHead>
+                <TableHead className="text-white font-semibold">Descripción</TableHead>
                 {sectorList.map((s) => {
                   const m2 = Number(s.area_m2 || 0);
                   return (
-                    <TableHead key={s.id} className="text-right whitespace-nowrap text-[#B85A0F] font-semibold">
+                    <TableHead key={s.id} className="text-right whitespace-nowrap text-white font-semibold">
                       <div className="leading-tight">
                         <div>{s.name}</div>
-                        <div className="text-[10px] font-normal text-amber-800/70">
+                        <div className="text-[10px] font-normal text-white/60">
                           {m2 > 0 ? `${formatNumber(m2, 0)} m²` : "sin m²"}
                         </div>
                       </div>
                     </TableHead>
                   );
                 })}
-                <TableHead className="text-right whitespace-nowrap text-[#B85A0F] font-semibold">Total ({currency})</TableHead>
-                <TableHead className="text-right whitespace-nowrap text-[#B85A0F] font-semibold w-[80px]">%</TableHead>
-                <TableHead className="text-right whitespace-nowrap text-[#B85A0F] font-semibold">
+                <TableHead className="text-right whitespace-nowrap text-white font-semibold">Total ({currency})</TableHead>
+                <TableHead className="text-right whitespace-nowrap text-white font-semibold w-[80px]">%</TableHead>
+                <TableHead className="text-right whitespace-nowrap text-white font-semibold">
                   <div className="leading-tight">
                     <div>{currency}/m²</div>
-                    <div className="text-[10px] font-normal text-amber-800/70">
+                    <div className="text-[10px] font-normal text-white/60">
                       {totalAreaM2 > 0 ? `${formatNumber(totalAreaM2, 0)} m² total` : "sin m²"}
                     </div>
                   </div>
@@ -315,7 +315,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                 return (
                   <React.Fragment key={catId}>
                     <TableRow
-                      className="font-semibold bg-muted/30 cursor-pointer hover:bg-muted/50"
+                      className="font-semibold bg-neutral-100 cursor-pointer hover:bg-neutral-200/70 border-l-[3px] border-l-[#E87722]"
                       onClick={() => toggleExpanded(catId)}
                     >
                       <TableCell>
@@ -323,7 +323,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                           {isOpen
                             ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                             : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                          {cat.code}
+                          <span className="text-[#E87722] font-mono">{cat.code}</span>
                         </span>
                       </TableCell>
                       <TableCell>{cat.name}</TableCell>
@@ -360,7 +360,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                     ? <ChevronDown className="h-3 w-3" />
                                     : <ChevronRight className="h-3 w-3" />)
                                   : <span className="inline-block w-3" />}
-                                {sub.code}
+                                <span className="text-[#E87722] font-mono text-xs">{sub.code}</span>
                               </span>
                             </TableCell>
                             <TableCell className="pl-8">{sub.name}</TableCell>
@@ -399,13 +399,13 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                     <div className="border rounded-md overflow-hidden bg-background">
                                       <table className="w-full text-xs">
                                         <thead>
-                                          <tr className="bg-amber-50">
-                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[80px]">Cód.</th>
-                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F]">Artículo</th>
-                                            <th className="text-center px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[60px]">Unidad</th>
-                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[100px]">Cantidad</th>
-                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[110px]">P.U. ({currency})</th>
-                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-[#B85A0F] w-[120px]">Total ({currency})</th>
+                                          <tr className="bg-neutral-900">
+                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[80px]">Cód.</th>
+                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white">Artículo</th>
+                                            <th className="text-center px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[60px]">Unidad</th>
+                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[100px]">Cantidad</th>
+                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[110px]">P.U. ({currency})</th>
+                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[120px]">Total ({currency})</th>
                                           </tr>
                                         </thead>
                                         <tbody>
@@ -419,11 +419,11 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                               <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(a.total)}</td>
                                             </tr>
                                           ))}
-                                          <tr className="border-t-2 border-amber-300 bg-amber-100 font-bold">
-                                            <td colSpan={5} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-[#0A0A0A]">
+                                          <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
+                                            <td colSpan={5} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-white">
                                               Subtotal
                                             </td>
-                                            <td className="px-3 py-2 text-right font-mono text-[#0A0A0A]">
+                                            <td className="px-3 py-2 text-right font-mono text-[#E87722]">
                                               {fmt(arts.reduce((s, a) => s + a.total, 0))}
                                             </td>
                                           </tr>
@@ -442,21 +442,21 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                 );
               })}
               {/* Fila TOTAL */}
-              <TableRow className={cn("font-bold border-t-2 border-amber-300 bg-amber-100 hover:bg-amber-100")}>
+              <TableRow className={cn("font-bold border-t-2 border-neutral-900 bg-neutral-900 hover:bg-neutral-900")}>
                 <TableCell></TableCell>
-                <TableCell className="text-[#0A0A0A]">TOTAL</TableCell>
+                <TableCell className="text-white uppercase tracking-wider text-[11px]">Total</TableCell>
                 {sectorList.map((s) => {
                   const v = grandBySector.get(s.id) || 0;
                   return (
-                    <TableCell key={s.id} className="text-right font-mono text-[#0A0A0A]">
-                      {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
+                    <TableCell key={s.id} className="text-right font-mono text-white">
+                      {v > 0 ? fmt(v) : <span className="text-white/40">—</span>}
                     </TableCell>
                   );
                 })}
-                <TableCell className="text-right font-mono text-[#0A0A0A]">{fmt(grandTotal)}</TableCell>
-                <TableCell className="text-right font-mono text-[#0A0A0A]">100.0%</TableCell>
-                <TableCell className="text-right font-mono text-[#0A0A0A]">
-                  {totalAreaM2 > 0 ? fmt(perM2(grandTotal)) : <span className="text-muted-foreground">—</span>}
+                <TableCell className="text-right font-mono text-[#E87722] text-[13px]">{fmt(grandTotal)}</TableCell>
+                <TableCell className="text-right font-mono text-white">100.0%</TableCell>
+                <TableCell className="text-right font-mono text-[#E87722]">
+                  {totalAreaM2 > 0 ? fmt(perM2(grandTotal)) : <span className="text-white/40">—</span>}
                 </TableCell>
               </TableRow>
             </TableBody>

@@ -513,7 +513,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
         <div className="border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr style={{ background: "#F5F5F5" }}>
+              <tr style={{ background: "#0A0A0A", color: "#FFFFFF" }}>
                 <th className="text-left px-5 py-2.5 font-semibold text-[11px] uppercase tracking-wider">Mes</th>
                 <th className="text-right px-5 py-2.5 font-semibold text-[11px] uppercase tracking-wider w-[180px]">Planificado</th>
                 <th className="text-right px-5 py-2.5 font-semibold text-[11px] uppercase tracking-wider w-[180px]">Real</th>
@@ -550,7 +550,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                           </span>
                         </span>
                       </td>
-                      <td className="px-5 py-2.5 text-right font-mono" style={{ color: isSinFecha ? "#D97706" : "#E87722" }}>
+                      <td className="px-5 py-2.5 text-right font-mono font-semibold" style={{ color: isSinFecha ? "#A3A3A3" : "#0A0A0A" }}>
                         {fmtUsd(planificado)}
                       </td>
                       <td className="px-5 py-2.5 text-right font-mono text-muted-foreground">
@@ -562,7 +562,7 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                         <td colSpan={3} className="p-0">
                           <table className="w-full text-xs">
                             <thead>
-                              <tr style={{ background: "#F0F0F0" }}>
+                              <tr style={{ background: "#404040", color: "#FFFFFF" }}>
                                 <th className="text-left px-5 py-2 font-semibold text-[10px] uppercase tracking-wider w-[260px]">Actividad</th>
                                 <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider">Insumo</th>
                                 <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[90px]">Cantidad</th>
@@ -600,11 +600,11 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                                   </td>
                                 </tr>
                               ))}
-                              <tr className="border-t-2 font-bold" style={{ background: "#F0F0F0", borderColor: "#D4D4D4" }}>
+                              <tr className="border-t-2 font-bold" style={{ background: "#F5F5F5", borderColor: "#0A0A0A" }}>
                                 <td colSpan={5} className="px-5 py-2 text-right text-[10px] uppercase tracking-wider">
                                   Subtotal {group.label}
                                 </td>
-                                <td className="px-3 py-2 text-right font-mono text-sm" style={{ color: "#E87722" }}>
+                                <td className="px-3 py-2 text-right font-mono text-sm font-semibold" style={{ color: "#0A0A0A" }}>
                                   ${formatNumber(planificado, 2)}
                                 </td>
                                 <td />
@@ -617,12 +617,12 @@ export function FlujoTab({ projectId }: { projectId: string }) {
                   </React.Fragment>
                 );
               })}
-              <tr className="border-t-2 font-bold" style={{ background: "#F0F2F5", borderColor: "#D4D4D4" }}>
+              <tr className="border-t-2 font-bold" style={{ background: "#0A0A0A", color: "#FFFFFF", borderColor: "#0A0A0A" }}>
                 <td className="px-5 py-3 uppercase text-[11px] tracking-wider">Total general</td>
-                <td className="px-5 py-3 text-right font-mono" style={{ color: "#E87722" }}>
+                <td className="px-5 py-3 text-right font-mono text-[13px]" style={{ color: "#E87722" }}>
                   {fmtUsd(grandTotal)}
                 </td>
-                <td className="px-5 py-3 text-right font-mono text-muted-foreground">—</td>
+                <td className="px-5 py-3 text-right font-mono text-white/40">—</td>
               </tr>
             </tbody>
           </table>

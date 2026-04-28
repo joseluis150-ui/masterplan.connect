@@ -134,9 +134,9 @@ export function DashboardTab({ projectId }: { projectId: string }) {
           {grandTotal > 0 ? (
             <div className="space-y-3">
               {[
-                { label: "Materiales", value: grandMat, color: "bg-amber-500" },
-                { label: "Mano de Obra", value: grandMo, color: "bg-green-500" },
-                { label: "Servicios/Global", value: grandGlo, color: "bg-amber-500" },
+                { label: "Materiales", value: grandMat, color: "bg-neutral-900" },
+                { label: "Mano de Obra", value: grandMo, color: "bg-neutral-500" },
+                { label: "Servicios/Global", value: grandGlo, color: "bg-[#E87722]" },
               ].map((item) => (
                 <div key={item.label}>
                   <div className="flex justify-between text-sm mb-1">
@@ -171,7 +171,7 @@ export function DashboardTab({ projectId }: { projectId: string }) {
                     <span className="font-mono">{formatNumber(cat.total_usd)} USD ({((cat.total_usd / grandTotal) * 100).toFixed(1)}%)</span>
                   </div>
                   <div className="w-full bg-muted rounded-full h-3">
-                    <div className="bg-primary h-3 rounded-full transition-all" style={{ width: `${(cat.total_usd / grandTotal) * 100}%` }} />
+                    <div className="bg-neutral-900 h-3 rounded-full transition-all" style={{ width: `${(cat.total_usd / grandTotal) * 100}%` }} />
                   </div>
                 </div>
               ))}
