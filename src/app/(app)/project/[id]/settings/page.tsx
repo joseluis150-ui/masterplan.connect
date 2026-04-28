@@ -18,6 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { CURRENCIES } from "@/lib/constants/units";
 import type { Project, Sector, SectorType, ExchangeRateVersion } from "@/lib/types/database";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
@@ -117,6 +118,7 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
         project_id: projectId,
         name: `Sector ${newOrder + 1}`,
         type: "fisico" as SectorType,
+        is_construction: true,
         order: newOrder,
       })
       .select()
@@ -457,45 +459,76 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
           ) : (
             <div className="space-y-3">
               {sectors.map((sector) => (
-                <div key={sector.id} className="flex items-center gap-3 p-3 border rounded-lg">
-                  <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab" />
-                  <Input
-                    value={sector.name}
-                    onChange={(e) => setSectors(sectors.map((s) => s.id === sector.id ? { ...s, name: e.target.value } : s))}
-                    onBlur={() => updateSector(sector.id, { name: sector.name })}
-                    className="flex-1"
-                  />
-                  <Select
-                    value={sector.type}
-                    onValueChange={(v) => v && updateSector(sector.id, { type: v as SectorType })}
-                  >
-                    <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="fisico">Sector físico</SelectItem>
-                      <SelectItem value="gastos_generales">Gastos generales</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div key={sector.id} className="p-3 border rounded-lg space-y-2">
+                  {/* Fila 1: nombre, tipo, área, eliminar */}
+                  <div className="flex items-center gap-3">
+                    <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab" />
+                    <Input
+                      value={sector.name}
+                      onChange={(e) => setSectors(sectors.map((s) => s.id === sector.id ? { ...s, name: e.target.value } : s))}
+                      onBlur={() => updateSector(sector.id, { name: sector.name })}
+                      className="flex-1"
+                    />
+                    <Select
+                      value={sector.type}
+                      onValueChange={(v) => v && updateSector(sector.id, { type: v as SectorType })}
+                    >
+                      <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="fisico">Sector físico</SelectItem>
+                        <SelectItem value="gastos_generales">Gastos generales</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {sector.type === "fisico" && (
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          step="any"
+                          placeholder="Área m²"
+                          value={sector.area_m2 || ""}
+                          onChange={(e) => setSectors(sectors.map((s) => s.id === sector.id ? { ...s, area_m2: Number(e.target.value) } : s))}
+                          onBlur={() => updateSector(sector.id, { area_m2: sector.area_m2 })}
+                          className="w-28"
+                        />
+                        <span className="text-sm text-muted-foreground">m²</span>
+                      </div>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => deleteSector(sector.id)}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+
+                  {/* Fila 2: opciones avanzadas — sólo para sectores físicos */}
                   {sector.type === "fisico" && (
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        step="any"
-                        placeholder="Área m²"
-                        value={sector.area_m2 || ""}
-                        onChange={(e) => setSectors(sectors.map((s) => s.id === sector.id ? { ...s, area_m2: Number(e.target.value) } : s))}
-                        onBlur={() => updateSector(sector.id, { area_m2: sector.area_m2 })}
-                        className="w-28"
-                      />
-                      <span className="text-sm text-muted-foreground">m²</span>
+                    <div className="flex items-center gap-6 pl-7 text-sm">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <Checkbox
+                          checked={sector.is_construction}
+                          onCheckedChange={(v) => updateSector(sector.id, { is_construction: !!v })}
+                        />
+                        <span>Suma como m² de construcción</span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">m² rentables</span>
+                        <Input
+                          type="number"
+                          step="any"
+                          placeholder="opcional"
+                          value={sector.rentable_m2 ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value === "" ? null : Number(e.target.value);
+                            setSectors(sectors.map((s) => s.id === sector.id ? { ...s, rentable_m2: v } : s));
+                          }}
+                          onBlur={() => updateSector(sector.id, { rentable_m2: sector.rentable_m2 })}
+                          className="w-28 h-8"
+                        />
+                      </div>
                     </div>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => deleteSector(sector.id)}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
                 </div>
               ))}
             </div>

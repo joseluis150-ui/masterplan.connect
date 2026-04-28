@@ -1217,6 +1217,9 @@ async function executeImport(parsed: ParsedImport, supabase: ReturnType<typeof c
     if (parsed.sectors.length > 0) {
       const rows = parsed.sectors.map((s) => ({
         project_id: projectId, name: s.name, type: s.type, area_m2: s.area_m2, order: s.order,
+        // Por defecto los sectores físicos cuentan como construcción; el usuario puede
+        // destildar luego en Configuración (ej. estacionamientos, calle lateral).
+        is_construction: s.type === "fisico",
       }));
       const { data, error } = await supabase.from("sectors").insert(rows).select();
       if (error) throw new Error(`Error al crear sectores: ${error.message}`);

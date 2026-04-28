@@ -60,6 +60,8 @@ export interface Sector {
   name: string;
   type: SectorType;
   area_m2: number | null;
+  is_construction: boolean;   // suma al m² total de construcción del proyecto
+  rentable_m2: number | null; // m² rentables (opcional, no todos los proyectos lo usan)
   order: number;
 }
 

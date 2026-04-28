@@ -231,12 +231,12 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
     ? (grandBySector.get(sectorFilter) || 0)
     : budgetData.reduce((s, r) => s + r.total_usd, 0);
 
-  // Área total: sólo sectores físicos (los "gastos_generales" no tienen área propia,
-  // su area_m2 representa el total del proyecto y duplica al sumarse).
-  // Si hay filtro de sector, área = la del sector seleccionado (sólo si físico).
+  // Área total de construcción: sólo sectores físicos marcados como is_construction
+  // (en settings se puede destildar p.ej. estacionamientos, calle lateral, pasillos).
+  // Si hay filtro de sector, considera ese sector individual (suma su m² si es físico).
   const totalAreaM2 = (() => {
     const target = isFiltered ? sectors.filter((s) => s.id === sectorFilter) : sectors;
-    return target.filter((s) => s.type === "fisico").reduce((acc, sc) => acc + Number(sc.area_m2 || 0), 0);
+    return target.filter((s) => s.is_construction).reduce((acc, sc) => acc + Number(sc.area_m2 || 0), 0);
   })();
   const perM2 = (val: number) => (totalAreaM2 > 0 ? val / totalAreaM2 : 0);
 
@@ -652,8 +652,9 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                   Para sectores físicos: costo / area propia.
                   Para gastos_generales (Rubros Generales): costo / area total del proyecto. */}
               {showSectorCols && (() => {
+                // Área del proyecto = m² de los sectores marcados como construcción
                 const projectAreaM2 = sectors
-                  .filter((s) => s.type === "fisico")
+                  .filter((s) => s.is_construction)
                   .reduce((acc, sc) => acc + Number(sc.area_m2 || 0), 0);
                 return (
                   <TableRow className="bg-background hover:bg-background text-sm">
