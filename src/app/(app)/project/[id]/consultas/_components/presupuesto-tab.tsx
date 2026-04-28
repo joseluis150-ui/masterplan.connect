@@ -14,6 +14,13 @@ import {
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatNumber, convertCurrency } from "@/lib/utils/formula";
 import type { Project, Sector, Articulo } from "@/lib/types/database";
 import { DollarSign, ChevronDown, ChevronRight, Package, Boxes } from "lucide-react";
@@ -93,7 +100,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
   const [showLocal, setShowLocal] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set()); // category ids con desglose visible
   const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set()); // subcategory ids con artículos visibles
-  const [expandedArts, setExpandedArts] = useState<Set<string>>(new Set()); // articulo ids con insumos visibles
+  const [selectedArt, setSelectedArt] = useState<ArticuloRollup | null>(null); // articulo abierto en el modal
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
@@ -220,20 +227,12 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
       return next;
     });
   }
-  function toggleExpandedArt(artId: string) {
-    setExpandedArts((prev) => {
-      const next = new Set(prev);
-      if (next.has(artId)) next.delete(artId); else next.add(artId);
-      return next;
-    });
-  }
   function expandAll() {
     setExpanded(new Set(Array.from(categoryTotals.keys())));
   }
   function collapseAll() {
     setExpanded(new Set());
     setExpandedSubs(new Set());
-    setExpandedArts(new Set());
   }
 
   // Articulos agrupados por subcategoría — qty/costo total y desglose por sector
@@ -481,109 +480,37 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                           </tr>
                                         </thead>
                                         <tbody>
-                                          {arts.map((a) => {
-                                            const artOpen = expandedArts.has(a.articuloId);
-                                            const comps = compsByArticulo.get(a.articuloId) || [];
-                                            return (
-                                              <React.Fragment key={a.articuloId}>
-                                                <tr
-                                                  className={cn("border-t hover:bg-muted/10 cursor-pointer", artOpen && "bg-muted/20")}
-                                                  onClick={() => toggleExpandedArt(a.articuloId)}
-                                                >
-                                                  <td className="px-3 py-2 font-mono text-muted-foreground">
-                                                    <span className="inline-flex items-center gap-1">
-                                                      {comps.length > 0
-                                                        ? (artOpen
-                                                          ? <ChevronDown className="h-3 w-3" />
-                                                          : <ChevronRight className="h-3 w-3" />)
-                                                        : <span className="inline-block w-3" />}
-                                                      {a.number}
-                                                    </span>
+                                          {arts.map((a) => (
+                                            <tr
+                                              key={a.articuloId}
+                                              className="border-t hover:bg-muted/10 cursor-pointer"
+                                              onClick={() => setSelectedArt(a)}
+                                              title="Ver insumos del artículo"
+                                            >
+                                              <td className="px-3 py-2 font-mono text-muted-foreground">{a.number}</td>
+                                              <td className="px-3 py-2">
+                                                <div className="flex items-center gap-1.5">
+                                                  <Boxes className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                                                  {a.description}
+                                                </div>
+                                                <div className="text-[10px] text-muted-foreground mt-0.5">
+                                                  Cant. total: <span className="font-mono">{formatNumber(a.quantity)}</span> {a.unit} · P.U. <span className="font-mono">{fmt(a.unitCost)}</span> {currency}
+                                                </div>
+                                              </td>
+                                              <td className="px-3 py-2 text-center text-muted-foreground">{a.unit}</td>
+                                              {sectorList.map((s) => {
+                                                const v = a.costBySector.get(s.id) || 0;
+                                                return (
+                                                  <td key={s.id} className="px-3 py-2 text-right font-mono">
+                                                    {v > 0
+                                                      ? fmt(v)
+                                                      : <span className="text-muted-foreground">—</span>}
                                                   </td>
-                                                  <td className="px-3 py-2">
-                                                    <div>{a.description}</div>
-                                                    <div className="text-[10px] text-muted-foreground mt-0.5">
-                                                      Cant. total: <span className="font-mono">{formatNumber(a.quantity)}</span> {a.unit} · P.U. <span className="font-mono">{fmt(a.unitCost)}</span> {currency}
-                                                    </div>
-                                                  </td>
-                                                  <td className="px-3 py-2 text-center text-muted-foreground">{a.unit}</td>
-                                                  {sectorList.map((s) => {
-                                                    const v = a.costBySector.get(s.id) || 0;
-                                                    return (
-                                                      <td key={s.id} className="px-3 py-2 text-right font-mono">
-                                                        {v > 0
-                                                          ? fmt(v)
-                                                          : <span className="text-muted-foreground">—</span>}
-                                                      </td>
-                                                    );
-                                                  })}
-                                                  <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(a.total)}</td>
-                                                </tr>
-                                                {artOpen && (
-                                                  <tr className="bg-muted/10">
-                                                    <td colSpan={4 + sectorList.length} className="p-0">
-                                                      <div className="px-6 py-2">
-                                                        <div className="flex items-center gap-2 mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-                                                          <Boxes className="h-3 w-3" />
-                                                          Insumos del artículo
-                                                          <span className="text-[10px] normal-case text-muted-foreground/80">
-                                                            ({comps.length} {comps.length === 1 ? "insumo" : "insumos"})
-                                                          </span>
-                                                        </div>
-                                                        {comps.length === 0 ? (
-                                                          <p className="text-[11px] italic text-muted-foreground py-1">
-                                                            Este artículo no tiene insumos en su composición.
-                                                          </p>
-                                                        ) : (
-                                                          <div className="border rounded-md overflow-hidden bg-background">
-                                                            <table className="w-full text-[11px]">
-                                                              <thead>
-                                                                <tr className="bg-neutral-700">
-                                                                  <th className="text-left px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white">Insumo</th>
-                                                                  <th className="text-center px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[50px]">Unidad</th>
-                                                                  <th className="text-right px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[100px]">Cant. p/u</th>
-                                                                  <th className="text-right px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[110px]">Cant. total</th>
-                                                                  <th className="text-right px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[100px]">P.U. ({currency})</th>
-                                                                  <th className="text-right px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[110px]">Total ({currency})</th>
-                                                                </tr>
-                                                              </thead>
-                                                              <tbody>
-                                                                {comps.map((c, idx) => {
-                                                                  const totalQty = c.compQuantity * a.quantity;
-                                                                  const totalCost = totalQty * c.unitCost;
-                                                                  return (
-                                                                    <tr key={`${c.insumoId}-${idx}`} className="border-t">
-                                                                      <td className="px-2 py-1.5">
-                                                                        <span className="inline-flex items-center gap-1.5">
-                                                                          <span className={cn(
-                                                                            "w-1.5 h-1.5 rounded-full shrink-0",
-                                                                            c.type === "material" ? "bg-neutral-700" :
-                                                                            c.type === "mano_de_obra" ? "bg-amber-400" :
-                                                                            c.type === "servicio" ? "bg-emerald-400" : "bg-gray-400"
-                                                                          )} />
-                                                                          {c.insumoCode != null && <span className="font-mono text-muted-foreground text-[10px]">{c.insumoCode}</span>}
-                                                                          {c.description}
-                                                                        </span>
-                                                                      </td>
-                                                                      <td className="px-2 py-1.5 text-center text-muted-foreground">{c.unit}</td>
-                                                                      <td className="px-2 py-1.5 text-right font-mono">{formatNumber(c.compQuantity, 4)}</td>
-                                                                      <td className="px-2 py-1.5 text-right font-mono">{formatNumber(totalQty)}</td>
-                                                                      <td className="px-2 py-1.5 text-right font-mono">{fmt(c.unitCost)}</td>
-                                                                      <td className="px-2 py-1.5 text-right font-mono font-medium">{fmt(totalCost)}</td>
-                                                                    </tr>
-                                                                  );
-                                                                })}
-                                                              </tbody>
-                                                            </table>
-                                                          </div>
-                                                        )}
-                                                      </div>
-                                                    </td>
-                                                  </tr>
-                                                )}
-                                              </React.Fragment>
-                                            );
-                                          })}
+                                                );
+                                              })}
+                                              <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(a.total)}</td>
+                                            </tr>
+                                          ))}
                                           <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
                                             <td colSpan={3} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-white">
                                               Subtotal
@@ -636,6 +563,143 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
           </Table>
         </div>
       )}
+
+      {/* Modal: insumos del artículo seleccionado */}
+      <Dialog open={!!selectedArt} onOpenChange={(open) => { if (!open) setSelectedArt(null); }}>
+        <DialogContent className="sm:max-w-3xl">
+          {selectedArt && (() => {
+            const comps = compsByArticulo.get(selectedArt.articuloId) || [];
+            const totalCompCost = comps.reduce((s, c) => s + c.compQuantity * selectedArt.quantity * c.unitCost, 0);
+            const sectorEntries = sectorList
+              .map((s) => ({ s, qty: selectedArt.qtyBySector.get(s.id) || 0, cost: selectedArt.costBySector.get(s.id) || 0 }))
+              .filter((e) => e.qty > 0);
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Boxes className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-mono text-muted-foreground text-sm">#{selectedArt.number}</span>
+                    {selectedArt.description}
+                  </DialogTitle>
+                  <DialogDescription>
+                    Composición y cantidades del artículo en este proyecto.
+                  </DialogDescription>
+                </DialogHeader>
+
+                {/* KPIs */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-md border bg-muted/30 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Cantidad total</p>
+                    <p className="text-lg font-bold leading-tight">
+                      {formatNumber(selectedArt.quantity)} <span className="text-xs font-normal text-muted-foreground">{selectedArt.unit}</span>
+                    </p>
+                  </div>
+                  <div className="rounded-md border bg-muted/30 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Costo unitario</p>
+                    <p className="text-lg font-bold leading-tight">
+                      {fmt(selectedArt.unitCost)} <span className="text-xs font-normal text-muted-foreground">{currency}</span>
+                    </p>
+                  </div>
+                  <div className="rounded-md border bg-muted/30 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Costo total</p>
+                    <p className="text-lg font-bold leading-tight" style={{ color: "#E87722" }}>
+                      {fmt(selectedArt.total)} <span className="text-xs font-normal text-muted-foreground">{currency}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Distribución por sector */}
+                {sectorEntries.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Distribución por sector</p>
+                    <div className="border rounded-md overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-neutral-100">
+                            <th className="text-left px-3 py-1.5 font-semibold">Sector</th>
+                            <th className="text-right px-3 py-1.5 font-semibold">Cantidad</th>
+                            <th className="text-right px-3 py-1.5 font-semibold">Costo ({currency})</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sectorEntries.map((e) => (
+                            <tr key={e.s.id} className="border-t">
+                              <td className="px-3 py-1.5">{e.s.name}</td>
+                              <td className="px-3 py-1.5 text-right font-mono">{formatNumber(e.qty)} {selectedArt.unit}</td>
+                              <td className="px-3 py-1.5 text-right font-mono">{fmt(e.cost)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Insumos */}
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">
+                    Insumos del artículo
+                    {comps.length > 0 && <span className="text-muted-foreground/70 normal-case"> · {comps.length} {comps.length === 1 ? "insumo" : "insumos"}</span>}
+                  </p>
+                  {comps.length === 0 ? (
+                    <p className="text-xs italic text-muted-foreground py-3 text-center border rounded-md">
+                      Este artículo no tiene insumos en su composición.
+                    </p>
+                  ) : (
+                    <div className="border rounded-md overflow-hidden max-h-[40vh] overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-neutral-900 text-white">
+                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider">Insumo</th>
+                            <th className="text-center px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[60px]">Unidad</th>
+                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[100px]">Cant. p/u</th>
+                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[120px]">Cant. total</th>
+                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[100px]">P.U. ({currency})</th>
+                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider w-[120px]">Total ({currency})</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {comps.map((c, idx) => {
+                            const totalQty = c.compQuantity * selectedArt.quantity;
+                            const totalCost = totalQty * c.unitCost;
+                            return (
+                              <tr key={`${c.insumoId}-${idx}`} className="border-t hover:bg-muted/10">
+                                <td className="px-3 py-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={cn(
+                                      "w-1.5 h-1.5 rounded-full shrink-0",
+                                      c.type === "material" ? "bg-neutral-700" :
+                                      c.type === "mano_de_obra" ? "bg-amber-400" :
+                                      c.type === "servicio" ? "bg-emerald-400" : "bg-gray-400"
+                                    )} />
+                                    {c.insumoCode != null && <span className="font-mono text-muted-foreground text-[10px]">{c.insumoCode}</span>}
+                                    <span>{c.description}</span>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2 text-center text-muted-foreground">{c.unit}</td>
+                                <td className="px-3 py-2 text-right font-mono">{formatNumber(c.compQuantity, 4)}</td>
+                                <td className="px-3 py-2 text-right font-mono">{formatNumber(totalQty)}</td>
+                                <td className="px-3 py-2 text-right font-mono">{fmt(c.unitCost)}</td>
+                                <td className="px-3 py-2 text-right font-mono font-medium">{fmt(totalCost)}</td>
+                              </tr>
+                            );
+                          })}
+                          <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
+                            <td colSpan={5} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-white">
+                              Total composición
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono" style={{ color: "#E87722" }}>{fmt(totalCompCost)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
