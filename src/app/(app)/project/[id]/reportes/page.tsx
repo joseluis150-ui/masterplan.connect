@@ -440,6 +440,21 @@ interface ProcurementRollup {
   totalCost: number;
   needDate: Date | null;
   needDateLabel: string;
+  isPastDue: boolean;
+}
+
+// Filtra procurement_lines huérfanas: cuando hay una línea con composition_id
+// para el mismo (paquete, insumo), las líneas sin composition se descartan
+// (suelen ser legacy/duplicadas y vienen con quantity=0).
+function filterRelevantProcurementLines(lines: ProcurementLine[]): ProcurementLine[] {
+  const compKeys = new Set<string>();
+  for (const pl of lines) {
+    if (pl.composition_id) compKeys.add(`${pl.package_id}|${pl.insumo_id}`);
+  }
+  return lines.filter((pl) => {
+    if (pl.composition_id) return true;
+    return !compKeys.has(`${pl.package_id}|${pl.insumo_id}`);
+  });
 }
 
 function buildProcurementRollup(d: ReportData): Map<string, ProcurementRollup> {
@@ -524,6 +539,9 @@ function buildProcurementRollup(d: ReportData): Map<string, ProcurementRollup> {
     if (needDate) {
       needDateLabel = needDate.toISOString().slice(0, 10);
     }
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    const isPastDue = !!(needDate && needDate < todayMidnight);
 
     result.set(pl.id, {
       insumoDescription: insumo?.description || "(insumo no encontrado)",
@@ -533,6 +551,7 @@ function buildProcurementRollup(d: ReportData): Map<string, ProcurementRollup> {
       totalCost,
       needDate,
       needDateLabel,
+      isPastDue,
     });
   }
   return result;
@@ -987,29 +1006,41 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
   // ────────────────── Hoja 4 — Paquetes (opcional) ──────────────────
   if (opts.includePackages && d.packages.length > 0) {
     const rollup = buildProcurementRollup(d);
+    const relevantLines = filterRelevantProcurementLines(d.procLines);
     const ws = wb.addWorksheet("Paquetes");
+    // Cód | Insumo | Unidad | Cantidad | P.U. | Total | Fecha nec. | Vencido
     const lastCol = 8;
-    // Paquete (header) | Insumo | Unidad | Cantidad | P.U. | Total | Fecha nec. | Estado/Tipo
-    setColWidths(ws, [10, 44, 8, 13, 14, 16, 14, 18]);
+    setColWidths(ws, [10, 46, 8, 13, 14, 16, 14, 8]);
     let r = addBranding(ws, "PAQUETES DE CONTRATACIÓN", metaText(), lastCol);
-    applyHeader(ws, r, ["Cód.", "Insumo", "Unidad", "Cantidad", `P.U. (${cur})`, `Total (${cur})`, "Fecha necesidad", "Tipo / Estado"]);
+    applyHeader(ws, r, ["Cód.", "Insumo", "Unidad", "Cantidad", `P.U. (${cur})`, `Total (${cur})`, "Fecha necesidad", ""]);
     const headerRow = r;
     r++;
+    // Estilo para celda con fecha vencida (rojo) — sólo para la columna 7
+    const dateOverdue = {
+      ...S.artLeft,
+      font: { name: "Calibri", size: 10, color: { argb: "FFDC2626" } },
+    };
+    const overdueDot = {
+      font: { name: "Calibri", size: 14, bold: true, color: { argb: "FFDC2626" } },
+      alignment: { vertical: "middle" as const, horizontal: "center" as const },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.grayFaint } } as const,
+      border: thinBorder(COLOR.borderFaint),
+    };
     let grandTotalPaquetes = 0;
     for (const pkg of d.packages) {
-      const lines = d.procLines.filter((l) => l.package_id === pkg.id);
-      // Pkg header row (descripción del paquete + meta a la derecha)
+      const lines = relevantLines.filter((l) => l.package_id === pkg.id);
       const pkgTotal = lines.reduce((s, l) => s + (rollup.get(l.id)?.totalCost || 0), 0);
       grandTotalPaquetes += pkgTotal;
       const pkgMeta = `${pkg.purchase_type} · ${pkg.status}${pkg.advance_days ? ` · ${pkg.advance_days}d ant.` : ""}`;
+      // Fila header del paquete: nombre + meta a la derecha + total
       setCell(ws, r, 1, "", S.catFirst);
-      setCell(ws, r, 2, pkg.name, S.catLeft);
+      setCell(ws, r, 2, `${pkg.name}  ·  ${pkgMeta}`, S.catLeft);
       setCell(ws, r, 3, "", S.catLeft);
       setCell(ws, r, 4, "", S.catRight);
       setCell(ws, r, 5, "", S.catRight);
       setCell(ws, r, 6, fm(pkgTotal), S.catRight);
       setCell(ws, r, 7, "", S.catLeft);
-      setCell(ws, r, 8, pkgMeta, S.catLeft);
+      setCell(ws, r, 8, "", S.catLeft);
       r++;
       for (const l of lines) {
         const roll = rollup.get(l.id);
@@ -1021,8 +1052,9 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
         setCell(ws, r, 4, Number((roll?.quantity || 0).toFixed(2)), { ...S.artRight, numFmt: NUM_2D });
         setCell(ws, r, 5, fm(roll?.unitCost || 0), S.artRight);
         setCell(ws, r, 6, fm(roll?.totalCost || 0), S.artRight);
-        setCell(ws, r, 7, roll?.needDateLabel || "—", S.artLeft);
-        setCell(ws, r, 8, "", S.artLeft);
+        setCell(ws, r, 7, roll?.needDateLabel || "—", roll?.isPastDue ? dateOverdue : S.artLeft);
+        // Punto rojo en la última columna cuando la fecha de necesidad ya pasó
+        setCell(ws, r, 8, roll?.isPastDue ? "●" : "", roll?.isPastDue ? overdueDot : S.artLeft);
         r++;
       }
     }
@@ -1299,10 +1331,12 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
   let packagesHtml = "";
   if (opts.includePackages && d.packages.length > 0) {
     const rollup = buildProcurementRollup(d);
+    const relevantLines = filterRelevantProcurementLines(d.procLines);
     const cards: string[] = [];
     let grandTotal = 0;
+    let anyOverdue = false;
     for (const pkg of d.packages) {
-      const lines = d.procLines.filter((l) => l.package_id === pkg.id);
+      const lines = relevantLines.filter((l) => l.package_id === pkg.id);
       const pkgTotal = lines.reduce((s, l) => s + (rollup.get(l.id)?.totalCost || 0), 0);
       grandTotal += pkgTotal;
       const lineRows = lines.map((l) => {
@@ -1311,16 +1345,19 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
         const qty = roll?.quantity || 0;
         const pu = roll?.unitCost || 0;
         const total = roll?.totalCost || 0;
-        return `<tr>
+        const overdue = !!roll?.isPastDue;
+        if (overdue) anyOverdue = true;
+        return `<tr${overdue ? ' class="row-overdue"' : ""}>
           <td class="ins-code">${escHtml(ins?.code != null ? String(ins.code) : "—")}</td>
           <td class="ins-desc">${escHtml(roll?.insumoDescription || ins?.description || "(no encontrado)")}</td>
           <td class="ins-unit">${escHtml(roll?.insumoUnit || ins?.unit || "")}</td>
           <td class="num">${formatNumber(qty, 2)}</td>
           <td class="num">${fm(pu)}</td>
           <td class="num strong">${fm(total)}</td>
-          <td>${escHtml(roll?.needDateLabel || "—")}</td>
+          <td class="${overdue ? "date-overdue" : ""}">${escHtml(roll?.needDateLabel || "—")}</td>
+          <td class="overdue-cell">${overdue ? '<span class="overdue-dot" title="Fecha de necesidad vencida">●</span>' : ""}</td>
         </tr>`;
-      }).join("\n") || `<tr><td colspan="7" class="muted-italic">Sin líneas en este paquete</td></tr>`;
+      }).join("\n") || `<tr><td colspan="8" class="muted-italic">Sin líneas en este paquete</td></tr>`;
       cards.push(`
         <div class="pkg-card">
           <div class="pkg-card-header">
@@ -1331,12 +1368,13 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
           <table class="report-table composition">
             <colgroup>
               <col style="width:8%" />
-              <col style="width:34%" />
-              <col style="width:7%" />
+              <col style="width:32%" />
+              <col style="width:6%" />
               <col style="width:11%" />
               <col style="width:11%" />
               <col style="width:14%" />
-              <col style="width:15%" />
+              <col style="width:14%" />
+              <col style="width:4%" />
             </colgroup>
             <thead><tr>
               <th>Cód.</th>
@@ -1346,6 +1384,7 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
               <th class="num">P.U.</th>
               <th class="num">Total</th>
               <th>Fecha necesidad</th>
+              <th></th>
             </tr></thead>
             <tbody>${lineRows}</tbody>
           </table>
@@ -1357,6 +1396,7 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
         <h2 class="sec-title">Paquetes de contratación</h2>
         <p class="sec-help">
           Cantidades derivadas de la cuantificación de los artículos asociados (vía composición × insumo). P.U. y total en ${escHtml(cur)} usando precios de los insumos. Fecha de necesidad calculada como inicio de la semana del cronograma menos los días de anticipo del paquete; "—" cuando no aplica.
+          ${anyOverdue ? '<br /><span class="overdue-dot">●</span> indica que la fecha de necesidad ya pasó al día de hoy.' : ""}
         </p>
         <div class="pkg-cards">${cards.join("\n")}</div>
         <div class="pkg-grand-total">
@@ -1774,6 +1814,16 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
     font-size: 13px;
     white-space: nowrap;
   }
+  /* Punto rojo + fecha en rojo cuando la fecha de necesidad ya venció */
+  .overdue-dot {
+    color: #DC2626;
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 700;
+  }
+  td.date-overdue { color: #DC2626; }
+  td.overdue-cell { width: 14px; text-align: center; padding: 3px 4px; }
+  tr.row-overdue td:not(.overdue-cell) { background: #FEF7F7; }
 
   /* ── Schedule (landscape) ── */
   .schedule-section { page: landscape-page; page-break-before: always; }
