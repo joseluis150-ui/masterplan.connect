@@ -424,7 +424,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
             <TableHeader>
               <TableRow className="bg-neutral-900 hover:bg-neutral-900">
                 <TableHead className="w-[110px] min-w-[110px] max-w-[110px] text-white font-semibold text-sm sticky left-0 z-30 bg-neutral-900">Código</TableHead>
-                <TableHead className="text-white font-semibold text-sm sticky left-[110px] z-30 bg-neutral-900 min-w-[260px]">Descripción</TableHead>
+                <TableHead className="text-white font-semibold text-sm sticky left-[110px] z-30 bg-neutral-900 min-w-[260px] border-r-2 border-r-white/40">Descripción</TableHead>
                 {showSectorCols && displayedSectors.map((s) => {
                   const m2 = Number(s.area_m2 || 0);
                   return (
@@ -469,7 +469,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                           <span className="text-[#E87722] font-mono">{cat.code}</span>
                         </span>
                       </TableCell>
-                      <TableCell className="sticky left-[110px] z-20 bg-neutral-100 min-w-[260px]">{cat.name}</TableCell>
+                      <TableCell className="sticky left-[110px] z-20 bg-neutral-100 min-w-[260px] border-r-2 border-r-neutral-300">{cat.name}</TableCell>
                       {showSectorCols && displayedSectors.map((s) => {
                         const v = cat.bySector.get(s.id) || 0;
                         return (
@@ -508,7 +508,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                 <span className="text-[#E87722] font-mono">{sub.code}</span>
                               </span>
                             </TableCell>
-                            <TableCell className="pl-8 sticky left-[110px] z-20 bg-background min-w-[260px]">{sub.name}</TableCell>
+                            <TableCell className="pl-8 sticky left-[110px] z-20 bg-background min-w-[260px] border-r-2 border-r-neutral-300">{sub.name}</TableCell>
                             {showSectorCols && displayedSectors.map((s) => {
                               const v = sub.bySector.get(s.id) || 0;
                               return (
@@ -625,7 +625,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
               {/* Fila TOTAL */}
               <TableRow className={cn("font-bold border-t-2 border-neutral-900 bg-neutral-900 hover:bg-neutral-900")}>
                 <TableCell className="sticky left-0 z-20 bg-neutral-900 w-[110px] min-w-[110px] max-w-[110px]"></TableCell>
-                <TableCell className="text-white uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-neutral-900 min-w-[260px]">Total{isFiltered && <span className="normal-case ml-2">· {filterLabel}</span>}</TableCell>
+                <TableCell className="text-white uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-neutral-900 min-w-[260px] border-r-2 border-r-white/40">Total{isFiltered && <span className="normal-case ml-2">· {filterLabel}</span>}</TableCell>
                 {showSectorCols && displayedSectors.map((s) => {
                   const v = grandBySector.get(s.id) || 0;
                   return (
@@ -645,7 +645,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
               {showSectorCols && (
                 <TableRow className="bg-background hover:bg-background text-sm">
                   <TableCell className="sticky left-0 z-20 bg-background w-[110px] min-w-[110px] max-w-[110px]"></TableCell>
-                  <TableCell className="text-muted-foreground uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-background min-w-[260px]">{currency}/m² por sector</TableCell>
+                  <TableCell className="text-muted-foreground uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-background min-w-[260px] border-r-2 border-r-neutral-300">{currency}/m² por sector</TableCell>
                   {displayedSectors.map((s) => {
                     const cost = grandBySector.get(s.id) || 0;
                     const sectorM2 = s.type === "fisico" ? Number(s.area_m2 || 0) : 0;
