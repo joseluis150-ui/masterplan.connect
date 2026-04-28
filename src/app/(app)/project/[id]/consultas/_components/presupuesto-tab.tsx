@@ -51,6 +51,8 @@ interface ArticuloRollup {
   quantity: number;
   unitCost: number;
   total: number;
+  qtyBySector: Map<string, number>;   // sector_id → cantidad ejecutada
+  costBySector: Map<string, number>;  // sector_id → costo (qty × unitCost)
 }
 
 interface InsumoCompRow {
@@ -234,32 +236,44 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
     setExpandedArts(new Set());
   }
 
-  // Articulos agrupados por subcategoría — qty total y costo total
+  // Articulos agrupados por subcategoría — qty/costo total y desglose por sector
   const articulosBySub = (() => {
     const m = new Map<string, ArticuloRollup[]>();
     const artMap = new Map(articulos.map((a) => [a.id, a]));
-    // Acumulado de qty por (subcategory_id, articulo_id)
-    const qtyMap = new Map<string, Map<string, number>>();
+    // Acumulado de qty por (subcategory_id, articulo_id, sector_id)
+    const qtyMap = new Map<string, Map<string, Map<string, number>>>();
     for (const ql of qLines) {
       if (!ql.articulo_id) continue;
-      const subMap = qtyMap.get(ql.subcategory_id) || new Map<string, number>();
-      subMap.set(ql.articulo_id, (subMap.get(ql.articulo_id) || 0) + Number(ql.quantity || 0));
+      const subMap = qtyMap.get(ql.subcategory_id) || new Map<string, Map<string, number>>();
+      const artMap2 = subMap.get(ql.articulo_id) || new Map<string, number>();
+      artMap2.set(ql.sector_id, (artMap2.get(ql.sector_id) || 0) + Number(ql.quantity || 0));
+      subMap.set(ql.articulo_id, artMap2);
       qtyMap.set(ql.subcategory_id, subMap);
     }
     for (const [subId, byArt] of qtyMap.entries()) {
       const list: ArticuloRollup[] = [];
-      for (const [artId, qty] of byArt.entries()) {
+      for (const [artId, bySector] of byArt.entries()) {
         const art = artMap.get(artId);
         if (!art) continue;
         const unitCost = articuloCosts.get(artId) || 0;
+        const qtyBySector = new Map<string, number>();
+        const costBySector = new Map<string, number>();
+        let totalQty = 0;
+        for (const [secId, qty] of bySector.entries()) {
+          qtyBySector.set(secId, qty);
+          costBySector.set(secId, qty * unitCost);
+          totalQty += qty;
+        }
         list.push({
           articuloId: artId,
           number: art.number,
           description: art.description,
           unit: art.unit,
-          quantity: qty,
+          quantity: totalQty,
           unitCost,
-          total: qty * unitCost,
+          total: totalQty * unitCost,
+          qtyBySector,
+          costBySector,
         });
       }
       list.sort((a, b) => a.number - b.number);
@@ -455,11 +469,14 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                       <table className="w-full text-xs">
                                         <thead>
                                           <tr className="bg-neutral-900">
-                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[80px]">Cód.</th>
+                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[70px]">Cód.</th>
                                             <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white">Artículo</th>
                                             <th className="text-center px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[60px]">Unidad</th>
-                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[100px]">Cantidad</th>
-                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[110px]">P.U. ({currency})</th>
+                                            {sectorList.map((s) => (
+                                              <th key={s.id} className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white whitespace-nowrap">
+                                                {s.name}
+                                              </th>
+                                            ))}
                                             <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[120px]">Total ({currency})</th>
                                           </tr>
                                         </thead>
@@ -483,15 +500,28 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                                       {a.number}
                                                     </span>
                                                   </td>
-                                                  <td className="px-3 py-2">{a.description}</td>
+                                                  <td className="px-3 py-2">
+                                                    <div>{a.description}</div>
+                                                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                                                      Cant. total: <span className="font-mono">{formatNumber(a.quantity)}</span> {a.unit} · P.U. <span className="font-mono">{fmt(a.unitCost)}</span> {currency}
+                                                    </div>
+                                                  </td>
                                                   <td className="px-3 py-2 text-center text-muted-foreground">{a.unit}</td>
-                                                  <td className="px-3 py-2 text-right font-mono">{formatNumber(a.quantity)}</td>
-                                                  <td className="px-3 py-2 text-right font-mono">{fmt(a.unitCost)}</td>
+                                                  {sectorList.map((s) => {
+                                                    const v = a.costBySector.get(s.id) || 0;
+                                                    return (
+                                                      <td key={s.id} className="px-3 py-2 text-right font-mono">
+                                                        {v > 0
+                                                          ? fmt(v)
+                                                          : <span className="text-muted-foreground">—</span>}
+                                                      </td>
+                                                    );
+                                                  })}
                                                   <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(a.total)}</td>
                                                 </tr>
                                                 {artOpen && (
                                                   <tr className="bg-muted/10">
-                                                    <td colSpan={6} className="p-0">
+                                                    <td colSpan={4 + sectorList.length} className="p-0">
                                                       <div className="px-6 py-2">
                                                         <div className="flex items-center gap-2 mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
                                                           <Boxes className="h-3 w-3" />
@@ -555,9 +585,17 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                             );
                                           })}
                                           <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
-                                            <td colSpan={5} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-white">
+                                            <td colSpan={3} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-white">
                                               Subtotal
                                             </td>
+                                            {sectorList.map((s) => {
+                                              const v = arts.reduce((sum, a) => sum + (a.costBySector.get(s.id) || 0), 0);
+                                              return (
+                                                <td key={s.id} className="px-3 py-2 text-right font-mono text-white">
+                                                  {v > 0 ? fmt(v) : <span className="text-white/40">—</span>}
+                                                </td>
+                                              );
+                                            })}
                                             <td className="px-3 py-2 text-right font-mono text-[#E87722]">
                                               {fmt(arts.reduce((s, a) => s + a.total, 0))}
                                             </td>
