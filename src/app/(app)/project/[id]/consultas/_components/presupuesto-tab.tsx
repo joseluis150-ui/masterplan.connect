@@ -419,15 +419,15 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
       ) : (
-        <div className={cn(
-          "border rounded-lg overflow-hidden",
-          // En vista simplificada limitamos el ancho para que las descripciones
-          // queden cerca de los números (en simplificado hay pocas columnas).
-          // En detallado dejamos que ocupe el ancho disponible para acomodar
-          // la columna por sector.
-          viewMode === "simple" && "max-w-3xl"
-        )}>
-          <Table className="border-separate border-spacing-0 [&_tr]:border-b-0 [&_td]:border-b [&_td]:border-border [&_th]:border-b [&_th]:border-border">
+        <div className="border rounded-lg overflow-hidden w-fit max-w-full">
+          {/*
+            w-fit max-w-full: la tabla crece sólo lo necesario para acomodar el
+            contenido (no se estira a la pantalla cuando hay pocas columnas) y
+            queda topada al ancho de la pantalla cuando el contenido es mayor
+            (en ese caso el scroll horizontal del Table interior maneja el
+            overflow).
+          */}
+          <Table className="w-auto border-separate border-spacing-0 [&_tr]:border-b-0 [&_td]:border-b [&_td]:border-border [&_th]:border-b [&_th]:border-border">
             <TableHeader>
               <TableRow className="bg-neutral-900 hover:bg-neutral-900">
                 <TableHead className="w-[110px] min-w-[110px] max-w-[110px] text-white font-semibold text-sm sticky left-0 z-30 bg-neutral-900">Código</TableHead>
