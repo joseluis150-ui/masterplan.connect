@@ -860,7 +860,7 @@ interface ParsedProject {
   proration_criteria?: "area" | "cantidad" | "manual";
   number_format?: "es" | "en";
 }
-interface ParsedSector { order: number; name: string; type: "fisico" | "funcional"; area_m2: number | null; }
+interface ParsedSector { order: number; name: string; type: "fisico" | "gastos_generales"; area_m2: number | null; }
 interface ParsedEdtRow {
   categoria_code: string;
   categoria_name: string;
@@ -994,14 +994,18 @@ async function parseImportTemplate(file: File): Promise<{ parsed: ParsedImport |
       const row = wsS.getRow(r);
       const orderN = cellNum(row.getCell(1).value);
       const name = cellStr(row.getCell(2).value);
-      const type = cellStr(row.getCell(3).value)?.toLowerCase();
+      const rawType = cellStr(row.getCell(3).value)?.toLowerCase().replace(/\s+/g, "_");
       const area_m2 = cellNum(row.getCell(4).value);
-      if (!name && !orderN && !type) continue; // fila vacía
+      if (!name && !orderN && !rawType) continue; // fila vacía
       if (!name) { errors.push({ sheet: "2.Sectores", row: r, message: "name es obligatorio" }); continue; }
-      if (type !== "fisico" && type !== "funcional") {
-        errors.push({ sheet: "2.Sectores", row: r, message: `type debe ser "fisico" o "funcional"` }); continue;
+      // Acepta: fisico, físico, gastos_generales, "gastos generales", funcional (alias legado).
+      let type: "fisico" | "gastos_generales" | null = null;
+      if (rawType === "fisico" || rawType === "físico") type = "fisico";
+      else if (rawType === "gastos_generales" || rawType === "funcional") type = "gastos_generales";
+      if (!type) {
+        errors.push({ sheet: "2.Sectores", row: r, message: `type debe ser "fisico" o "gastos_generales"` }); continue;
       }
-      sectors.push({ order: orderN ?? sectors.length + 1, name, type: type as "fisico" | "funcional", area_m2 });
+      sectors.push({ order: orderN ?? sectors.length + 1, name, type, area_m2 });
     }
   }
 
@@ -1554,7 +1558,7 @@ async function generateImportTemplate() {
   addRow("Fechas", "Formato YYYY-MM-DD (ej: 2026-04-28).");
   addRow("Porcentajes", "Cargalos como número entero o decimal sin el símbolo %. Por ejemplo 5 (5 %) o 7.5 (7.5 %).");
   addRow("Monedas", "El campo currency_input de insumos indica si pu_local o pu_usd se cargó originalmente. Sólo uno de los dos campos pu_local/pu_usd debe tener valor.");
-  addRow("Tipos enum", "project_type ∈ {costo, venta} · sector.type ∈ {fisico, funcional} · insumo.type ∈ {material, mano_de_obra, servicio} · proration_criteria ∈ {area, cantidad, manual} · number_format ∈ {es, en}.");
+  addRow("Tipos enum", "project_type ∈ {costo, venta} · sector.type ∈ {fisico, gastos_generales} · insumo.type ∈ {material, mano_de_obra, servicio} · proration_criteria ∈ {area, cantidad, manual} · number_format ∈ {es, en}.");
 
   addSection("CÓMO USARLO CON CLAUDE");
   addRow("Paso 1", "Descargá esta plantilla.");
@@ -1588,18 +1592,18 @@ async function generateImportTemplate() {
 
   addStandardSheet({
     name: "2.Sectores",
-    title: "2. SECTORES — divisiones físicas o funcionales del proyecto",
+    title: "2. SECTORES — divisiones del proyecto (físicas o gastos generales)",
     description: "Cada fila es un sector. El nombre se usa como referencia en 7.Cuantificacion.",
     columns: [
       { key: "order", label: "order", width: 10, hint: "Entero, orden de despliegue (1, 2, 3, …)", required: true },
       { key: "name", label: "name", width: 28, hint: "Nombre del sector", required: true },
-      { key: "type", label: "type", width: 14, hint: "fisico · funcional", required: true },
-      { key: "area_m2", label: "area_m2", width: 14, hint: "Decimal, área en m²" },
+      { key: "type", label: "type", width: 18, hint: "fisico · gastos_generales", required: true },
+      { key: "area_m2", label: "area_m2", width: 14, hint: "Decimal, área en m² (sólo para fisico)" },
     ],
     sampleRows: [
       [1, "Bloque A", "fisico", 320],
       [2, "Bloque B", "fisico", 280],
-      [3, "Áreas comunes", "funcional", 80],
+      [3, "Áreas comunes", "gastos_generales", ""],
     ],
   });
 
