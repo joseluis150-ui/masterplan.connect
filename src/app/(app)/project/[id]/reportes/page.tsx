@@ -490,20 +490,22 @@ function buildProcurementRollup(d: ReportData): Map<string, ProcurementRollup> {
     const insumo = insumoById.get(pl.insumo_id);
     const pkg = pkgById.get(pl.package_id);
     let quantity = Number(pl.quantity || 0);
-    let unitCost = Number(insumo?.pu_usd || 0);
+    const insumoPu = Number(insumo?.pu_usd || 0);
+    let unitCost = insumoPu;
 
     const comp = pl.composition_id ? compById.get(pl.composition_id) : null;
     if (comp && insumo) {
       const qlQty = artQty.get(comp.articulo_id) || 0;
       const compQty = Number(comp.quantity || 0);
       const waste = Number(comp.waste_pct || 0);
-      const margin = Number(comp.margin_pct || 0);
-      const insumoPu = Number(insumo.pu_usd || 0);
-      // Costo unitario = unidad de la articulo, no del insumo. Para la línea
-      // de paquetes mostramos esto como P.U. del insumo en el contexto del
-      // paquete (alineado con la lógica de flujo-tab).
-      unitCost = compQty * (1 + waste / 100) * insumoPu * (1 + margin / 100);
-      quantity = qlQty;
+      // Cantidad de INSUMO a comprar = comp.quantity × (1+waste) × qlQty.
+      // Ej: si comp dice "7 bolsas de cemento por m³ de hormigón con 8 % de
+      // desperdicio" y la cuantificación tiene 100 m³ de ese hormigón,
+      // necesitamos 7 × 1.08 × 100 = 756 bolsas.
+      // Margin no aplica acá: es markup para precio al cliente, no para
+      // procurement (paga el costo al proveedor sin marcado).
+      quantity = compQty * (1 + waste / 100) * qlQty;
+      unitCost = insumoPu; // P.U. siempre es el del insumo (por bolsa, kg, etc.)
     }
 
     const totalCost = unitCost * quantity;
