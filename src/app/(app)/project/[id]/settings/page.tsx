@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, useRef, use } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { CURRENCIES } from "@/lib/constants/units";
 import type { Project, Sector, SectorType, ExchangeRateVersion } from "@/lib/types/database";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, GripVertical, ShoppingCart } from "lucide-react";
+import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { setNumberLocale } from "@/lib/utils/number-format";
@@ -30,6 +30,8 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [tcVersions, setTcVersions] = useState<ExchangeRateVersion[]>([]);
   const [saving, setSaving] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
   const router = useRouter();
 
@@ -69,6 +71,42 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
       toast.error("Error al actualizar");
     }
     setSaving(false);
+  }
+
+  async function handleClientLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !project) return;
+
+    const allowed = ["image/svg+xml", "image/png", "image/jpeg", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      toast.error("Formato no soportado. Usá SVG, PNG, JPG o WebP.");
+      return;
+    }
+    const MAX_BYTES = 500 * 1024; // 500 KB en disco — el data URI base64 pesa ~33 % más
+    if (file.size > MAX_BYTES) {
+      toast.error(`El archivo supera ${Math.round(MAX_BYTES / 1024)} KB. Usá una versión más liviana.`);
+      return;
+    }
+
+    setUploadingLogo(true);
+    try {
+      const dataUri: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      await updateProject({ client_logo_data: dataUri });
+    } finally {
+      setUploadingLogo(false);
+    }
+  }
+
+  async function handleClientLogoRemove() {
+    if (!project) return;
+    if (!confirm("¿Quitar el logo del cliente del proyecto?")) return;
+    await updateProject({ client_logo_data: null });
   }
 
   async function addSector() {
@@ -204,6 +242,67 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
                 placeholder="Nombre del responsable"
               />
             </div>
+          </div>
+
+          {/* Logo del cliente */}
+          <div className="space-y-2 pt-2 border-t">
+            <Label>Logo del cliente <span className="text-xs font-normal text-muted-foreground">(opcional)</span></Label>
+            <p className="text-xs text-muted-foreground -mt-1">
+              Aparece en el encabezado de los reportes PDF junto al logo de MasterPlan. Si no hay logo cargado, el reporte sale sólo con el logo de MasterPlan.
+            </p>
+            <input
+              ref={logoFileInputRef}
+              type="file"
+              accept="image/svg+xml,image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={handleClientLogoUpload}
+            />
+            <div className="flex items-start gap-3 mt-1">
+              {project.client_logo_data ? (
+                <div className="border rounded-md p-3 bg-muted/30 flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={project.client_logo_data}
+                    alt="Logo del cliente"
+                    className="h-16 max-w-[180px] object-contain"
+                  />
+                  <div className="flex flex-col gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => logoFileInputRef.current?.click()}
+                      disabled={uploadingLogo}
+                    >
+                      <Upload className="h-3.5 w-3.5 mr-1.5" />
+                      Reemplazar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleClientLogoRemove}
+                      disabled={uploadingLogo}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                      Quitar
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  onClick={() => logoFileInputRef.current?.click()}
+                  disabled={uploadingLogo}
+                >
+                  {uploadingLogo
+                    ? <>Subiendo…</>
+                    : <><ImageIcon className="h-4 w-4 mr-2" /> Subir logo del cliente</>}
+                </Button>
+              )}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              SVG, PNG, JPG o WebP — hasta 500 KB. Se recomienda SVG o PNG con fondo transparente.
+            </p>
           </div>
         </CardContent>
       </Card>

@@ -34,6 +34,7 @@ export interface Project {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  client_logo_data: string | null;
 }
 
 export interface ProjectVersion {

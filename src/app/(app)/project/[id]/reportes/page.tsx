@@ -1209,6 +1209,11 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
     ? `<img src="${logoDataUri}" alt="MasterPlan Connect" class="brand-logo" />`
     : `<span class="brand-text">MasterPlan Connect</span>`;
 
+  // Logo del cliente (opcional, configurado en Settings)
+  const clientLogoBlock = d.project.client_logo_data
+    ? `<img src="${d.project.client_logo_data}" alt="${escHtml(d.project.client || "Cliente")}" class="client-logo" />`
+    : "";
+
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1238,10 +1243,17 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
     gap: 18px;
     border-bottom: 1px solid #0A0A0A;
     padding-bottom: 12px;
-    margin-bottom: 14px;
+    margin-bottom: 6px;
   }
+  .doc-header.with-client-logo { grid-template-columns: auto 1fr auto; }
   .doc-header .brand-logo { height: 30px; display: block; }
   .doc-header .brand-text { font-weight: 700; font-size: 13px; color: #0A0A0A; letter-spacing: -0.01em; }
+  .doc-header .client-logo {
+    height: 36px;
+    max-width: 180px;
+    object-fit: contain;
+    display: block;
+  }
   .doc-header .doc-title-block {
     text-align: center;
     border-left: 1px solid #E5E5E5;
@@ -1255,21 +1267,25 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
     letter-spacing: 0.08em;
     margin-bottom: 2px;
   }
-  .doc-header .meta {
-    text-align: right;
+  /* Meta-bar va debajo del header cuando hay logo del cliente, así no se
+     pelea por espacio horizontal con el logo en el lado derecho */
+  .doc-meta-bar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 18px;
+    padding: 4px 0;
+    margin-bottom: 12px;
     font-size: 9px;
     color: #737373;
-    line-height: 1.6;
+    border-bottom: 1px solid #E5E5E5;
   }
-  .doc-header .meta .meta-label {
+  .doc-meta-bar .meta-item .meta-label {
     text-transform: uppercase;
     font-size: 8px;
     color: #A3A3A3;
     letter-spacing: 0.06em;
     margin-right: 4px;
   }
-  .doc-header .meta-row { display: flex; gap: 12px; justify-content: flex-end; }
-  .doc-header .meta-row + .meta-row { margin-top: 1px; }
 
   /* ── Sección ── */
   .report-section { margin-top: 16px; }
@@ -1596,18 +1612,19 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
 </style>
 </head>
 <body>
-  <div class="doc-header">
+  <div class="doc-header${clientLogoBlock ? " with-client-logo" : ""}">
     <div class="brand">${logoBlock}</div>
     <div class="doc-title-block">
       <div class="label">Reporte de presupuesto</div>
       <h1>${escHtml(d.project.name)}</h1>
     </div>
-    <div class="meta">
-      <div class="meta-row"><span><span class="meta-label">TC</span>${formatNumber(tc, 0)} ${escHtml(d.project.local_currency || "")}</span></div>
-      <div class="meta-row"><span><span class="meta-label">Importes</span>${escHtml(cur)}</span></div>
-      ${totalAreaM2 > 0 ? `<div class="meta-row"><span><span class="meta-label">Área</span>${formatNumber(totalAreaM2, 0)} m²</span></div>` : ""}
-      <div class="meta-row"><span><span class="meta-label">Fecha</span>${escHtml(today)}</span></div>
-    </div>
+    <div class="brand-right">${clientLogoBlock || `<span class="brand-text" style="color:#A3A3A3">${escHtml(d.project.client || "")}</span>`}</div>
+  </div>
+  <div class="doc-meta-bar">
+    <span class="meta-item"><span class="meta-label">TC</span>${formatNumber(tc, 0)} ${escHtml(d.project.local_currency || "")}</span>
+    <span class="meta-item"><span class="meta-label">Importes</span>${escHtml(cur)}</span>
+    ${totalAreaM2 > 0 ? `<span class="meta-item"><span class="meta-label">Área</span>${formatNumber(totalAreaM2, 0)} m²</span>` : ""}
+    <span class="meta-item"><span class="meta-label">Fecha</span>${escHtml(today)}</span>
   </div>
   ${hierarchyHtml}
   ${compositionHtml}
