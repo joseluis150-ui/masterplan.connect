@@ -420,184 +420,88 @@ function escHtml(v: string | number | null | undefined): string {
   );
 }
 
-/* ─────────────────────── Excel ─────────────────────── */
+/* ─────────────────────── Excel (exceljs) ─────────────────────── */
 
-// xlsx-js-style es drop-in de xlsx pero con soporte de cell.s (estilos)
-type XlsxModule = typeof import("xlsx-js-style");
-type WS = ReturnType<XlsxModule["utils"]["book_new"]>["Sheets"][string];
-
+// ExcelJS usa ARGB (alfa por delante). Mantengo los seis dígitos brand
+// y los prefijo con FF (alfa 100 %).
 const COLOR = {
-  ink: "0A0A0A",
-  inkSoft: "404040",
-  ash: "737373",
-  ashLight: "A3A3A3",
-  grayLight: "F5F5F5",
-  grayFaint: "FAFAFA",
-  borderSoft: "D4D4D4",
-  borderFaint: "EFEFEF",
-  orangeSignal: "E87722",
+  ink: "FF0A0A0A",
+  inkSoft: "FF404040",
+  ash: "FF737373",
+  ashLight: "FFA3A3A3",
+  grayLight: "FFF5F5F5",
+  grayFaint: "FFFAFAFA",
+  borderSoft: "FFD4D4D4",
+  borderFaint: "FFEFEFEF",
+  orangeSignal: "FFE87722",
+  white: "FFFFFFFF",
 };
-
-function thinBorder(rgb: string) {
-  return {
-    top: { style: "thin", color: { rgb } },
-    right: { style: "thin", color: { rgb } },
-    bottom: { style: "thin", color: { rgb } },
-    left: { style: "thin", color: { rgb } },
-  };
-}
 
 const NUM_2D = "#,##0.00";
 const NUM_0 = "#,##0";
+const NUM_PCT = "0.0%";
 
-const STYLES = {
-  // Title row: black bg, white bold
-  title: {
-    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14, name: "Calibri" },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
-    alignment: { horizontal: "left", vertical: "center", indent: 1 },
-  },
-  subtitle: {
-    font: { italic: true, color: { rgb: COLOR.ash }, sz: 10 },
-    alignment: { horizontal: "left", vertical: "center", indent: 1 },
-  },
-  // Header row: black bg, white bold
-  header: {
-    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 10, name: "Calibri" },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
-    alignment: { horizontal: "center", vertical: "center", wrapText: true },
-    border: thinBorder(COLOR.ink),
-  },
-  // Category: light gray bg + orange accent on the FIRST column (left border)
-  catFirst: {
-    font: { bold: true, color: { rgb: COLOR.ink }, sz: 11 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayLight } },
-    alignment: { horizontal: "left", vertical: "center", indent: 1 },
-    border: {
-      top: { style: "thin", color: { rgb: COLOR.borderSoft } },
-      bottom: { style: "thin", color: { rgb: COLOR.borderSoft } },
-      left: { style: "medium", color: { rgb: COLOR.orangeSignal } },
-      right: { style: "thin", color: { rgb: COLOR.borderSoft } },
-    },
-  },
-  catLeft: {
-    font: { bold: true, color: { rgb: COLOR.ink }, sz: 11 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayLight } },
-    alignment: { horizontal: "left", vertical: "center", indent: 1 },
-    border: {
-      top: { style: "thin", color: { rgb: COLOR.borderSoft } },
-      bottom: { style: "thin", color: { rgb: COLOR.borderSoft } },
-      right: { style: "thin", color: { rgb: COLOR.borderSoft } },
-    },
-  },
-  catRight: {
-    font: { bold: true, color: { rgb: COLOR.ink }, sz: 11 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayLight } },
-    alignment: { horizontal: "right", vertical: "center" },
-    border: {
-      top: { style: "thin", color: { rgb: COLOR.borderSoft } },
-      bottom: { style: "thin", color: { rgb: COLOR.borderSoft } },
-      right: { style: "thin", color: { rgb: COLOR.borderSoft } },
-    },
-    numFmt: NUM_2D,
-  },
-  // Subcategory: white bg, semi-bold ink, subtle border
-  subLeft: {
-    font: { color: { rgb: COLOR.ink }, sz: 10, bold: true },
-    fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } },
-    alignment: { horizontal: "left", vertical: "center", indent: 2 },
-    border: thinBorder(COLOR.borderFaint),
-  },
-  subRight: {
-    font: { color: { rgb: COLOR.ink }, sz: 10, bold: true },
-    fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } },
-    alignment: { horizontal: "right", vertical: "center" },
-    border: thinBorder(COLOR.borderFaint),
-    numFmt: NUM_2D,
-  },
-  // Article: faint gray bg (visual depth), softer text, deeper indent
-  artLeft: {
-    font: { color: { rgb: COLOR.inkSoft }, sz: 10 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayFaint } },
-    alignment: { horizontal: "left", vertical: "center", indent: 3 },
-    border: thinBorder(COLOR.borderFaint),
-  },
-  artRight: {
-    font: { color: { rgb: COLOR.inkSoft }, sz: 10 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayFaint } },
-    alignment: { horizontal: "right", vertical: "center" },
-    border: thinBorder(COLOR.borderFaint),
-    numFmt: NUM_2D,
-  },
-  // Total: black bg, white text, orange amount
-  totalLeft: {
-    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 12 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
-    alignment: { horizontal: "left", vertical: "center", indent: 1 },
-    border: {
-      top: { style: "medium", color: { rgb: COLOR.ink } },
-      bottom: { style: "thin", color: { rgb: COLOR.ink } },
-      left: { style: "thin", color: { rgb: COLOR.ink } },
-      right: { style: "thin", color: { rgb: COLOR.ink } },
-    },
-  },
-  totalRight: {
-    font: { bold: true, color: { rgb: COLOR.orangeSignal }, sz: 13 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
-    alignment: { horizontal: "right", vertical: "center" },
-    border: {
-      top: { style: "medium", color: { rgb: COLOR.ink } },
-      bottom: { style: "thin", color: { rgb: COLOR.ink } },
-      left: { style: "thin", color: { rgb: COLOR.ink } },
-      right: { style: "thin", color: { rgb: COLOR.ink } },
-    },
-    numFmt: NUM_2D,
-  },
-  // Total cell with neutral alignment (not numeric, e.g., "TOTAL PRESUPUESTO" label)
-  totalRightLabel: {
-    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 12 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
-    alignment: { horizontal: "right", vertical: "center" },
-    border: {
-      top: { style: "medium", color: { rgb: COLOR.ink } },
-      bottom: { style: "thin", color: { rgb: COLOR.ink } },
-      left: { style: "thin", color: { rgb: COLOR.ink } },
-      right: { style: "thin", color: { rgb: COLOR.ink } },
-    },
-  },
-} as const;
+function thinBorder(argb: string) {
+  return {
+    top: { style: "thin" as const, color: { argb } },
+    right: { style: "thin" as const, color: { argb } },
+    bottom: { style: "thin" as const, color: { argb } },
+    left: { style: "thin" as const, color: { argb } },
+  };
+}
 
-type CellValue = string | number | null | undefined;
-type CellStyle = object | undefined;
-interface CellSpec { v: CellValue; s?: CellStyle; t?: "n" | "s"; }
-
-function setCell(XLSX: XlsxModule, ws: WS, row: number, col: number, spec: CellSpec | CellValue, style?: CellStyle) {
-  const ref = XLSX.utils.encode_cell({ r: row, c: col });
-  const value = typeof spec === "object" && spec !== null ? spec.v : spec;
-  const cellStyle = typeof spec === "object" && spec !== null && spec.s !== undefined ? spec.s : style;
-  let t: "n" | "s" = "s";
-  let v: string | number = "";
-  if (value === null || value === undefined || value === "") {
-    v = "";
-    t = "s";
-  } else if (typeof value === "number") {
-    v = value;
-    t = "n";
-  } else {
-    v = String(value);
-    t = "s";
+// Convierte un data URI o URL a un ArrayBuffer PNG usando canvas. Acepta
+// SVG/PNG/JPG/WebP — todo lo que el browser pueda renderizar como imagen.
+async function imageToPngBuffer(src: string, maxWidth = 600): Promise<ArrayBuffer | null> {
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("image load failed"));
+      img.src = src;
+    });
+    const canvas = document.createElement("canvas");
+    const intrinsicW = img.width || maxWidth;
+    const intrinsicH = img.height || Math.round(maxWidth * 0.3);
+    const aspect = intrinsicH / Math.max(intrinsicW, 1);
+    const w = Math.min(intrinsicW, maxWidth);
+    canvas.width = w;
+    canvas.height = Math.max(1, Math.round(w * aspect));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return await new Promise<ArrayBuffer>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) return reject(new Error("toBlob failed"));
+        blob.arrayBuffer().then(resolve).catch(reject);
+      }, "image/png");
+    });
+  } catch {
+    return null;
   }
-  ws[ref] = { v, t };
-  if (cellStyle) (ws[ref] as { s?: CellStyle }).s = cellStyle;
 }
 
-function setRange(XLSX: XlsxModule, ws: WS, lastRow: number, lastCol: number) {
-  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow, c: lastCol } });
+async function fetchSvgAsDataUri(url: string): Promise<string | null> {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const text = await resp.text();
+    return `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(text)))}`;
+  } catch {
+    return null;
+  }
 }
+
+type ExcelJSWorkbook = import("exceljs").Workbook;
+type ExcelJSWorksheet = import("exceljs").Worksheet;
+type ExcelJSAnchor = { col: number; row: number };
 
 async function generateExcel(d: ReportData, opts: ReportOptions) {
-  const XLSX = (await import("xlsx-js-style")) as unknown as XlsxModule;
-  const wb = XLSX.utils.book_new();
+  const ExcelJS = await import("exceljs");
+  const wb: ExcelJSWorkbook = new ExcelJS.Workbook();
+  wb.creator = "MasterPlan Connect";
+  wb.created = new Date();
+
   const cur = opts.showLocal ? d.project.local_currency : "USD";
   const tc = Number(d.project.exchange_rate || 1);
   const totalAreaM2 = d.sectors.reduce((s, sc) => s + Number(sc.area_m2 || 0), 0);
@@ -612,9 +516,21 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
     return Number(usd.toFixed(2));
   }
 
-  // Pre-compute totals por categoría/subcategoría
-  type SubAgg = { sub: EdtSubcategory; total: number; };
-  type CatAgg = { cat: EdtCategory; total: number; subs: SubAgg[]; };
+  // Logos: el de MasterPlan se baja del SVG público; el del cliente
+  // viene como data URI (cargado en Settings). Ambos se re-renderean a
+  // PNG via canvas porque exceljs no soporta SVG/WebP.
+  const mpSvgUri = await fetchSvgAsDataUri("/logo-horizontal.svg");
+  const mpPng = mpSvgUri ? await imageToPngBuffer(mpSvgUri, 600) : null;
+  const clientPng = d.project.client_logo_data
+    ? await imageToPngBuffer(d.project.client_logo_data, 400)
+    : null;
+
+  const mpImageId = mpPng ? wb.addImage({ buffer: mpPng, extension: "png" }) : null;
+  const clientImageId = clientPng ? wb.addImage({ buffer: clientPng, extension: "png" }) : null;
+
+  // Pre-cómputo de jerarquía
+  type SubAgg = { sub: EdtSubcategory; total: number };
+  type CatAgg = { cat: EdtCategory; total: number; subs: SubAgg[] };
   const catAggs: CatAgg[] = d.cats.map((cat) => {
     const subs: SubAgg[] = d.subs
       .filter((s) => s.category_id === cat.id)
@@ -629,99 +545,259 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
   });
   const grandTotal = catAggs.reduce((s, c) => s + c.total, 0);
 
-  // ────────────────── Hoja 1 — Resumen (Cat + Sub + Total + $/m²) ──────────────────
-  if (opts.includeHierarchy) {
-    const ws: WS = {};
-    let r = 0;
-    // Title
-    setCell(XLSX, ws, r, 0, `PRESUPUESTO RESUMEN — ${d.project.name}`, STYLES.title);
-    for (let c = 1; c <= 4; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
-    r++;
-    // Subtitle
-    const subtitleParts = [
-      totalAreaM2 > 0 ? `Área total: ${formatNumber(totalAreaM2, 0)} m²` : "Sin áreas cargadas",
-      `TC del proyecto: ${formatNumber(tc, 0)}`,
+  /* ── Estilos de celda reutilizables ── */
+  const S = {
+    title: {
+      font: { name: "Calibri", size: 16, bold: true, color: { argb: COLOR.white } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.ink } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "center" as const },
+    },
+    subtitle: {
+      font: { name: "Calibri", size: 10, italic: true, color: { argb: COLOR.ash } },
+      alignment: { vertical: "middle" as const, horizontal: "center" as const },
+    },
+    header: {
+      font: { name: "Calibri", size: 10, bold: true, color: { argb: COLOR.white } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.ink } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "center" as const, wrapText: true },
+      border: thinBorder(COLOR.ink),
+    },
+    catLeft: {
+      font: { name: "Calibri", size: 11, bold: true, color: { argb: COLOR.ink } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.grayLight } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "left" as const, indent: 1 },
+      border: {
+        top: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+        bottom: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+        right: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+      },
+    },
+    catFirst: {
+      font: { name: "Calibri", size: 11, bold: true, color: { argb: COLOR.ink } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.grayLight } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "left" as const, indent: 1 },
+      border: {
+        top: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+        bottom: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+        right: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+        left: { style: "medium" as const, color: { argb: COLOR.orangeSignal } },
+      },
+    },
+    catRight: {
+      font: { name: "Calibri", size: 11, bold: true, color: { argb: COLOR.ink } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.grayLight } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "right" as const },
+      border: {
+        top: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+        bottom: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+        right: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+      },
+      numFmt: NUM_2D,
+    },
+    subLeft: {
+      font: { name: "Calibri", size: 10, bold: true, color: { argb: COLOR.ink } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.white } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "left" as const, indent: 2 },
+      border: thinBorder(COLOR.borderFaint),
+    },
+    subRight: {
+      font: { name: "Calibri", size: 10, bold: true, color: { argb: COLOR.ink } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.white } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "right" as const },
+      border: thinBorder(COLOR.borderFaint),
+      numFmt: NUM_2D,
+    },
+    artLeft: {
+      font: { name: "Calibri", size: 10, color: { argb: COLOR.inkSoft } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.grayFaint } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "left" as const, indent: 3, wrapText: true },
+      border: thinBorder(COLOR.borderFaint),
+    },
+    artRight: {
+      font: { name: "Calibri", size: 10, color: { argb: COLOR.inkSoft } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.grayFaint } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "right" as const },
+      border: thinBorder(COLOR.borderFaint),
+      numFmt: NUM_2D,
+    },
+    totalLeft: {
+      font: { name: "Calibri", size: 12, bold: true, color: { argb: COLOR.white } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.ink } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "left" as const, indent: 1 },
+      border: thinBorder(COLOR.ink),
+    },
+    totalRight: {
+      font: { name: "Calibri", size: 13, bold: true, color: { argb: COLOR.orangeSignal } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.ink } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "right" as const },
+      border: thinBorder(COLOR.ink),
+      numFmt: NUM_2D,
+    },
+    totalRightLabel: {
+      font: { name: "Calibri", size: 12, bold: true, color: { argb: COLOR.white } },
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.ink } } as const,
+      alignment: { vertical: "middle" as const, horizontal: "right" as const },
+      border: thinBorder(COLOR.ink),
+    },
+  };
+
+  // Helper genérico para asignar valor + estilo a una celda
+  function setCell(ws: ExcelJSWorksheet, row: number, col: number, value: string | number | null, style: object) {
+    const cell = ws.getCell(row, col);
+    cell.value = value === null || value === undefined || value === "" ? null : value;
+    Object.assign(cell, style);
+  }
+
+  // Helper para banner: agrega logos + título + subtítulo en filas 1-3.
+  // Retorna la fila siguiente disponible (1-indexada).
+  function addBranding(
+    ws: ExcelJSWorksheet,
+    title: string,
+    subtitle: string,
+    lastCol: number
+  ): number {
+    // Fila 1: logos (con fila vacía detrás de las imágenes)
+    ws.getRow(1).height = 38;
+    if (mpImageId !== null) {
+      ws.addImage(mpImageId, {
+        tl: { col: 0.1, row: 0.15 } as ExcelJSAnchor,
+        ext: { width: 170, height: 42 },
+        editAs: "oneCell",
+      });
+    }
+    if (clientImageId !== null) {
+      const rightAnchor = Math.max(lastCol - 2, 2);
+      ws.addImage(clientImageId, {
+        tl: { col: rightAnchor + 0.2, row: 0.15 } as ExcelJSAnchor,
+        ext: { width: 140, height: 42 },
+        editAs: "oneCell",
+      });
+    }
+    // Borde inferior negro de toda la fila 1 → simula la línea bajo el header
+    for (let c = 1; c <= lastCol; c++) {
+      ws.getCell(1, c).border = { bottom: { style: "thin", color: { argb: COLOR.ink } } };
+    }
+
+    // Fila 2: título (merged)
+    ws.getRow(2).height = 28;
+    ws.mergeCells(2, 1, 2, lastCol);
+    setCell(ws, 2, 1, title, S.title);
+
+    // Fila 3: subtítulo (merged)
+    ws.getRow(3).height = 18;
+    ws.mergeCells(3, 1, 3, lastCol);
+    setCell(ws, 3, 1, subtitle, S.subtitle);
+
+    // Fila 4: spacing vacío
+    ws.getRow(4).height = 6;
+
+    return 5; // siguiente fila libre (1-indexed)
+  }
+
+  function metaText(): string {
+    const parts = [
+      `Cliente: ${d.project.client || "—"}`,
+      `TC: ${formatNumber(tc, 0)}${d.project.local_currency ? " " + d.project.local_currency : ""}`,
       `Importes en ${cur}`,
-      `Generado el ${new Date().toLocaleDateString(getNumberLocale(), { year: "numeric", month: "long", day: "numeric" })}`,
     ];
-    setCell(XLSX, ws, r, 0, subtitleParts.join(" · "), STYLES.subtitle);
-    for (let c = 1; c <= 4; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
+    if (totalAreaM2 > 0) parts.push(`Área ${formatNumber(totalAreaM2, 0)} m²`);
+    parts.push(`Generado el ${new Date().toLocaleDateString(getNumberLocale(), { year: "numeric", month: "long", day: "numeric" })}`);
+    return parts.join("  ·  ");
+  }
+
+  function applyHeader(ws: ExcelJSWorksheet, row: number, headers: string[]) {
+    for (let i = 0; i < headers.length; i++) setCell(ws, row, i + 1, headers[i], S.header);
+    ws.getRow(row).height = 24;
+  }
+
+  function freezeAfterHeader(ws: ExcelJSWorksheet, headerRow: number) {
+    ws.views = [{ state: "frozen", xSplit: 0, ySplit: headerRow }];
+  }
+
+  function setColWidths(ws: ExcelJSWorksheet, widths: number[]) {
+    for (let i = 0; i < widths.length; i++) ws.getColumn(i + 1).width = widths[i];
+  }
+
+  function setupPrint(ws: ExcelJSWorksheet, landscape = false) {
+    ws.pageSetup = {
+      paperSize: 9, // A4
+      orientation: landscape ? "landscape" : "portrait",
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      margins: { left: 0.4, right: 0.4, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 },
+      horizontalCentered: true,
+    };
+    ws.headerFooter = {
+      oddHeader: `&L&"Calibri,Italic"&9${d.project.name}&R&"Calibri,Italic"&9MasterPlan Connect`,
+      oddFooter: `&L&"Calibri,Italic"&9Importes en ${cur}&R&"Calibri,Italic"&9Página &P de &N`,
+    };
+  }
+
+  // ────────────────── Hoja 1 — Resumen ──────────────────
+  if (opts.includeHierarchy) {
+    const ws = wb.addWorksheet("Resumen");
+    const lastCol = 5;
+    setColWidths(ws, [16, 56, 18, 14, 16]);
+    let r = addBranding(ws, `PRESUPUESTO RESUMEN — ${d.project.name}`, metaText(), lastCol);
+    applyHeader(ws, r, ["Código", "Descripción", `Total (${cur})`, "% del total", `${cur}/m²`]);
+    const headerRow = r;
     r++;
-    // Empty
-    r++;
-    // Header
-    const headers = ["Código", "Descripción", `Total (${cur})`, "% del total", `${cur}/m²`];
-    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
-    r++;
-    // Rows
+
     for (const ca of catAggs) {
       const pct = grandTotal > 0 ? ca.total / grandTotal : 0;
       const perM2 = totalAreaM2 > 0 ? fm(ca.total) / totalAreaM2 : 0;
-      setCell(XLSX, ws, r, 0, ca.cat.code, STYLES.catFirst);
-      setCell(XLSX, ws, r, 1, ca.cat.name, STYLES.catLeft);
-      setCell(XLSX, ws, r, 2, fm(ca.total), STYLES.catRight);
-      setCell(XLSX, ws, r, 3, pct, { ...STYLES.catRight, numFmt: "0.0%" });
-      setCell(XLSX, ws, r, 4, perM2, STYLES.catRight);
+      setCell(ws, r, 1, ca.cat.code, S.catFirst);
+      setCell(ws, r, 2, ca.cat.name, S.catLeft);
+      setCell(ws, r, 3, fm(ca.total), S.catRight);
+      setCell(ws, r, 4, pct, { ...S.catRight, numFmt: NUM_PCT });
+      setCell(ws, r, 5, perM2, S.catRight);
       r++;
       for (const sa of ca.subs) {
         const subPct = grandTotal > 0 ? sa.total / grandTotal : 0;
         const subPerM2 = totalAreaM2 > 0 ? fm(sa.total) / totalAreaM2 : 0;
-        setCell(XLSX, ws, r, 0, sa.sub.code, STYLES.subLeft);
-        setCell(XLSX, ws, r, 1, sa.sub.name, STYLES.subLeft);
-        setCell(XLSX, ws, r, 2, fm(sa.total), STYLES.subRight);
-        setCell(XLSX, ws, r, 3, subPct, { ...STYLES.subRight, numFmt: "0.0%" });
-        setCell(XLSX, ws, r, 4, subPerM2, STYLES.subRight);
+        setCell(ws, r, 1, sa.sub.code, S.subLeft);
+        setCell(ws, r, 2, sa.sub.name, S.subLeft);
+        setCell(ws, r, 3, fm(sa.total), S.subRight);
+        setCell(ws, r, 4, subPct, { ...S.subRight, numFmt: NUM_PCT });
+        setCell(ws, r, 5, subPerM2, S.subRight);
         r++;
       }
     }
-    // Total row
-    setCell(XLSX, ws, r, 0, "", STYLES.totalLeft);
-    setCell(XLSX, ws, r, 1, "TOTAL PRESUPUESTO", STYLES.totalLeft);
-    setCell(XLSX, ws, r, 2, fm(grandTotal), STYLES.totalRight);
-    setCell(XLSX, ws, r, 3, 1, { ...STYLES.totalRight, numFmt: "0.0%" });
-    setCell(XLSX, ws, r, 4, totalAreaM2 > 0 ? fm(grandTotal) / totalAreaM2 : 0, STYLES.totalRight);
-    const lastRow = r;
-    setRange(XLSX, ws, lastRow, 4);
+    setCell(ws, r, 1, "", S.totalLeft);
+    setCell(ws, r, 2, "TOTAL PRESUPUESTO", S.totalLeft);
+    setCell(ws, r, 3, fm(grandTotal), S.totalRight);
+    setCell(ws, r, 4, 1, { ...S.totalRight, numFmt: NUM_PCT });
+    setCell(ws, r, 5, totalAreaM2 > 0 ? fm(grandTotal) / totalAreaM2 : 0, S.totalRight);
 
-    ws["!cols"] = [{ wch: 14 }, { wch: 60 }, { wch: 18 }, { wch: 14 }, { wch: 16 }];
-    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
-    ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
-    ];
-    ws["!freeze"] = { xSplit: 0, ySplit: 4 } as never;
-    XLSX.utils.book_append_sheet(wb, ws, "Resumen");
+    freezeAfterHeader(ws, headerRow);
+    setupPrint(ws, false);
   }
 
-  // ────────────────── Hoja 2 — Detalle (Cat + Sub + Artículos) ──────────────────
+  // ────────────────── Hoja 2 — Detalle ──────────────────
   if (opts.includeHierarchy) {
-    const ws: WS = {};
-    let r = 0;
-    setCell(XLSX, ws, r, 0, `PRESUPUESTO DETALLADO — ${d.project.name}`, STYLES.title);
-    for (let c = 1; c <= 5; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
-    r++;
-    setCell(XLSX, ws, r, 0, `TC: ${formatNumber(tc, 0)} · Importes en ${cur} · Generado el ${new Date().toLocaleDateString(getNumberLocale(), { year: "numeric", month: "long", day: "numeric" })}`, STYLES.subtitle);
-    for (let c = 1; c <= 5; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
-    r++;
-    r++;
-    const headers = ["Código", "Descripción", "Unidad", "Cantidad", `P.U. (${cur})`, `Total (${cur})`];
-    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
+    const ws = wb.addWorksheet("Detalle");
+    const lastCol = 6;
+    setColWidths(ws, [14, 50, 10, 14, 16, 18]);
+    let r = addBranding(ws, `PRESUPUESTO DETALLADO — ${d.project.name}`, metaText(), lastCol);
+    applyHeader(ws, r, ["Código", "Descripción", "Unidad", "Cantidad", `P.U. (${cur})`, `Total (${cur})`]);
+    const headerRow = r;
     r++;
     for (const ca of catAggs) {
-      setCell(XLSX, ws, r, 0, ca.cat.code, STYLES.catFirst);
-      setCell(XLSX, ws, r, 1, ca.cat.name, STYLES.catLeft);
-      setCell(XLSX, ws, r, 2, "", STYLES.catLeft);
-      setCell(XLSX, ws, r, 3, "", STYLES.catRight);
-      setCell(XLSX, ws, r, 4, "", STYLES.catRight);
-      setCell(XLSX, ws, r, 5, fm(ca.total), STYLES.catRight);
+      setCell(ws, r, 1, ca.cat.code, S.catFirst);
+      setCell(ws, r, 2, ca.cat.name, S.catLeft);
+      setCell(ws, r, 3, "", S.catLeft);
+      setCell(ws, r, 4, "", S.catRight);
+      setCell(ws, r, 5, "", S.catRight);
+      setCell(ws, r, 6, fm(ca.total), S.catRight);
       r++;
       for (const sa of ca.subs) {
-        setCell(XLSX, ws, r, 0, sa.sub.code, STYLES.subLeft);
-        setCell(XLSX, ws, r, 1, sa.sub.name, STYLES.subLeft);
-        setCell(XLSX, ws, r, 2, "", STYLES.subLeft);
-        setCell(XLSX, ws, r, 3, "", STYLES.subRight);
-        setCell(XLSX, ws, r, 4, "", STYLES.subRight);
-        setCell(XLSX, ws, r, 5, fm(sa.total), STYLES.subRight);
+        setCell(ws, r, 1, sa.sub.code, S.subLeft);
+        setCell(ws, r, 2, sa.sub.name, S.subLeft);
+        setCell(ws, r, 3, "", S.subLeft);
+        setCell(ws, r, 4, "", S.subRight);
+        setCell(ws, r, 5, "", S.subRight);
+        setCell(ws, r, 6, fm(sa.total), S.subRight);
         r++;
         const arts = subArtMap.get(sa.sub.id);
         if (!arts) continue;
@@ -731,127 +807,97 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
           .sort((a, b) => (a.art!.number || 0) - (b.art!.number || 0));
         for (const { art, qty } of sorted) {
           const pu = d.articuloCosts.get(art!.id) || 0;
-          setCell(XLSX, ws, r, 0, String(art!.number), STYLES.artLeft);
-          setCell(XLSX, ws, r, 1, art!.description, STYLES.artLeft);
-          setCell(XLSX, ws, r, 2, art!.unit, STYLES.artLeft);
-          setCell(XLSX, ws, r, 3, Number(qty.toFixed(4)), { ...STYLES.artRight, numFmt: "#,##0.0000" });
-          setCell(XLSX, ws, r, 4, fm(pu), STYLES.artRight);
-          setCell(XLSX, ws, r, 5, fm(pu * qty), STYLES.artRight);
+          setCell(ws, r, 1, String(art!.number), S.artLeft);
+          setCell(ws, r, 2, art!.description, S.artLeft);
+          setCell(ws, r, 3, art!.unit, S.artLeft);
+          setCell(ws, r, 4, Number(qty.toFixed(2)), { ...S.artRight, numFmt: NUM_2D });
+          setCell(ws, r, 5, fm(pu), S.artRight);
+          setCell(ws, r, 6, fm(pu * qty), S.artRight);
           r++;
         }
       }
     }
-    setCell(XLSX, ws, r, 0, "", STYLES.totalLeft);
-    setCell(XLSX, ws, r, 1, "TOTAL PRESUPUESTO", STYLES.totalLeft);
-    setCell(XLSX, ws, r, 2, "", STYLES.totalLeft);
-    setCell(XLSX, ws, r, 3, "", STYLES.totalRight);
-    setCell(XLSX, ws, r, 4, "", STYLES.totalRight);
-    setCell(XLSX, ws, r, 5, fm(grandTotal), STYLES.totalRight);
-    setRange(XLSX, ws, r, 5);
-    ws["!cols"] = [{ wch: 14 }, { wch: 56 }, { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 18 }];
-    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
-    ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
-    ];
-    ws["!freeze"] = { xSplit: 0, ySplit: 4 } as never;
-    XLSX.utils.book_append_sheet(wb, ws, "Detalle");
+    setCell(ws, r, 1, "", S.totalLeft);
+    setCell(ws, r, 2, "TOTAL PRESUPUESTO", S.totalLeft);
+    setCell(ws, r, 3, "", S.totalLeft);
+    setCell(ws, r, 4, "", S.totalRightLabel);
+    setCell(ws, r, 5, "", S.totalRightLabel);
+    setCell(ws, r, 6, fm(grandTotal), S.totalRight);
+
+    freezeAfterHeader(ws, headerRow);
+    setupPrint(ws, false);
   }
 
-  // ────────────────── Hoja — Composición de artículos × insumos ──────────────────
+  // ────────────────── Hoja 3 — Composición (APU) ──────────────────
   if (opts.includeComposition) {
-    const ws: WS = {};
-    let r = 0;
-    setCell(XLSX, ws, r, 0, "COMPOSICIÓN DE ARTÍCULOS (APU)", STYLES.title);
-    for (let c = 1; c <= 8; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
-    r++;
-    setCell(XLSX, ws, r, 0, `Importes en ${cur}`, STYLES.subtitle);
-    for (let c = 1; c <= 8; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
-    r++;
-    r++;
-    const headers = ["Código", "Descripción", "Unidad", "Cantidad", "Desperdicio %", "Margen %", `P.U. (${cur})`, `Subtotal (${cur})`];
-    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
+    const ws = wb.addWorksheet("Composición");
+    const lastCol = 8;
+    setColWidths(ws, [12, 44, 10, 12, 12, 12, 14, 16]);
+    let r = addBranding(ws, "COMPOSICIÓN DE ARTÍCULOS (APU)", metaText(), lastCol);
+    applyHeader(ws, r, ["Código", "Descripción", "Unidad", "Cantidad", "Desperdicio %", "Margen %", `P.U. (${cur})`, `Subtotal (${cur})`]);
+    const headerRow = r;
     r++;
     const sortedArts = [...d.articulos].sort((a, b) => (a.number || 0) - (b.number || 0));
     for (const art of sortedArts) {
       const artComps = d.comps.filter((c) => c.articulo_id === art.id);
       const puArt = d.articuloCosts.get(art.id) || 0;
-      setCell(XLSX, ws, r, 0, String(art.number), STYLES.catFirst);
-      setCell(XLSX, ws, r, 1, art.description, STYLES.catLeft);
-      setCell(XLSX, ws, r, 2, art.unit, STYLES.catLeft);
-      for (let c = 3; c <= 6; c++) setCell(XLSX, ws, r, c, "", STYLES.catRight);
-      setCell(XLSX, ws, r, 7, fm(puArt), STYLES.catRight);
+      setCell(ws, r, 1, String(art.number), S.catFirst);
+      setCell(ws, r, 2, art.description, S.catLeft);
+      setCell(ws, r, 3, art.unit, S.catLeft);
+      for (let c = 4; c <= 7; c++) setCell(ws, r, c, "", S.catRight);
+      setCell(ws, r, 8, fm(puArt), S.catRight);
       r++;
       for (const c of artComps) {
         const insumo = insumoById.get(c.insumo_id);
         const insumoPuUsd = Number(insumo?.pu_usd || 0);
         const lineSubtotal = Number(c.quantity || 0) * (1 + Number(c.waste_pct || 0) / 100) * insumoPuUsd * (1 + Number(c.margin_pct || 0) / 100);
-        setCell(XLSX, ws, r, 0, insumo?.code != null ? String(insumo.code) : "", STYLES.artLeft);
-        setCell(XLSX, ws, r, 1, insumo?.description || "(insumo no encontrado)", STYLES.artLeft);
-        setCell(XLSX, ws, r, 2, insumo?.unit || "", STYLES.artLeft);
-        setCell(XLSX, ws, r, 3, Number(Number(c.quantity || 0).toFixed(4)), { ...STYLES.artRight, numFmt: "#,##0.0000" });
-        setCell(XLSX, ws, r, 4, Number(c.waste_pct || 0), { ...STYLES.artRight, numFmt: "0.0\"%\"" });
-        setCell(XLSX, ws, r, 5, Number(c.margin_pct || 0), { ...STYLES.artRight, numFmt: "0.0\"%\"" });
-        setCell(XLSX, ws, r, 6, fm(insumoPuUsd), STYLES.artRight);
-        setCell(XLSX, ws, r, 7, fm(lineSubtotal), STYLES.artRight);
+        setCell(ws, r, 1, insumo?.code != null ? String(insumo.code) : "", S.artLeft);
+        setCell(ws, r, 2, insumo?.description || "(insumo no encontrado)", S.artLeft);
+        setCell(ws, r, 3, insumo?.unit || "", S.artLeft);
+        setCell(ws, r, 4, Number(Number(c.quantity || 0).toFixed(2)), { ...S.artRight, numFmt: NUM_2D });
+        setCell(ws, r, 5, Number(c.waste_pct || 0) / 100, { ...S.artRight, numFmt: NUM_PCT });
+        setCell(ws, r, 6, Number(c.margin_pct || 0) / 100, { ...S.artRight, numFmt: NUM_PCT });
+        setCell(ws, r, 7, fm(insumoPuUsd), S.artRight);
+        setCell(ws, r, 8, fm(lineSubtotal), S.artRight);
         r++;
       }
     }
-    setRange(XLSX, ws, r - 1, 7);
-    ws["!cols"] = [{ wch: 12 }, { wch: 50 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 16 }];
-    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
-    ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
-    ];
-    ws["!freeze"] = { xSplit: 0, ySplit: 4 } as never;
-    XLSX.utils.book_append_sheet(wb, ws, "Composición");
+    freezeAfterHeader(ws, headerRow);
+    setupPrint(ws, true);
   }
 
-  // ────────────────── Hoja — Paquetes (opcional) ──────────────────
+  // ────────────────── Hoja 4 — Paquetes (opcional) ──────────────────
   if (opts.includePackages && d.packages.length > 0) {
-    const ws: WS = {};
-    let r = 0;
-    setCell(XLSX, ws, r, 0, "PAQUETES DE CONTRATACIÓN", STYLES.title);
-    for (let c = 1; c <= 8; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
-    r++;
-    setCell(XLSX, ws, r, 0, `${d.packages.length} paquete${d.packages.length === 1 ? "" : "s"} en el proyecto`, STYLES.subtitle);
-    for (let c = 1; c <= 8; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
-    r++;
-    r++;
-    const headers = ["Paquete", "Tipo compra", "Estado", "Días anticipo", "Insumo", "Unidad", "Cantidad", "Fecha necesidad"];
-    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
+    const ws = wb.addWorksheet("Paquetes");
+    const lastCol = 9;
+    setColWidths(ws, [26, 14, 14, 14, 12, 36, 10, 14, 14]);
+    let r = addBranding(ws, "PAQUETES DE CONTRATACIÓN", metaText(), lastCol);
+    applyHeader(ws, r, ["Paquete", "Tipo compra", "Estado", "Días anticipo", "—", "Insumo", "Unidad", "Cantidad", "Fecha necesidad"]);
+    const headerRow = r;
     r++;
     for (const pkg of d.packages) {
-      setCell(XLSX, ws, r, 0, pkg.name, STYLES.catFirst);
-      setCell(XLSX, ws, r, 1, pkg.purchase_type, STYLES.catLeft);
-      setCell(XLSX, ws, r, 2, pkg.status, STYLES.catLeft);
-      setCell(XLSX, ws, r, 3, Number(pkg.advance_days || 0), { ...STYLES.catRight, numFmt: NUM_0 });
-      for (let c = 4; c <= 7; c++) setCell(XLSX, ws, r, c, "", STYLES.catLeft);
+      setCell(ws, r, 1, pkg.name, S.catFirst);
+      setCell(ws, r, 2, pkg.purchase_type, S.catLeft);
+      setCell(ws, r, 3, pkg.status, S.catLeft);
+      setCell(ws, r, 4, Number(pkg.advance_days || 0), { ...S.catRight, numFmt: NUM_0 });
+      for (let c = 5; c <= 9; c++) setCell(ws, r, c, "", S.catLeft);
       r++;
       const lines = d.procLines.filter((l) => l.package_id === pkg.id);
       for (const l of lines) {
         const ins = insumoById.get(l.insumo_id);
-        for (let c = 0; c <= 3; c++) setCell(XLSX, ws, r, c, "", STYLES.artLeft);
-        setCell(XLSX, ws, r, 4, ins?.description || "(no encontrado)", STYLES.artLeft);
-        setCell(XLSX, ws, r, 5, ins?.unit || "", STYLES.artLeft);
-        setCell(XLSX, ws, r, 6, Number(Number(l.quantity || 0).toFixed(4)), { ...STYLES.artRight, numFmt: "#,##0.0000" });
-        setCell(XLSX, ws, r, 7, l.need_date || "", STYLES.artLeft);
+        for (let c = 1; c <= 5; c++) setCell(ws, r, c, "", S.artLeft);
+        setCell(ws, r, 6, ins?.description || "(no encontrado)", S.artLeft);
+        setCell(ws, r, 7, ins?.unit || "", S.artLeft);
+        setCell(ws, r, 8, Number(Number(l.quantity || 0).toFixed(2)), { ...S.artRight, numFmt: NUM_2D });
+        setCell(ws, r, 9, l.need_date || "", S.artLeft);
         r++;
       }
     }
-    setRange(XLSX, ws, r - 1, 7);
-    ws["!cols"] = [{ wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 40 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
-    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
-    ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
-    ];
-    ws["!freeze"] = { xSplit: 0, ySplit: 4 } as never;
-    XLSX.utils.book_append_sheet(wb, ws, "Paquetes");
+    freezeAfterHeader(ws, headerRow);
+    setupPrint(ws, true);
   }
 
-  // ────────────────── Hoja — Cronograma (opcional) ──────────────────
+  // ────────────────── Hoja 5 — Cronograma (opcional) ──────────────────
   if (opts.includeSchedule && d.schedConfig && d.schedWeeks.length > 0) {
     const weeksByLine = new Map<string, Set<number>>();
     let maxWeek = 0;
@@ -862,58 +908,53 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
       weeksByLine.set(w.quantification_line_id, set);
       if (w.week_number > maxWeek) maxWeek = w.week_number;
     }
-    const ws: WS = {};
-    let r = 0;
-    const totalCols = 5 + (maxWeek + 1);
-    setCell(XLSX, ws, r, 0, "CRONOGRAMA", STYLES.title);
-    for (let c = 1; c < totalCols; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
-    r++;
-    setCell(XLSX, ws, r, 0, `Inicio: ${d.schedConfig.start_date} · Duración: ${maxWeek + 1} semanas`, STYLES.subtitle);
-    for (let c = 1; c < totalCols; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
-    r++;
-    r++;
+    const ws = wb.addWorksheet("Cronograma");
+    const lastCol = 5 + (maxWeek + 1);
+    const widths = [28, 12, 36, 12, 8];
+    for (let i = 0; i <= maxWeek; i++) widths.push(4);
+    setColWidths(ws, widths);
+    let r = addBranding(
+      ws,
+      "CRONOGRAMA",
+      `Inicio: ${d.schedConfig.start_date}  ·  Duración: ${maxWeek + 1} semanas  ·  ${d.qLines.length} líneas`,
+      lastCol
+    );
     const headers = ["EDT", "Sector", "Artículo", "Cantidad", "Unidad", ...Array.from({ length: maxWeek + 1 }, (_, i) => `S${i}`)];
-    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
+    applyHeader(ws, r, headers);
+    const headerRow = r;
     r++;
     for (const ql of d.qLines) {
       const sub = subById.get(ql.subcategory_id);
       const sector = sectorById.get(ql.sector_id);
       const art = ql.articulo_id ? artById.get(ql.articulo_id) : null;
-      setCell(XLSX, ws, r, 0, sub ? `${sub.code} ${sub.name}` : "", STYLES.artLeft);
-      setCell(XLSX, ws, r, 1, sector?.name || "", STYLES.artLeft);
-      setCell(XLSX, ws, r, 2, art ? `${art.number} ${art.description}` : "(sin artículo)", STYLES.artLeft);
-      setCell(XLSX, ws, r, 3, Number(Number(ql.quantity || 0).toFixed(4)), { ...STYLES.artRight, numFmt: "#,##0.0000" });
-      setCell(XLSX, ws, r, 4, art?.unit || "", STYLES.artLeft);
+      setCell(ws, r, 1, sub ? `${sub.code} ${sub.name}` : "", S.artLeft);
+      setCell(ws, r, 2, sector?.name || "", S.artLeft);
+      setCell(ws, r, 3, art ? `${art.number} ${art.description}` : "(sin artículo)", S.artLeft);
+      setCell(ws, r, 4, Number(Number(ql.quantity || 0).toFixed(2)), { ...S.artRight, numFmt: NUM_2D });
+      setCell(ws, r, 5, art?.unit || "", S.artLeft);
       const weeks = weeksByLine.get(ql.id) || new Set();
       for (let w = 0; w <= maxWeek; w++) {
         const on = weeks.has(w);
-        setCell(XLSX, ws, r, 5 + w, on ? "●" : "", on ? {
-          font: { color: { rgb: COLOR.orangeSignal }, bold: true, sz: 11 },
-          alignment: { horizontal: "center", vertical: "center" },
-          border: thinBorder(COLOR.borderFaint),
-        } : {
-          alignment: { horizontal: "center", vertical: "center" },
-          border: thinBorder(COLOR.borderFaint),
-        });
+        setCell(ws, r, 6 + w, on ? "●" : "", on
+          ? {
+              font: { name: "Calibri", size: 11, bold: true, color: { argb: COLOR.orangeSignal } },
+              alignment: { vertical: "middle", horizontal: "center" },
+              border: thinBorder(COLOR.borderFaint),
+            }
+          : {
+              alignment: { vertical: "middle", horizontal: "center" },
+              border: thinBorder(COLOR.borderFaint),
+            });
       }
       r++;
     }
-    setRange(XLSX, ws, r - 1, totalCols - 1);
-    ws["!cols"] = [
-      { wch: 28 }, { wch: 12 }, { wch: 36 }, { wch: 12 }, { wch: 8 },
-      ...Array.from({ length: maxWeek + 1 }, () => ({ wch: 4 })),
-    ];
-    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
-    ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } },
-    ];
-    ws["!freeze"] = { xSplit: 5, ySplit: 4 } as never;
-    XLSX.utils.book_append_sheet(wb, ws, "Cronograma");
+    freezeAfterHeader(ws, headerRow);
+    setupPrint(ws, true);
   }
 
-  if (wb.SheetNames.length === 0) throw new Error("Ninguna hoja generada");
-  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  if (wb.worksheets.length === 0) throw new Error("Ninguna hoja generada");
+
+  const buf = await wb.xlsx.writeBuffer();
   const date = new Date().toISOString().slice(0, 10);
   const safeName = d.project.name.replace(/[^a-zA-Z0-9_-]+/g, "_");
   downloadBlob(buf as ArrayBuffer, `presupuesto_${safeName}_${date}.xlsx`);
