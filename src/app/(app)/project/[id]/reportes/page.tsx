@@ -178,7 +178,7 @@ export default function ReportesPage({ params }: { params: Promise<{ id: string 
         await generateExcel(data, options);
         toast.success("Excel generado");
       } else {
-        generatePdf(data, options);
+        await generatePdf(data, options);
         toast.success("Reporte abierto para imprimir/guardar como PDF");
       }
     } catch (err) {
@@ -427,14 +427,15 @@ type XlsxModule = typeof import("xlsx-js-style");
 type WS = ReturnType<XlsxModule["utils"]["book_new"]>["Sheets"][string];
 
 const COLOR = {
-  amberSignal: "E87722",
-  amberDeep: "B85A0F",
-  amberLight: "FCE8D6",
-  amberFaint: "FFF7ED",
   ink: "0A0A0A",
+  inkSoft: "404040",
   ash: "737373",
-  borderSoft: "E5E5E5",
+  ashLight: "A3A3A3",
+  grayLight: "F5F5F5",
+  grayFaint: "FAFAFA",
+  borderSoft: "D4D4D4",
   borderFaint: "EFEFEF",
+  orangeSignal: "E87722",
 };
 
 function thinBorder(rgb: string) {
@@ -450,80 +451,119 @@ const NUM_2D = "#,##0.00";
 const NUM_0 = "#,##0";
 
 const STYLES = {
+  // Title row: black bg, white bold
   title: {
     font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14, name: "Calibri" },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberSignal } },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
     alignment: { horizontal: "left", vertical: "center", indent: 1 },
   },
   subtitle: {
     font: { italic: true, color: { rgb: COLOR.ash }, sz: 10 },
     alignment: { horizontal: "left", vertical: "center", indent: 1 },
   },
+  // Header row: black bg, white bold
   header: {
     font: { bold: true, color: { rgb: "FFFFFF" }, sz: 10, name: "Calibri" },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberDeep } },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
     alignment: { horizontal: "center", vertical: "center", wrapText: true },
-    border: thinBorder(COLOR.amberDeep),
+    border: thinBorder(COLOR.ink),
+  },
+  // Category: light gray bg + orange accent on the FIRST column (left border)
+  catFirst: {
+    font: { bold: true, color: { rgb: COLOR.ink }, sz: 11 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayLight } },
+    alignment: { horizontal: "left", vertical: "center", indent: 1 },
+    border: {
+      top: { style: "thin", color: { rgb: COLOR.borderSoft } },
+      bottom: { style: "thin", color: { rgb: COLOR.borderSoft } },
+      left: { style: "medium", color: { rgb: COLOR.orangeSignal } },
+      right: { style: "thin", color: { rgb: COLOR.borderSoft } },
+    },
   },
   catLeft: {
     font: { bold: true, color: { rgb: COLOR.ink }, sz: 11 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberLight } },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayLight } },
     alignment: { horizontal: "left", vertical: "center", indent: 1 },
-    border: thinBorder(COLOR.amberSignal),
+    border: {
+      top: { style: "thin", color: { rgb: COLOR.borderSoft } },
+      bottom: { style: "thin", color: { rgb: COLOR.borderSoft } },
+      right: { style: "thin", color: { rgb: COLOR.borderSoft } },
+    },
   },
   catRight: {
     font: { bold: true, color: { rgb: COLOR.ink }, sz: 11 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberLight } },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayLight } },
     alignment: { horizontal: "right", vertical: "center" },
-    border: thinBorder(COLOR.amberSignal),
+    border: {
+      top: { style: "thin", color: { rgb: COLOR.borderSoft } },
+      bottom: { style: "thin", color: { rgb: COLOR.borderSoft } },
+      right: { style: "thin", color: { rgb: COLOR.borderSoft } },
+    },
     numFmt: NUM_2D,
   },
+  // Subcategory: white bg, semi-bold ink, subtle border
   subLeft: {
-    font: { color: { rgb: COLOR.ink }, sz: 10 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberFaint } },
+    font: { color: { rgb: COLOR.ink }, sz: 10, bold: true },
+    fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } },
     alignment: { horizontal: "left", vertical: "center", indent: 2 },
-    border: thinBorder(COLOR.borderSoft),
+    border: thinBorder(COLOR.borderFaint),
   },
   subRight: {
-    font: { color: { rgb: COLOR.ink }, sz: 10 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberFaint } },
+    font: { color: { rgb: COLOR.ink }, sz: 10, bold: true },
+    fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } },
     alignment: { horizontal: "right", vertical: "center" },
-    border: thinBorder(COLOR.borderSoft),
+    border: thinBorder(COLOR.borderFaint),
     numFmt: NUM_2D,
   },
+  // Article: faint gray bg (visual depth), softer text, deeper indent
   artLeft: {
-    font: { color: { rgb: "404040" }, sz: 10 },
+    font: { color: { rgb: COLOR.inkSoft }, sz: 10 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayFaint } },
     alignment: { horizontal: "left", vertical: "center", indent: 3 },
     border: thinBorder(COLOR.borderFaint),
   },
   artRight: {
-    font: { color: { rgb: "404040" }, sz: 10 },
+    font: { color: { rgb: COLOR.inkSoft }, sz: 10 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.grayFaint } },
     alignment: { horizontal: "right", vertical: "center" },
     border: thinBorder(COLOR.borderFaint),
     numFmt: NUM_2D,
   },
+  // Total: black bg, white text, orange amount
   totalLeft: {
-    font: { bold: true, color: { rgb: COLOR.ink }, sz: 12 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberLight } },
+    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 12 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
     alignment: { horizontal: "left", vertical: "center", indent: 1 },
     border: {
-      top: { style: "double", color: { rgb: COLOR.amberSignal } },
-      bottom: { style: "thin", color: { rgb: COLOR.amberSignal } },
-      left: { style: "thin", color: { rgb: COLOR.amberSignal } },
-      right: { style: "thin", color: { rgb: COLOR.amberSignal } },
+      top: { style: "medium", color: { rgb: COLOR.ink } },
+      bottom: { style: "thin", color: { rgb: COLOR.ink } },
+      left: { style: "thin", color: { rgb: COLOR.ink } },
+      right: { style: "thin", color: { rgb: COLOR.ink } },
     },
   },
   totalRight: {
-    font: { bold: true, color: { rgb: COLOR.ink }, sz: 12 },
-    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberLight } },
+    font: { bold: true, color: { rgb: COLOR.orangeSignal }, sz: 13 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
     alignment: { horizontal: "right", vertical: "center" },
     border: {
-      top: { style: "double", color: { rgb: COLOR.amberSignal } },
-      bottom: { style: "thin", color: { rgb: COLOR.amberSignal } },
-      left: { style: "thin", color: { rgb: COLOR.amberSignal } },
-      right: { style: "thin", color: { rgb: COLOR.amberSignal } },
+      top: { style: "medium", color: { rgb: COLOR.ink } },
+      bottom: { style: "thin", color: { rgb: COLOR.ink } },
+      left: { style: "thin", color: { rgb: COLOR.ink } },
+      right: { style: "thin", color: { rgb: COLOR.ink } },
     },
     numFmt: NUM_2D,
+  },
+  // Total cell with neutral alignment (not numeric, e.g., "TOTAL PRESUPUESTO" label)
+  totalRightLabel: {
+    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 12 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.ink } },
+    alignment: { horizontal: "right", vertical: "center" },
+    border: {
+      top: { style: "medium", color: { rgb: COLOR.ink } },
+      bottom: { style: "thin", color: { rgb: COLOR.ink } },
+      left: { style: "thin", color: { rgb: COLOR.ink } },
+      right: { style: "thin", color: { rgb: COLOR.ink } },
+    },
   },
 } as const;
 
@@ -617,7 +657,7 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
     for (const ca of catAggs) {
       const pct = grandTotal > 0 ? ca.total / grandTotal : 0;
       const perM2 = totalAreaM2 > 0 ? fm(ca.total) / totalAreaM2 : 0;
-      setCell(XLSX, ws, r, 0, ca.cat.code, STYLES.catLeft);
+      setCell(XLSX, ws, r, 0, ca.cat.code, STYLES.catFirst);
       setCell(XLSX, ws, r, 1, ca.cat.name, STYLES.catLeft);
       setCell(XLSX, ws, r, 2, fm(ca.total), STYLES.catRight);
       setCell(XLSX, ws, r, 3, pct, { ...STYLES.catRight, numFmt: "0.0%" });
@@ -668,7 +708,7 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
     for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
     r++;
     for (const ca of catAggs) {
-      setCell(XLSX, ws, r, 0, ca.cat.code, STYLES.catLeft);
+      setCell(XLSX, ws, r, 0, ca.cat.code, STYLES.catFirst);
       setCell(XLSX, ws, r, 1, ca.cat.name, STYLES.catLeft);
       setCell(XLSX, ws, r, 2, "", STYLES.catLeft);
       setCell(XLSX, ws, r, 3, "", STYLES.catRight);
@@ -736,7 +776,7 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
     for (const art of sortedArts) {
       const artComps = d.comps.filter((c) => c.articulo_id === art.id);
       const puArt = d.articuloCosts.get(art.id) || 0;
-      setCell(XLSX, ws, r, 0, String(art.number), STYLES.catLeft);
+      setCell(XLSX, ws, r, 0, String(art.number), STYLES.catFirst);
       setCell(XLSX, ws, r, 1, art.description, STYLES.catLeft);
       setCell(XLSX, ws, r, 2, art.unit, STYLES.catLeft);
       for (let c = 3; c <= 6; c++) setCell(XLSX, ws, r, c, "", STYLES.catRight);
@@ -783,7 +823,7 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
     for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
     r++;
     for (const pkg of d.packages) {
-      setCell(XLSX, ws, r, 0, pkg.name, STYLES.catLeft);
+      setCell(XLSX, ws, r, 0, pkg.name, STYLES.catFirst);
       setCell(XLSX, ws, r, 1, pkg.purchase_type, STYLES.catLeft);
       setCell(XLSX, ws, r, 2, pkg.status, STYLES.catLeft);
       setCell(XLSX, ws, r, 3, Number(pkg.advance_days || 0), { ...STYLES.catRight, numFmt: NUM_0 });
@@ -848,7 +888,7 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
       for (let w = 0; w <= maxWeek; w++) {
         const on = weeks.has(w);
         setCell(XLSX, ws, r, 5 + w, on ? "●" : "", on ? {
-          font: { color: { rgb: COLOR.amberSignal }, bold: true, sz: 11 },
+          font: { color: { rgb: COLOR.orangeSignal }, bold: true, sz: 11 },
           alignment: { horizontal: "center", vertical: "center" },
           border: thinBorder(COLOR.borderFaint),
         } : {
@@ -881,8 +921,20 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
 
 /* ─────────────────────── PDF (HTML print) ─────────────────────── */
 
-function generatePdf(d: ReportData, opts: ReportOptions) {
-  const html = buildReportHtml(d, opts);
+async function generatePdf(d: ReportData, opts: ReportOptions) {
+  // Embeber el logo como data-URI para que sobreviva al window.open
+  // (los paths a /public no se resuelven igual en una ventana abierta).
+  let logoDataUri: string | null = null;
+  try {
+    const logoResp = await fetch("/logo-horizontal.svg");
+    if (logoResp.ok) {
+      const logoSvg = await logoResp.text();
+      logoDataUri = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(logoSvg)))}`;
+    }
+  } catch {
+    // Si falla el fetch, el HTML cae al texto sin logo.
+  }
+  const html = buildReportHtml(d, opts, logoDataUri);
   const w = window.open("", "_blank", "width=1024,height=768");
   if (!w) {
     toast.error("El navegador bloqueó la ventana de impresión. Permití pop-ups e intentá de nuevo.");
@@ -893,7 +945,7 @@ function generatePdf(d: ReportData, opts: ReportOptions) {
   w.document.close();
 }
 
-function buildReportHtml(d: ReportData, opts: ReportOptions): string {
+function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string | null): string {
   const locale = getNumberLocale();
   const today = new Date().toLocaleDateString(locale, { year: "numeric", month: "long", day: "numeric" });
   const cur = opts.showLocal ? d.project.local_currency : "USD";
@@ -1152,6 +1204,11 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
     `;
   }
 
+  // Logo block (cae a texto si el fetch falló)
+  const logoBlock = logoDataUri
+    ? `<img src="${logoDataUri}" alt="MasterPlan Connect" class="brand-logo" />`
+    : `<span class="brand-text">MasterPlan Connect</span>`;
+
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1171,51 +1228,90 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  h1 { font-size: 22px; margin: 0 0 4px; line-height: 1.2; }
+  h1 { font-size: 20px; margin: 0; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; }
 
-  /* ── Header del documento ── */
+  /* ── Document header (1ra página) ── */
   .doc-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    border-bottom: 3px solid #E87722;
-    padding-bottom: 10px;
-    margin-bottom: 18px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 18px;
+    border-bottom: 1px solid #0A0A0A;
+    padding-bottom: 12px;
+    margin-bottom: 14px;
   }
-  .doc-header .meta { text-align: right; font-size: 9.5px; color: #737373; line-height: 1.5; }
-  .doc-header .summary { font-size: 11px; color: #737373; margin-top: 4px; }
+  .doc-header .brand-logo { height: 30px; display: block; }
+  .doc-header .brand-text { font-weight: 700; font-size: 13px; color: #0A0A0A; letter-spacing: -0.01em; }
+  .doc-header .doc-title-block {
+    text-align: center;
+    border-left: 1px solid #E5E5E5;
+    border-right: 1px solid #E5E5E5;
+    padding: 0 18px;
+  }
+  .doc-header .doc-title-block .label {
+    font-size: 8.5px;
+    text-transform: uppercase;
+    color: #737373;
+    letter-spacing: 0.08em;
+    margin-bottom: 2px;
+  }
+  .doc-header .meta {
+    text-align: right;
+    font-size: 9px;
+    color: #737373;
+    line-height: 1.6;
+  }
+  .doc-header .meta .meta-label {
+    text-transform: uppercase;
+    font-size: 8px;
+    color: #A3A3A3;
+    letter-spacing: 0.06em;
+    margin-right: 4px;
+  }
+  .doc-header .meta-row { display: flex; gap: 12px; justify-content: flex-end; }
+  .doc-header .meta-row + .meta-row { margin-top: 1px; }
 
   /* ── Sección ── */
-  .report-section { margin-top: 18px; }
+  .report-section { margin-top: 16px; }
   h2.sec-title {
-    font-size: 13px;
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #B85A0F;
+    letter-spacing: 0.08em;
+    color: #0A0A0A;
     margin: 0 0 10px;
-    padding: 6px 10px;
-    background: #FEF3E8;
-    border-left: 4px solid #E87722;
+    padding: 0 0 6px 0;
+    border-bottom: 1.5px solid #0A0A0A;
+    font-weight: 700;
+    position: relative;
   }
-  .sec-help { font-size: 9.5px; color: #737373; margin: 0 0 10px; padding: 0 4px; font-style: italic; }
+  h2.sec-title::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -1.5px;
+    width: 36px;
+    height: 1.5px;
+    background: #E87722;
+  }
+  .sec-help { font-size: 9px; color: #737373; margin: 0 0 10px; padding: 0; font-style: italic; }
 
   /* ── Report table base ── */
   table.report-table {
     width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
-    font-size: 10px;
+    font-size: 9.5px;
   }
   table.report-table th {
-    background: #B85A0F;
+    background: #0A0A0A;
     color: #FFFFFF;
     text-align: left;
     text-transform: uppercase;
-    font-size: 9px;
-    letter-spacing: 0.05em;
+    font-size: 8.5px;
+    letter-spacing: 0.06em;
     padding: 7px 8px;
     font-weight: 600;
-    border-right: 1px solid rgba(255,255,255,0.15);
+    border-right: 1px solid #2B2B2B;
   }
   table.report-table th:last-child { border-right: none; }
   table.report-table th.num { text-align: right; }
@@ -1235,79 +1331,84 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
 
   /* ── Hierarchy table ── */
   table.hierarchy tr.cat-row td {
-    background: #E87722;
-    color: #FFFFFF;
+    background: #F5F5F5;
+    color: #0A0A0A;
     font-weight: 700;
-    font-size: 11.5px;
-    padding: 8px 10px;
-    border-bottom: 2px solid #B85A0F;
-    border-top: 2px solid #B85A0F;
+    font-size: 11px;
+    padding: 9px 10px 9px 14px;
+    border-top: 1px solid #D4D4D4;
+    border-bottom: 1px solid #D4D4D4;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  table.hierarchy tr.cat-row td:first-child {
+    border-left: 3px solid #E87722;
   }
   table.hierarchy tr.cat-row td .cat-code {
     display: inline-block;
-    background: rgba(255,255,255,0.22);
-    padding: 2px 8px;
-    border-radius: 3px;
+    color: #E87722;
     margin-right: 10px;
     font-family: "SF Mono", Menlo, monospace;
     font-size: 10px;
+    font-weight: 700;
     letter-spacing: 0.04em;
   }
   table.hierarchy tr.cat-row td.num {
-    color: #FFFFFF;
-    font-weight: 800;
-    font-size: 12px;
+    color: #0A0A0A;
+    font-weight: 700;
   }
   table.hierarchy tr.sub-row td {
-    background: #FCE8D6;
+    background: #FFFFFF;
     color: #0A0A0A;
     font-weight: 600;
-    font-size: 10.5px;
-    padding: 6px 10px 6px 18px;
-    border-bottom: 1px solid #FFD9B0;
+    font-size: 10px;
+    padding: 6px 10px 6px 22px;
+    border-bottom: 1px solid #E5E5E5;
   }
   table.hierarchy tr.sub-row td .sub-code {
     display: inline-block;
-    background: #FFFFFF;
-    color: #B85A0F;
-    padding: 1px 7px;
-    border-radius: 2px;
+    color: #E87722;
     margin-right: 8px;
     font-family: "SF Mono", Menlo, monospace;
     font-size: 9.5px;
+    font-weight: 700;
   }
-  table.hierarchy tr.sub-row td.num { color: #B85A0F; font-weight: 700; }
+  table.hierarchy tr.sub-row td.num { color: #0A0A0A; font-weight: 700; }
   table.hierarchy tr.art-row td {
-    background: #FFFFFF;
+    background: #FAFAFA;
     color: #404040;
     font-size: 9.5px;
-    padding: 4px 8px 4px 24px;
+    padding: 4px 8px 4px 30px;
+    border-bottom: 1px solid #F0F0F0;
   }
   table.hierarchy tr.art-row td.art-code {
     font-family: "SF Mono", Menlo, monospace;
     color: #737373;
-    padding-left: 24px;
+    padding-left: 30px;
+    font-size: 9px;
   }
   table.hierarchy tr.art-row td.art-desc { color: #1A1A1A; }
-  table.hierarchy tr.art-row td.art-unit { color: #737373; text-transform: lowercase; font-size: 9px; }
+  table.hierarchy tr.art-row td.art-unit { color: #737373; text-transform: lowercase; font-size: 9px; font-style: italic; }
   table.hierarchy tr.grand-total td {
-    background: #FCE8D6;
-    color: #0A0A0A;
-    font-weight: 800;
-    font-size: 12px;
-    padding: 9px 10px;
-    border-top: 3px double #E87722;
-    border-bottom: 1px solid #E87722;
+    background: #0A0A0A;
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 10px 10px;
+    border-top: 2px solid #0A0A0A;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
   }
-  table.hierarchy tr.grand-total td.num { font-size: 13px; color: #B85A0F; }
+  table.hierarchy tr.grand-total td.num {
+    color: #E87722;
+    font-size: 12px;
+  }
 
   /* ── Composition cards ── */
   .art-cards, .pkg-cards { display: flex; flex-direction: column; gap: 10px; }
   .art-card {
-    border: 1px solid #E5E5E5;
-    border-radius: 6px;
+    border: 1px solid #D4D4D4;
+    border-radius: 4px;
     overflow: hidden;
     page-break-inside: avoid;
     break-inside: avoid;
@@ -1318,30 +1419,29 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
     grid-template-columns: auto 1fr auto auto;
     gap: 14px;
     align-items: baseline;
-    padding: 9px 14px;
-    background: #FCE8D6;
-    border-left: 5px solid #E87722;
-    border-bottom: 1px solid #FFD9B0;
+    padding: 9px 14px 9px 11px;
+    background: #FAFAFA;
+    border-left: 3px solid #E87722;
+    border-bottom: 1px solid #E5E5E5;
   }
   .art-card-header .art-card-num {
     font-family: "SF Mono", Menlo, monospace;
     font-weight: 700;
-    font-size: 10.5px;
-    background: #FFFFFF;
-    color: #B85A0F;
+    font-size: 10px;
+    background: #0A0A0A;
+    color: #FFFFFF;
     padding: 3px 9px;
-    border-radius: 3px;
-    border: 1px solid #FFD9B0;
-    letter-spacing: 0.03em;
+    border-radius: 2px;
+    letter-spacing: 0.04em;
   }
   .art-card-header .art-card-desc {
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #0A0A0A;
     line-height: 1.35;
   }
   .art-card-header .art-card-unit {
-    font-size: 9px;
+    font-size: 8.5px;
     color: #737373;
     text-transform: lowercase;
     font-style: italic;
@@ -1349,45 +1449,51 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
   .art-card-header .art-card-pu {
     font-family: "SF Mono", Menlo, monospace;
     font-weight: 700;
-    font-size: 12.5px;
-    color: #B85A0F;
+    font-size: 11.5px;
+    color: #0A0A0A;
     background: #FFFFFF;
     padding: 4px 10px;
-    border-radius: 3px;
-    border: 1px solid #FFD9B0;
+    border-radius: 2px;
+    border: 1px solid #0A0A0A;
+  }
+  .art-card-header .art-card-pu .currency {
+    color: #E87722;
+    margin-left: 4px;
+    font-weight: 600;
   }
   table.composition th {
-    background: #FAFAFA;
-    color: #737373;
+    background: #404040;
+    color: #FFFFFF;
     font-weight: 600;
     font-size: 8.5px;
     letter-spacing: 0.05em;
     padding: 5px 8px;
-    border-bottom: 1px solid #E5E5E5;
-    border-right: 1px solid #F0F0F0;
+    border-right: 1px solid #5A5A5A;
   }
+  table.composition th:last-child { border-right: none; }
   table.composition td {
     padding: 5px 8px;
-    border-bottom: 1px solid #F5F5F5;
+    border-bottom: 1px solid #F0F0F0;
     font-size: 9.5px;
   }
   table.composition tr:last-child td { border-bottom: none; }
   table.composition tr.card-total td {
-    background: #FFF7ED;
+    background: #F5F5F5;
     font-weight: 700;
     font-size: 10px;
-    color: #B85A0F;
+    color: #0A0A0A;
     padding: 6px 8px;
-    border-top: 1px solid #FFD9B0;
+    border-top: 1.5px solid #0A0A0A;
   }
+  table.composition tr.card-total td.num.strong { color: #E87722; }
   table.composition .ins-code { color: #737373; font-family: "SF Mono", Menlo, monospace; font-size: 9px; }
   table.composition .ins-desc { color: #1A1A1A; }
   table.composition .ins-unit { color: #737373; font-size: 9px; }
 
   /* ── Package cards ── */
   .pkg-card {
-    border: 1px solid #E5E5E5;
-    border-radius: 6px;
+    border: 1px solid #D4D4D4;
+    border-radius: 4px;
     overflow: hidden;
     page-break-inside: avoid;
     break-inside: avoid;
@@ -1397,15 +1503,15 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
     display: flex;
     gap: 12px;
     align-items: baseline;
-    padding: 9px 14px;
+    padding: 9px 14px 9px 11px;
     background: #F5F5F5;
-    border-left: 5px solid #737373;
+    border-left: 3px solid #737373;
     border-bottom: 1px solid #E5E5E5;
   }
   .pkg-card-header .pkg-card-name {
     font-weight: 700;
     flex: 1;
-    font-size: 11.5px;
+    font-size: 11px;
     color: #0A0A0A;
   }
   .pkg-card-header .pkg-card-meta {
@@ -1419,26 +1525,63 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
   .schedule-section { page: landscape-page; page-break-before: always; }
   table.schedule { table-layout: auto; font-size: 9px; }
   table.schedule th { padding: 5px 4px; font-size: 8.5px; }
-  table.schedule td { padding: 3px 4px; font-size: 9px; }
+  table.schedule td { padding: 3px 4px; font-size: 9px; border-bottom: 1px solid #EFEFEF; }
   table.schedule .wk { width: 16px; text-align: center; padding: 3px 0; }
   table.schedule .wk.on { color: #E87722; font-weight: 700; font-size: 11px; }
 
   .muted-italic { color: #737373; font-style: italic; }
 
-  /* ── Footer ── */
-  .footer {
-    margin-top: 24px;
-    padding-top: 8px;
-    border-top: 1px solid #E5E5E5;
-    font-size: 8.5px;
-    color: #A3A3A3;
-    display: flex;
-    justify-content: space-between;
+  /* ── Print rules: page header + footer en cada página ── */
+  @page {
+    size: A4 portrait;
+    margin: 22mm 12mm 18mm 12mm;
+    @top-left {
+      content: "MasterPlan Connect · ${escHtml(d.project.name)}";
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      color: #737373;
+    }
+    @top-right {
+      content: "${escHtml(today)}";
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      color: #737373;
+    }
+    @bottom-left {
+      content: "Reporte de presupuesto · Importes en ${escHtml(cur)}";
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      color: #A3A3A3;
+    }
+    @bottom-right {
+      content: "Página " counter(page) " de " counter(pages);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      color: #A3A3A3;
+    }
   }
-
-  /* ── Print rules ── */
-  @page { size: A4 portrait; margin: 14mm 12mm; }
-  @page landscape-page { size: A4 landscape; margin: 12mm; }
+  @page landscape-page {
+    size: A4 landscape;
+    margin: 18mm 12mm 16mm 12mm;
+    @top-left {
+      content: "MasterPlan Connect · ${escHtml(d.project.name)} · Cronograma";
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      color: #737373;
+    }
+    @top-right {
+      content: "${escHtml(today)}";
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      color: #737373;
+    }
+    @bottom-right {
+      content: "Página " counter(page) " de " counter(pages);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      color: #A3A3A3;
+    }
+  }
   @media print {
     body { padding: 0; }
     h2.sec-title { page-break-after: avoid; break-after: avoid; }
@@ -1451,24 +1594,22 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
 </head>
 <body>
   <div class="doc-header">
-    <div>
+    <div class="brand">${logoBlock}</div>
+    <div class="doc-title-block">
+      <div class="label">Reporte de presupuesto</div>
       <h1>${escHtml(d.project.name)}</h1>
-      <div class="summary">Reporte de presupuesto · Generado el ${escHtml(today)}</div>
     </div>
     <div class="meta">
-      <div>${escHtml(d.project.name)}</div>
-      <div>TC ${formatNumber(tc, 0)} ${escHtml(d.project.local_currency || "")}</div>
-      <div>Importes en ${escHtml(cur)}${totalAreaM2 > 0 ? ` · Área ${formatNumber(totalAreaM2, 0)} m²` : ""}</div>
+      <div class="meta-row"><span><span class="meta-label">TC</span>${formatNumber(tc, 0)} ${escHtml(d.project.local_currency || "")}</span></div>
+      <div class="meta-row"><span><span class="meta-label">Importes</span>${escHtml(cur)}</span></div>
+      ${totalAreaM2 > 0 ? `<div class="meta-row"><span><span class="meta-label">Área</span>${formatNumber(totalAreaM2, 0)} m²</span></div>` : ""}
+      <div class="meta-row"><span><span class="meta-label">Fecha</span>${escHtml(today)}</span></div>
     </div>
   </div>
   ${hierarchyHtml}
   ${compositionHtml}
   ${packagesHtml}
   ${scheduleHtml}
-  <div class="footer">
-    <span>${escHtml(d.project.name)} · MasterPlan Connect</span>
-    <span>${escHtml(today)}</span>
-  </div>
   <script>
     window.addEventListener("load", () => { setTimeout(() => window.print(), 100); });
     window.addEventListener("afterprint", () => window.close());
