@@ -1071,7 +1071,7 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
     setupPrint(ws, true);
   }
 
-  // ────────────────── Hoja 5 — Cronograma (opcional) ──────────────────
+  // ────────────────── Hoja 5 — Cronograma estilo Gantt (opcional) ──────────────────
   if (opts.includeSchedule && d.schedConfig && d.schedWeeks.length > 0) {
     const weeksByLine = new Map<string, Set<number>>();
     let maxWeek = 0;
@@ -1082,47 +1082,145 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
       weeksByLine.set(w.quantification_line_id, set);
       if (w.week_number > maxWeek) maxWeek = w.week_number;
     }
+    const weeksTotal = maxWeek + 1;
+
+    // Calcular semana actual (relativa al inicio del cronograma) para indicador
+    const startDate = new Date(d.schedConfig.start_date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const daysSinceStart = Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+    const todayWeek = daysSinceStart >= 0 ? Math.floor(daysSinceStart / 7) : -1;
+
+    // Ordenar líneas por semana de inicio (Gantt asc por start)
+    const sortedLines = [...d.qLines]
+      .map((ql) => {
+        const weeks = weeksByLine.get(ql.id);
+        const start = weeks && weeks.size ? Math.min(...weeks) : Infinity;
+        return { ql, start };
+      })
+      .filter((x) => x.start !== Infinity)
+      .sort((a, b) => a.start - b.start)
+      .map((x) => x.ql);
+
     const ws = wb.addWorksheet("Cronograma");
-    const lastCol = 5 + (maxWeek + 1);
-    const widths = [28, 12, 36, 12, 8];
-    for (let i = 0; i <= maxWeek; i++) widths.push(4);
+    const INFO_COLS = 4; // EDT | Sector | Articulo | Rango
+    const lastCol = INFO_COLS + weeksTotal;
+    // Anchos: info compacto + columnas de semana muy angostas (1.7 char ≈ 12 px)
+    const widths = [22, 9, 30, 9];
+    for (let i = 0; i < weeksTotal; i++) widths.push(1.7);
     setColWidths(ws, widths);
+
     let r = addBranding(
       ws,
       "CRONOGRAMA",
-      `Inicio: ${d.schedConfig.start_date}  ·  Duración: ${maxWeek + 1} semanas  ·  ${d.qLines.length} líneas`,
+      `Inicio: ${d.schedConfig.start_date}  ·  Duración: ${weeksTotal} semanas  ·  ${sortedLines.length} líneas activas`,
       lastCol
     );
-    const headers = ["EDT", "Sector", "Artículo", "Cantidad", "Unidad", ...Array.from({ length: maxWeek + 1 }, (_, i) => `S${i}`)];
-    applyHeader(ws, r, headers);
+
+    // Header con marcadores de mes (cada 4 semanas muestra "Mes N")
+    setCell(ws, r, 1, "EDT", S.header);
+    setCell(ws, r, 2, "Sector", S.header);
+    setCell(ws, r, 3, "Artículo", S.header);
+    setCell(ws, r, 4, "Rango", S.header);
+    for (let w = 0; w < weeksTotal; w++) {
+      const isMonthStart = w % 4 === 0;
+      const label = isMonthStart ? `M${Math.floor(w / 4) + 1}` : "";
+      setCell(ws, r, INFO_COLS + 1 + w, label, {
+        font: { name: "Calibri", size: 8, bold: true, color: { argb: COLOR.white } },
+        fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.ink } } as const,
+        alignment: { vertical: "middle" as const, horizontal: "center" as const },
+        border: isMonthStart && w > 0
+          ? {
+              top: { style: "thin" as const, color: { argb: COLOR.ink } },
+              bottom: { style: "thin" as const, color: { argb: COLOR.ink } },
+              right: { style: "thin" as const, color: { argb: COLOR.ink } },
+              left: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+            }
+          : thinBorder(COLOR.ink),
+      });
+    }
+    ws.getRow(r).height = 22;
     const headerRow = r;
     r++;
-    for (const ql of d.qLines) {
+
+    // Estilos para celdas Gantt
+    const ganttOn = {
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.orangeSignal } } as const,
+      border: {
+        top: { style: "thin" as const, color: { argb: COLOR.orangeSignal } },
+        bottom: { style: "thin" as const, color: { argb: COLOR.orangeSignal } },
+      },
+    };
+    const ganttOff = {
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.grayFaint } } as const,
+      border: {
+        bottom: { style: "thin" as const, color: { argb: COLOR.borderFaint } },
+      },
+    };
+    const ganttOffMonthStart = {
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.grayFaint } } as const,
+      border: {
+        bottom: { style: "thin" as const, color: { argb: COLOR.borderFaint } },
+        left: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+      },
+    };
+    const ganttOnMonthStart = {
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: COLOR.orangeSignal } } as const,
+      border: {
+        top: { style: "thin" as const, color: { argb: COLOR.orangeSignal } },
+        bottom: { style: "thin" as const, color: { argb: COLOR.orangeSignal } },
+        left: { style: "thin" as const, color: { argb: COLOR.borderSoft } },
+      },
+    };
+    const ganttToday = {
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFDC2626" } } as const,
+      border: {
+        top: { style: "thin" as const, color: { argb: "FFDC2626" } },
+        bottom: { style: "thin" as const, color: { argb: "FFDC2626" } },
+      },
+    };
+
+    for (const ql of sortedLines) {
       const sub = subById.get(ql.subcategory_id);
       const sector = sectorById.get(ql.sector_id);
       const art = ql.articulo_id ? artById.get(ql.articulo_id) : null;
+      const weeks = weeksByLine.get(ql.id) || new Set<number>();
+      const startWk = weeks.size ? Math.min(...weeks) : 0;
+      const endWk = weeks.size ? Math.max(...weeks) : 0;
+      const range = weeks.size ? `S${startWk}–S${endWk}` : "—";
+
       setCell(ws, r, 1, sub ? `${sub.code} ${sub.name}` : "", S.artLeft);
       setCell(ws, r, 2, sector?.name || "", S.artLeft);
       setCell(ws, r, 3, art ? `${art.number} ${art.description}` : "(sin artículo)", S.artLeft);
-      setCell(ws, r, 4, Number(Number(ql.quantity || 0).toFixed(2)), { ...S.artRight, numFmt: NUM_2D });
-      setCell(ws, r, 5, art?.unit || "", S.artLeft);
-      const weeks = weeksByLine.get(ql.id) || new Set();
-      for (let w = 0; w <= maxWeek; w++) {
+      setCell(ws, r, 4, range, {
+        ...S.artRight,
+        font: { name: "SF Mono", size: 9, color: { argb: COLOR.inkSoft } },
+      });
+      ws.getRow(r).height = 14;
+      for (let w = 0; w < weeksTotal; w++) {
         const on = weeks.has(w);
-        setCell(ws, r, 6 + w, on ? "●" : "", on
-          ? {
-              font: { name: "Calibri", size: 11, bold: true, color: { argb: COLOR.orangeSignal } },
-              alignment: { vertical: "middle", horizontal: "center" },
-              border: thinBorder(COLOR.borderFaint),
-            }
-          : {
-              alignment: { vertical: "middle", horizontal: "center" },
-              border: thinBorder(COLOR.borderFaint),
-            });
+        const isMonth = w > 0 && w % 4 === 0;
+        const isToday = w === todayWeek;
+        let style = on
+          ? (isMonth ? ganttOnMonthStart : ganttOn)
+          : (isMonth ? ganttOffMonthStart : ganttOff);
+        if (isToday && !on) style = ganttToday;
+        setCell(ws, r, INFO_COLS + 1 + w, "", style);
       }
       r++;
     }
+
+    // Línea con leyenda
+    r++;
+    setCell(ws, r, 1, "Leyenda:  ■ semana activa   ■ semana fuera de plan   ■ semana actual   M1, M2… cada 4 semanas (mes)", {
+      font: { name: "Calibri", size: 9, italic: true, color: { argb: COLOR.ash } },
+      alignment: { vertical: "middle" as const, horizontal: "left" as const, indent: 1 },
+    });
+    ws.mergeCells(r, 1, r, lastCol);
+
     freezeAfterHeader(ws, headerRow);
+    // Freeze también las primeras 4 columnas (info) para que el Gantt scrollee horizontal sin perder contexto
+    ws.views = [{ state: "frozen", xSplit: INFO_COLS, ySplit: headerRow }];
     setupPrint(ws, true);
   }
 
@@ -1407,42 +1505,105 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
     `;
   }
 
-  // ── Sección: Cronograma (landscape) ──
+  // ── Sección: Cronograma — Gantt (landscape) ──
   let scheduleHtml = "";
   if (opts.includeSchedule && d.schedConfig && d.schedWeeks.length > 0) {
     const weeksByLine = new Map<string, Set<number>>();
     let maxWeek = 0;
     for (const w of d.schedWeeks) {
+      if (!w.active) continue;
       const set = weeksByLine.get(w.quantification_line_id) || new Set<number>();
       set.add(w.week_number);
       weeksByLine.set(w.quantification_line_id, set);
       if (w.week_number > maxWeek) maxWeek = w.week_number;
     }
-    const headerCols = ["EDT", "Sector", "Artículo", "Cant.", "Un.", ...Array.from({ length: maxWeek + 1 }, (_, i) => `S${i}`)];
-    const headerRow = headerCols.map((h, i) => {
-      const isWeek = i >= 5;
-      return `<th class="${isWeek ? "wk" : ""}">${escHtml(h)}</th>`;
+    const weeksTotal = maxWeek + 1;
+
+    // Semana actual relativa al inicio
+    const startDate = new Date(d.schedConfig.start_date);
+    const todayMid = new Date();
+    todayMid.setHours(0, 0, 0, 0);
+    const daysSince = Math.floor((todayMid.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+    const todayWeek = daysSince >= 0 ? Math.floor(daysSince / 7) : -1;
+
+    // Ordenar líneas por inicio asc para que se vea como Gantt
+    const sortedLines = [...d.qLines]
+      .map((ql) => {
+        const weeks = weeksByLine.get(ql.id);
+        const start = weeks && weeks.size ? Math.min(...weeks) : Infinity;
+        return { ql, start };
+      })
+      .filter((x) => x.start !== Infinity)
+      .sort((a, b) => a.start - b.start)
+      .map((x) => x.ql);
+
+    // Anchos de columna en %: info (66%) + week area (34% / weeksTotal cada una)
+    const infoPctEdt = 22;
+    const infoPctSector = 8;
+    const infoPctArt = 28;
+    const infoPctRange = 8;
+    const infoTotalPct = infoPctEdt + infoPctSector + infoPctArt + infoPctRange;
+    const weekPct = (100 - infoTotalPct) / weeksTotal;
+    const colgroupHtml = `
+      <colgroup>
+        <col style="width:${infoPctEdt}%" />
+        <col style="width:${infoPctSector}%" />
+        <col style="width:${infoPctArt}%" />
+        <col style="width:${infoPctRange}%" />
+        ${Array.from({ length: weeksTotal }, () => `<col style="width:${weekPct.toFixed(3)}%" />`).join("")}
+      </colgroup>
+    `;
+
+    const headerWeeksHtml = Array.from({ length: weeksTotal }, (_, i) => {
+      const isMonth = i % 4 === 0;
+      const monthLabel = isMonth ? `M${Math.floor(i / 4) + 1}` : "";
+      return `<th class="wk-h${isMonth ? " month-mark" : ""}${i === todayWeek ? " today" : ""}">${escHtml(monthLabel)}</th>`;
     }).join("");
-    const dataRows = d.qLines.map((ql) => {
+
+    const dataRows = sortedLines.map((ql) => {
       const sub = subById.get(ql.subcategory_id);
       const sector = sectorById.get(ql.sector_id);
       const art = ql.articulo_id ? artById.get(ql.articulo_id) : null;
-      const weeks = weeksByLine.get(ql.id) || new Set();
-      const weekCells = Array.from({ length: maxWeek + 1 }, (_, i) => weeks.has(i) ? `<td class="wk on">●</td>` : `<td class="wk"></td>`).join("");
+      const weeks = weeksByLine.get(ql.id) || new Set<number>();
+      const startWk = weeks.size ? Math.min(...weeks) : 0;
+      const endWk = weeks.size ? Math.max(...weeks) : 0;
+      const range = weeks.size ? `S${startWk}–S${endWk}` : "—";
+      const weekCells = Array.from({ length: weeksTotal }, (_, i) => {
+        const on = weeks.has(i);
+        const isMonth = i > 0 && i % 4 === 0;
+        const isToday = i === todayWeek;
+        const cls = ["wk-c"];
+        if (on) cls.push("on");
+        if (isMonth) cls.push("month-line");
+        if (isToday) cls.push("today");
+        return `<td class="${cls.join(" ")}"></td>`;
+      }).join("");
       return `<tr>
-        <td>${escHtml(sub ? `${sub.code} ${sub.name}` : "")}</td>
-        <td>${escHtml(sector?.name || "")}</td>
-        <td>${escHtml(art ? `${art.number} ${art.description}` : "(sin artículo)")}</td>
-        <td class="num">${formatNumber(Number(ql.quantity || 0), 2)}</td>
-        <td>${escHtml(art?.unit || "")}</td>
+        <td class="info-edt">${escHtml(sub ? `${sub.code} ${sub.name}` : "")}</td>
+        <td class="info-sec">${escHtml(sector?.name || "")}</td>
+        <td class="info-art">${escHtml(art ? `${art.number} ${art.description}` : "(sin artículo)")}</td>
+        <td class="info-range">${escHtml(range)}</td>
         ${weekCells}
       </tr>`;
     }).join("\n");
+
     scheduleHtml = `
       <section class="report-section schedule-section">
-        <h2 class="sec-title">Cronograma — fecha de inicio ${escHtml(d.schedConfig.start_date)}</h2>
-        <table class="report-table compact schedule">
-          <thead><tr>${headerRow}</tr></thead>
+        <h2 class="sec-title">Cronograma · Gantt</h2>
+        <p class="sec-help">
+          Inicio: ${escHtml(d.schedConfig.start_date)} · Duración: ${weeksTotal} semanas · ${sortedLines.length} líneas activas. Cada celda equivale a una semana; los marcadores M1, M2… aparecen cada 4 semanas (≈ un mes).${todayWeek >= 0 && todayWeek < weeksTotal ? ' La línea roja vertical marca la semana actual.' : ''}
+        </p>
+        <table class="report-table gantt-schedule">
+          ${colgroupHtml}
+          <thead>
+            <tr>
+              <th class="info-edt">EDT</th>
+              <th class="info-sec">Sector</th>
+              <th class="info-art">Artículo</th>
+              <th class="info-range">Rango</th>
+              ${headerWeeksHtml}
+            </tr>
+          </thead>
           <tbody>${dataRows}</tbody>
         </table>
       </section>
@@ -1825,13 +1986,69 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
   td.overdue-cell { width: 14px; text-align: center; padding: 3px 4px; }
   tr.row-overdue td:not(.overdue-cell) { background: #FEF7F7; }
 
-  /* ── Schedule (landscape) ── */
+  /* ── Schedule (Gantt, landscape) ── */
   .schedule-section { page: landscape-page; page-break-before: always; }
-  table.schedule { table-layout: auto; font-size: 9px; }
-  table.schedule th { padding: 5px 4px; font-size: 8.5px; }
-  table.schedule td { padding: 3px 4px; font-size: 9px; border-bottom: 1px solid #EFEFEF; }
-  table.schedule .wk { width: 16px; text-align: center; padding: 3px 0; }
-  table.schedule .wk.on { color: #E87722; font-weight: 700; font-size: 11px; }
+  table.gantt-schedule {
+    table-layout: fixed;
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9px;
+  }
+  table.gantt-schedule thead th {
+    background: #0A0A0A;
+    color: #FFFFFF;
+    text-transform: uppercase;
+    font-size: 8.5px;
+    letter-spacing: 0.05em;
+    padding: 6px 6px;
+    font-weight: 600;
+    text-align: left;
+    border-right: 1px solid #2B2B2B;
+  }
+  table.gantt-schedule thead th.wk-h {
+    padding: 4px 0;
+    text-align: center;
+    font-size: 7.5px;
+    font-weight: 600;
+    border-right: none;
+  }
+  table.gantt-schedule thead th.wk-h.month-mark {
+    border-left: 1px solid #5A5A5A;
+  }
+  table.gantt-schedule thead th.wk-h.today {
+    background: #DC2626;
+  }
+  table.gantt-schedule td {
+    padding: 4px 6px;
+    border-bottom: 1px solid #EFEFEF;
+    vertical-align: middle;
+    font-size: 9px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  table.gantt-schedule td.info-edt { font-weight: 600; }
+  table.gantt-schedule td.info-art { color: #404040; }
+  table.gantt-schedule td.info-range {
+    font-family: "SF Mono", Menlo, monospace;
+    color: #737373;
+    font-size: 8.5px;
+  }
+  /* Celdas Gantt: muy angostas, sin padding, sin texto */
+  table.gantt-schedule td.wk-c {
+    padding: 0;
+    border-bottom: 1px solid #EFEFEF;
+    background: #FAFAFA;
+  }
+  table.gantt-schedule td.wk-c.on {
+    background: #E87722;
+  }
+  table.gantt-schedule td.wk-c.month-line {
+    border-left: 1px solid #D4D4D4;
+  }
+  table.gantt-schedule td.wk-c.today {
+    box-shadow: inset 1.5px 0 0 #DC2626;
+  }
 
   .muted-italic { color: #737373; font-style: italic; }
 
