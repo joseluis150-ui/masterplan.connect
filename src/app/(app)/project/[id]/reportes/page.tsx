@@ -1054,7 +1054,7 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
           <td class="ins-code">${escHtml(insumo?.code != null ? String(insumo.code) : "—")}</td>
           <td class="ins-desc">${escHtml(insumo?.description || "(no encontrado)")}</td>
           <td class="ins-unit">${escHtml(insumo?.unit || "")}</td>
-          <td class="num">${formatNumber(Number(c.quantity || 0), 4)}</td>
+          <td class="num">${formatNumber(Number(c.quantity || 0), 2)}</td>
           <td class="num">${formatNumber(Number(c.waste_pct || 0), 1)}%</td>
           <td class="num">${formatNumber(Number(c.margin_pct || 0), 1)}%</td>
           <td class="num">${fm(insumoPuUsd)}</td>
@@ -1124,7 +1124,7 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
           <td class="ins-code">${escHtml(ins?.code != null ? String(ins.code) : "—")}</td>
           <td class="ins-desc">${escHtml(ins?.description || "(no encontrado)")}</td>
           <td class="ins-unit">${escHtml(ins?.unit || "")}</td>
-          <td class="num">${formatNumber(Number(l.quantity || 0), 4)}</td>
+          <td class="num">${formatNumber(Number(l.quantity || 0), 2)}</td>
           <td>${escHtml(l.need_date || "—")}</td>
         </tr>`;
       }).join("\n") || `<tr><td colspan="5" class="muted-italic">Sin líneas en este paquete</td></tr>`;
@@ -1326,6 +1326,9 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
     text-align: right;
     font-family: "SF Mono", Menlo, Consolas, monospace;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: keep-all;
   }
   table.report-table .num.strong { font-weight: 700; }
 
