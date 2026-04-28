@@ -897,6 +897,8 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
   const locale = getNumberLocale();
   const today = new Date().toLocaleDateString(locale, { year: "numeric", month: "long", day: "numeric" });
   const cur = opts.showLocal ? d.project.local_currency : "USD";
+  const tc = Number(d.project.exchange_rate || 1);
+  const totalAreaM2 = d.sectors.reduce((s, sc) => s + Number(sc.area_m2 || 0), 0);
   const subArtMap = buildSubArticulos(d);
   const artById = new Map(d.articulos.map((a) => [a.id, a]));
   const subById = new Map(d.subs.map((s) => [s.id, s]));
@@ -904,13 +906,11 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
   const insumoById = new Map(d.insumos.map((i) => [i.id, i]));
 
   function fm(usd: number, dec = 2): string {
-    if (opts.showLocal) {
-      const tc = Number(d.project.exchange_rate || 1);
-      return formatNumber(convertCurrency(usd, tc, "usd_to_local"), 0);
-    }
+    if (opts.showLocal) return formatNumber(convertCurrency(usd, tc, "usd_to_local"), 0);
     return formatNumber(usd, dec);
   }
 
+  // ── Sección: Presupuesto jerarquizado ──
   let hierarchyHtml = "";
   if (opts.includeHierarchy) {
     let grandTotal = 0;
@@ -933,73 +933,118 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
             const total = pu * qty;
             subTotal += total;
             artRows.push(`<tr class="art-row">
-              <td class="code">${escHtml(String(art!.number))}</td>
-              <td class="desc">${escHtml(art!.description)}</td>
-              <td>${escHtml(art!.unit)}</td>
+              <td class="art-code">${escHtml(String(art!.number))}</td>
+              <td class="art-desc">${escHtml(art!.description)}</td>
+              <td class="art-unit">${escHtml(art!.unit)}</td>
               <td class="num">${formatNumber(qty, 2)}</td>
               <td class="num">${fm(pu)}</td>
-              <td class="num">${fm(total)}</td>
+              <td class="num strong">${fm(total)}</td>
             </tr>`);
           }
         }
         catTotal += subTotal;
-        subBlocks.push(`<tr class="sub-row"><td colspan="5">${escHtml(sub.code)} · ${escHtml(sub.name)}</td><td class="num">${fm(subTotal)}</td></tr>`);
+        subBlocks.push(`<tr class="sub-row">
+          <td colspan="5"><span class="sub-code">${escHtml(sub.code)}</span> ${escHtml(sub.name)}</td>
+          <td class="num">${fm(subTotal)}</td>
+        </tr>`);
         subBlocks.push(...artRows);
       }
       grandTotal += catTotal;
-      rows.push(`<tr class="cat-row"><td colspan="5">${escHtml(cat.code)} · ${escHtml(cat.name)}</td><td class="num">${fm(catTotal)}</td></tr>`);
+      rows.push(`<tr class="cat-row">
+        <td colspan="5"><span class="cat-code">${escHtml(cat.code)}</span> ${escHtml(cat.name)}</td>
+        <td class="num">${fm(catTotal)}</td>
+      </tr>`);
       rows.push(...subBlocks);
     }
-    rows.push(`<tr class="grand-total"><td colspan="5" class="num">TOTAL</td><td class="num">${fm(grandTotal)}</td></tr>`);
+    rows.push(`<tr class="grand-total"><td colspan="5">TOTAL PRESUPUESTO</td><td class="num">${fm(grandTotal)}</td></tr>`);
     hierarchyHtml = `
-      <h2 class="sec-title">Presupuesto jerarquizado</h2>
-      <table class="report-table">
-        <thead><tr>
-          <th>Código</th><th>Descripción</th><th>Unidad</th>
-          <th class="num">Cantidad</th><th class="num">P.U. (${escHtml(cur)})</th><th class="num">Total (${escHtml(cur)})</th>
-        </tr></thead>
-        <tbody>${rows.join("\n")}</tbody>
-      </table>
+      <section class="report-section">
+        <h2 class="sec-title">Presupuesto jerarquizado</h2>
+        <table class="report-table hierarchy">
+          <colgroup>
+            <col style="width:9%" />
+            <col style="width:50%" />
+            <col style="width:8%" />
+            <col style="width:10%" />
+            <col style="width:11%" />
+            <col style="width:12%" />
+          </colgroup>
+          <thead><tr>
+            <th>Código</th>
+            <th>Descripción</th>
+            <th>Unidad</th>
+            <th class="num">Cantidad</th>
+            <th class="num">P.U. (${escHtml(cur)})</th>
+            <th class="num">Total (${escHtml(cur)})</th>
+          </tr></thead>
+          <tbody>${rows.join("\n")}</tbody>
+        </table>
+      </section>
     `;
   }
 
+  // ── Sección: Composición — cada artículo en una tarjeta ──
   let compositionHtml = "";
   if (opts.includeComposition) {
     const sortedArts = [...d.articulos].sort((a, b) => (a.number || 0) - (b.number || 0));
-    const blocks: string[] = [];
+    const cards: string[] = [];
     for (const art of sortedArts) {
       const artComps = d.comps.filter((c) => c.articulo_id === art.id);
       const puArt = d.articuloCosts.get(art.id) || 0;
       const compRows: string[] = [];
+      let totalSubtotal = 0;
       for (const c of artComps) {
         const insumo = insumoById.get(c.insumo_id);
         const insumoPuUsd = Number(insumo?.pu_usd || 0);
         const subtotal = Number(c.quantity || 0) * (1 + Number(c.waste_pct || 0) / 100) * insumoPuUsd * (1 + Number(c.margin_pct || 0) / 100);
+        totalSubtotal += subtotal;
         compRows.push(`<tr>
-          <td>${escHtml(insumo?.code != null ? String(insumo.code) : "")}</td>
-          <td>${escHtml(insumo?.description || "(no encontrado)")}</td>
-          <td>${escHtml(insumo?.unit || "")}</td>
+          <td class="ins-code">${escHtml(insumo?.code != null ? String(insumo.code) : "—")}</td>
+          <td class="ins-desc">${escHtml(insumo?.description || "(no encontrado)")}</td>
+          <td class="ins-unit">${escHtml(insumo?.unit || "")}</td>
           <td class="num">${formatNumber(Number(c.quantity || 0), 4)}</td>
           <td class="num">${formatNumber(Number(c.waste_pct || 0), 1)}%</td>
           <td class="num">${formatNumber(Number(c.margin_pct || 0), 1)}%</td>
           <td class="num">${fm(insumoPuUsd)}</td>
-          <td class="num">${fm(subtotal)}</td>
+          <td class="num strong">${fm(subtotal)}</td>
         </tr>`);
       }
-      if (compRows.length === 0) compRows.push(`<tr><td colspan="8" class="muted-italic">Sin insumos cargados</td></tr>`);
-      blocks.push(`
-        <div class="art-block">
-          <div class="art-header">
-            <span class="art-num">N° ${escHtml(String(art.number))}</span>
-            <span class="art-desc">${escHtml(art.description)}</span>
-            <span class="art-unit">${escHtml(art.unit)}</span>
-            <span class="art-pu">P.U. ${fm(puArt)} ${escHtml(cur)}</span>
+      if (compRows.length === 0) {
+        compRows.push(`<tr><td colspan="8" class="muted-italic">Sin insumos cargados</td></tr>`);
+      } else {
+        compRows.push(`<tr class="card-total">
+          <td colspan="7" class="num">TOTAL P.U. del artículo</td>
+          <td class="num strong">${fm(totalSubtotal)}</td>
+        </tr>`);
+      }
+      cards.push(`
+        <div class="art-card">
+          <div class="art-card-header">
+            <span class="art-card-num">N° ${escHtml(String(art.number))}</span>
+            <span class="art-card-desc">${escHtml(art.description)}</span>
+            <span class="art-card-unit">por ${escHtml(art.unit)}</span>
+            <span class="art-card-pu">${fm(puArt)} ${escHtml(cur)}</span>
           </div>
-          <table class="report-table compact">
+          <table class="report-table composition">
+            <colgroup>
+              <col style="width:8%" />
+              <col style="width:34%" />
+              <col style="width:6%" />
+              <col style="width:11%" />
+              <col style="width:9%" />
+              <col style="width:9%" />
+              <col style="width:11%" />
+              <col style="width:12%" />
+            </colgroup>
             <thead><tr>
-              <th>Cód.</th><th>Insumo</th><th>Unidad</th>
-              <th class="num">Cantidad</th><th class="num">Desperdicio</th><th class="num">Margen</th>
-              <th class="num">P.U.</th><th class="num">Subtotal</th>
+              <th>Cód.</th>
+              <th>Insumo</th>
+              <th>Un.</th>
+              <th class="num">Cantidad</th>
+              <th class="num">Desp.</th>
+              <th class="num">Margen</th>
+              <th class="num">P.U.</th>
+              <th class="num">Subtotal</th>
             </tr></thead>
             <tbody>${compRows.join("\n")}</tbody>
           </table>
@@ -1007,41 +1052,65 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
       `);
     }
     compositionHtml = `
-      <h2 class="sec-title">Composición de artículos (Análisis de Precios Unitarios)</h2>
-      ${blocks.join("\n")}
+      <section class="report-section">
+        <h2 class="sec-title">Composición de artículos (Análisis de Precios Unitarios)</h2>
+        <p class="sec-help">Descomposición de cada artículo en sus insumos, con cantidad, desperdicio, margen y subtotal. P.U. final del artículo en el header de la tarjeta.</p>
+        <div class="art-cards">${cards.join("\n")}</div>
+      </section>
     `;
   }
 
+  // ── Sección: Paquetes ──
   let packagesHtml = "";
   if (opts.includePackages && d.packages.length > 0) {
-    const blocks: string[] = [];
+    const cards: string[] = [];
     for (const pkg of d.packages) {
       const lines = d.procLines.filter((l) => l.package_id === pkg.id);
       const lineRows = lines.map((l) => {
         const ins = insumoById.get(l.insumo_id);
         return `<tr>
-          <td>${escHtml(ins?.description || "(no encontrado)")}</td>
-          <td>${escHtml(ins?.unit || "")}</td>
+          <td class="ins-code">${escHtml(ins?.code != null ? String(ins.code) : "—")}</td>
+          <td class="ins-desc">${escHtml(ins?.description || "(no encontrado)")}</td>
+          <td class="ins-unit">${escHtml(ins?.unit || "")}</td>
           <td class="num">${formatNumber(Number(l.quantity || 0), 4)}</td>
           <td>${escHtml(l.need_date || "—")}</td>
         </tr>`;
-      }).join("\n") || `<tr><td colspan="4" class="muted-italic">Sin líneas en este paquete</td></tr>`;
-      blocks.push(`
-        <div class="pkg-block">
-          <div class="pkg-header">
-            <span class="pkg-name">${escHtml(pkg.name)}</span>
-            <span class="pkg-meta">${escHtml(pkg.purchase_type)} · ${escHtml(pkg.status)}${pkg.advance_days ? ` · ${pkg.advance_days} días anticipo` : ""}</span>
+      }).join("\n") || `<tr><td colspan="5" class="muted-italic">Sin líneas en este paquete</td></tr>`;
+      cards.push(`
+        <div class="pkg-card">
+          <div class="pkg-card-header">
+            <span class="pkg-card-name">${escHtml(pkg.name)}</span>
+            <span class="pkg-card-meta">${escHtml(pkg.purchase_type)} · ${escHtml(pkg.status)}${pkg.advance_days ? ` · ${pkg.advance_days} días anticipo` : ""}</span>
           </div>
-          <table class="report-table compact">
-            <thead><tr><th>Insumo</th><th>Unidad</th><th class="num">Cantidad</th><th>Fecha necesidad</th></tr></thead>
+          <table class="report-table composition">
+            <colgroup>
+              <col style="width:10%" />
+              <col style="width:48%" />
+              <col style="width:8%" />
+              <col style="width:18%" />
+              <col style="width:16%" />
+            </colgroup>
+            <thead><tr>
+              <th>Cód.</th>
+              <th>Insumo</th>
+              <th>Un.</th>
+              <th class="num">Cantidad</th>
+              <th>Fecha necesidad</th>
+            </tr></thead>
             <tbody>${lineRows}</tbody>
           </table>
         </div>
       `);
     }
-    packagesHtml = `<h2 class="sec-title">Paquetes de contratación</h2>${blocks.join("\n")}`;
+    packagesHtml = `
+      <section class="report-section">
+        <h2 class="sec-title">Paquetes de contratación</h2>
+        <div class="pkg-cards">${cards.join("\n")}</div>
+      </section>
+    `;
   }
 
+  // ── Sección: Cronograma (landscape) ──
   let scheduleHtml = "";
   if (opts.includeSchedule && d.schedConfig && d.schedWeeks.length > 0) {
     const weeksByLine = new Map<string, Set<number>>();
@@ -1053,7 +1122,10 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
       if (w.week_number > maxWeek) maxWeek = w.week_number;
     }
     const headerCols = ["EDT", "Sector", "Artículo", "Cant.", "Un.", ...Array.from({ length: maxWeek + 1 }, (_, i) => `S${i}`)];
-    const headerRow = headerCols.map((h) => `<th class="${h.startsWith("S") && h !== "Sector" ? "wk" : ""}">${escHtml(h)}</th>`).join("");
+    const headerRow = headerCols.map((h, i) => {
+      const isWeek = i >= 5;
+      return `<th class="${isWeek ? "wk" : ""}">${escHtml(h)}</th>`;
+    }).join("");
     const dataRows = d.qLines.map((ql) => {
       const sub = subById.get(ql.subcategory_id);
       const sector = sectorById.get(ql.sector_id);
@@ -1070,11 +1142,13 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
       </tr>`;
     }).join("\n");
     scheduleHtml = `
-      <h2 class="sec-title">Cronograma — fecha de inicio ${escHtml(d.schedConfig.start_date)}</h2>
-      <table class="report-table compact schedule">
-        <thead><tr>${headerRow}</tr></thead>
-        <tbody>${dataRows}</tbody>
-      </table>
+      <section class="report-section schedule-section">
+        <h2 class="sec-title">Cronograma — fecha de inicio ${escHtml(d.schedConfig.start_date)}</h2>
+        <table class="report-table compact schedule">
+          <thead><tr>${headerRow}</tr></thead>
+          <tbody>${dataRows}</tbody>
+        </table>
+      </section>
     `;
   }
 
@@ -1084,51 +1158,307 @@ function buildReportHtml(d: ReportData, opts: ReportOptions): string {
 <meta charset="utf-8" />
 <title>Reporte presupuesto — ${escHtml(d.project.name)}</title>
 <style>
+  /* ── Reset & base ── */
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; margin: 0; padding: 24px 32px; color: #0A0A0A; font-size: 11px; background: #fff; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  h2.sec-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #B85A0F; margin: 26px 0 10px; padding-bottom: 4px; border-bottom: 2px solid #FCE8D6; }
-  .header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #E87722; padding-bottom: 12px; margin-bottom: 4px; }
-  .header .meta { text-align: right; font-size: 10px; color: #737373; }
-  .summary { font-size: 11px; color: #737373; margin-top: 4px; }
-  table.report-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-bottom: 8px; }
-  table.report-table th { background: #FEF3E8; color: #B85A0F; text-align: left; text-transform: uppercase; font-size: 9px; letter-spacing: 0.04em; padding: 6px 8px; border-bottom: 1px solid #E5E5E5; }
-  table.report-table td { padding: 4px 8px; border-bottom: 1px solid #EFEFEF; }
-  table.report-table .num { text-align: right; font-family: "SF Mono", Menlo, Consolas, monospace; }
-  table.report-table.compact th, table.report-table.compact td { padding: 3px 6px; font-size: 9.5px; }
-  tr.cat-row td { background: #FFF7ED; font-weight: 700; border-top: 1px solid #FCE8D6; border-bottom: 1px solid #FCE8D6; color: #0A0A0A; }
-  tr.sub-row td { background: #FAFAFA; font-weight: 600; color: #444; }
-  tr.art-row td { color: #555; }
-  tr.art-row td.code { font-family: "SF Mono", Menlo, monospace; color: #737373; }
-  tr.grand-total td { background: #FCE8D6; font-weight: 800; border-top: 2px solid #E87722; border-bottom: 1px solid #E87722; color: #0A0A0A; }
-  .art-block { margin-bottom: 14px; page-break-inside: avoid; }
-  .art-header { display: flex; gap: 12px; align-items: baseline; padding: 4px 8px; background: #F5F5F5; border-left: 3px solid #E87722; }
-  .art-header .art-num { font-family: "SF Mono", Menlo, monospace; font-weight: 700; }
-  .art-header .art-desc { flex: 1; font-weight: 600; }
-  .art-header .art-unit { color: #737373; font-size: 9px; text-transform: uppercase; }
-  .art-header .art-pu { font-family: "SF Mono", Menlo, monospace; font-weight: 700; color: #B85A0F; }
-  .pkg-block { margin-bottom: 12px; page-break-inside: avoid; }
-  .pkg-header { display: flex; gap: 12px; align-items: baseline; padding: 4px 8px; background: #F5F5F5; border-left: 3px solid #737373; }
-  .pkg-header .pkg-name { font-weight: 700; flex: 1; }
-  .pkg-header .pkg-meta { color: #737373; font-size: 9px; text-transform: uppercase; }
-  .schedule .wk { width: 18px; text-align: center; padding: 2px 0; }
-  .schedule .wk.on { color: #E87722; font-weight: 700; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    padding: 16mm 12mm;
+    color: #0A0A0A;
+    font-size: 10px;
+    line-height: 1.4;
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; line-height: 1.2; }
+
+  /* ── Header del documento ── */
+  .doc-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 3px solid #E87722;
+    padding-bottom: 10px;
+    margin-bottom: 18px;
+  }
+  .doc-header .meta { text-align: right; font-size: 9.5px; color: #737373; line-height: 1.5; }
+  .doc-header .summary { font-size: 11px; color: #737373; margin-top: 4px; }
+
+  /* ── Sección ── */
+  .report-section { margin-top: 18px; }
+  h2.sec-title {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #B85A0F;
+    margin: 0 0 10px;
+    padding: 6px 10px;
+    background: #FEF3E8;
+    border-left: 4px solid #E87722;
+  }
+  .sec-help { font-size: 9.5px; color: #737373; margin: 0 0 10px; padding: 0 4px; font-style: italic; }
+
+  /* ── Report table base ── */
+  table.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 10px;
+  }
+  table.report-table th {
+    background: #B85A0F;
+    color: #FFFFFF;
+    text-align: left;
+    text-transform: uppercase;
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    padding: 7px 8px;
+    font-weight: 600;
+    border-right: 1px solid rgba(255,255,255,0.15);
+  }
+  table.report-table th:last-child { border-right: none; }
+  table.report-table th.num { text-align: right; }
+  table.report-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #EFEFEF;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  table.report-table .num {
+    text-align: right;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  table.report-table .num.strong { font-weight: 700; }
+
+  /* ── Hierarchy table ── */
+  table.hierarchy tr.cat-row td {
+    background: #E87722;
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 11.5px;
+    padding: 8px 10px;
+    border-bottom: 2px solid #B85A0F;
+    border-top: 2px solid #B85A0F;
+  }
+  table.hierarchy tr.cat-row td .cat-code {
+    display: inline-block;
+    background: rgba(255,255,255,0.22);
+    padding: 2px 8px;
+    border-radius: 3px;
+    margin-right: 10px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+  }
+  table.hierarchy tr.cat-row td.num {
+    color: #FFFFFF;
+    font-weight: 800;
+    font-size: 12px;
+  }
+  table.hierarchy tr.sub-row td {
+    background: #FCE8D6;
+    color: #0A0A0A;
+    font-weight: 600;
+    font-size: 10.5px;
+    padding: 6px 10px 6px 18px;
+    border-bottom: 1px solid #FFD9B0;
+  }
+  table.hierarchy tr.sub-row td .sub-code {
+    display: inline-block;
+    background: #FFFFFF;
+    color: #B85A0F;
+    padding: 1px 7px;
+    border-radius: 2px;
+    margin-right: 8px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 9.5px;
+  }
+  table.hierarchy tr.sub-row td.num { color: #B85A0F; font-weight: 700; }
+  table.hierarchy tr.art-row td {
+    background: #FFFFFF;
+    color: #404040;
+    font-size: 9.5px;
+    padding: 4px 8px 4px 24px;
+  }
+  table.hierarchy tr.art-row td.art-code {
+    font-family: "SF Mono", Menlo, monospace;
+    color: #737373;
+    padding-left: 24px;
+  }
+  table.hierarchy tr.art-row td.art-desc { color: #1A1A1A; }
+  table.hierarchy tr.art-row td.art-unit { color: #737373; text-transform: lowercase; font-size: 9px; }
+  table.hierarchy tr.grand-total td {
+    background: #FCE8D6;
+    color: #0A0A0A;
+    font-weight: 800;
+    font-size: 12px;
+    padding: 9px 10px;
+    border-top: 3px double #E87722;
+    border-bottom: 1px solid #E87722;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  table.hierarchy tr.grand-total td.num { font-size: 13px; color: #B85A0F; }
+
+  /* ── Composition cards ── */
+  .art-cards, .pkg-cards { display: flex; flex-direction: column; gap: 10px; }
+  .art-card {
+    border: 1px solid #E5E5E5;
+    border-radius: 6px;
+    overflow: hidden;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    background: #FFFFFF;
+  }
+  .art-card-header {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    gap: 14px;
+    align-items: baseline;
+    padding: 9px 14px;
+    background: #FCE8D6;
+    border-left: 5px solid #E87722;
+    border-bottom: 1px solid #FFD9B0;
+  }
+  .art-card-header .art-card-num {
+    font-family: "SF Mono", Menlo, monospace;
+    font-weight: 700;
+    font-size: 10.5px;
+    background: #FFFFFF;
+    color: #B85A0F;
+    padding: 3px 9px;
+    border-radius: 3px;
+    border: 1px solid #FFD9B0;
+    letter-spacing: 0.03em;
+  }
+  .art-card-header .art-card-desc {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #0A0A0A;
+    line-height: 1.35;
+  }
+  .art-card-header .art-card-unit {
+    font-size: 9px;
+    color: #737373;
+    text-transform: lowercase;
+    font-style: italic;
+  }
+  .art-card-header .art-card-pu {
+    font-family: "SF Mono", Menlo, monospace;
+    font-weight: 700;
+    font-size: 12.5px;
+    color: #B85A0F;
+    background: #FFFFFF;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid #FFD9B0;
+  }
+  table.composition th {
+    background: #FAFAFA;
+    color: #737373;
+    font-weight: 600;
+    font-size: 8.5px;
+    letter-spacing: 0.05em;
+    padding: 5px 8px;
+    border-bottom: 1px solid #E5E5E5;
+    border-right: 1px solid #F0F0F0;
+  }
+  table.composition td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #F5F5F5;
+    font-size: 9.5px;
+  }
+  table.composition tr:last-child td { border-bottom: none; }
+  table.composition tr.card-total td {
+    background: #FFF7ED;
+    font-weight: 700;
+    font-size: 10px;
+    color: #B85A0F;
+    padding: 6px 8px;
+    border-top: 1px solid #FFD9B0;
+  }
+  table.composition .ins-code { color: #737373; font-family: "SF Mono", Menlo, monospace; font-size: 9px; }
+  table.composition .ins-desc { color: #1A1A1A; }
+  table.composition .ins-unit { color: #737373; font-size: 9px; }
+
+  /* ── Package cards ── */
+  .pkg-card {
+    border: 1px solid #E5E5E5;
+    border-radius: 6px;
+    overflow: hidden;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    background: #FFFFFF;
+  }
+  .pkg-card-header {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    padding: 9px 14px;
+    background: #F5F5F5;
+    border-left: 5px solid #737373;
+    border-bottom: 1px solid #E5E5E5;
+  }
+  .pkg-card-header .pkg-card-name {
+    font-weight: 700;
+    flex: 1;
+    font-size: 11.5px;
+    color: #0A0A0A;
+  }
+  .pkg-card-header .pkg-card-meta {
+    color: #737373;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  /* ── Schedule (landscape) ── */
+  .schedule-section { page: landscape-page; page-break-before: always; }
+  table.schedule { table-layout: auto; font-size: 9px; }
+  table.schedule th { padding: 5px 4px; font-size: 8.5px; }
+  table.schedule td { padding: 3px 4px; font-size: 9px; }
+  table.schedule .wk { width: 16px; text-align: center; padding: 3px 0; }
+  table.schedule .wk.on { color: #E87722; font-weight: 700; font-size: 11px; }
+
   .muted-italic { color: #737373; font-style: italic; }
-  .footer { margin-top: 28px; padding-top: 8px; border-top: 1px solid #E5E5E5; font-size: 9px; color: #A3A3A3; display: flex; justify-content: space-between; }
-  @page { size: A4; margin: 12mm; }
-  @media print { body { padding: 0; } h2.sec-title { page-break-after: avoid; } table.report-table tr { page-break-inside: avoid; } }
+
+  /* ── Footer ── */
+  .footer {
+    margin-top: 24px;
+    padding-top: 8px;
+    border-top: 1px solid #E5E5E5;
+    font-size: 8.5px;
+    color: #A3A3A3;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ── Print rules ── */
+  @page { size: A4 portrait; margin: 14mm 12mm; }
+  @page landscape-page { size: A4 landscape; margin: 12mm; }
+  @media print {
+    body { padding: 0; }
+    h2.sec-title { page-break-after: avoid; break-after: avoid; }
+    table.report-table tr { page-break-inside: avoid; break-inside: avoid; }
+    .art-card, .pkg-card { page-break-inside: avoid; break-inside: avoid; }
+    tr.cat-row { page-break-after: avoid; break-after: avoid; }
+    tr.sub-row { page-break-after: avoid; break-after: avoid; }
+  }
 </style>
 </head>
 <body>
-  <div class="header">
+  <div class="doc-header">
     <div>
       <h1>${escHtml(d.project.name)}</h1>
       <div class="summary">Reporte de presupuesto · Generado el ${escHtml(today)}</div>
     </div>
     <div class="meta">
       <div>${escHtml(d.project.name)}</div>
-      <div>TC ${formatNumber(Number(d.project.exchange_rate || 0), 0)} ${escHtml(d.project.local_currency || "")}</div>
-      <div>Importes en ${escHtml(cur)}</div>
+      <div>TC ${formatNumber(tc, 0)} ${escHtml(d.project.local_currency || "")}</div>
+      <div>Importes en ${escHtml(cur)}${totalAreaM2 > 0 ? ` · Área ${formatNumber(totalAreaM2, 0)} m²` : ""}</div>
     </div>
   </div>
   ${hierarchyHtml}
