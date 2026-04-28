@@ -180,9 +180,10 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
   useEffect(() => { loadData(); }, [loadData]);
 
   const tc = Number(project?.exchange_rate || 1);
+  // Sin decimales para que el reporte quede limpio.
   const fmt = (val: number) => showLocal
     ? formatNumber(convertCurrency(val, tc, "usd_to_local"), 0)
-    : formatNumber(val);
+    : formatNumber(val, 0);
   const currency = showLocal ? project?.local_currency || "LOCAL" : "USD";
 
   // Agregación por categoría (con desglose por sector y subcategorías)
@@ -422,8 +423,8 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
           <Table>
             <TableHeader>
               <TableRow className="bg-neutral-900 hover:bg-neutral-900">
-                <TableHead className="w-[120px] text-white font-semibold text-sm">Código</TableHead>
-                <TableHead className="text-white font-semibold text-sm">Descripción</TableHead>
+                <TableHead className="w-[110px] text-white font-semibold text-sm sticky left-0 z-30 bg-neutral-900">Código</TableHead>
+                <TableHead className="text-white font-semibold text-sm sticky left-[110px] z-30 bg-neutral-900 min-w-[260px]">Descripción</TableHead>
                 {showSectorCols && displayedSectors.map((s) => {
                   const m2 = Number(s.area_m2 || 0);
                   return (
@@ -437,8 +438,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                     </TableHead>
                   );
                 })}
-                <TableHead className="text-right whitespace-nowrap text-white font-semibold text-sm">Total ({currency})</TableHead>
-                <TableHead className="text-right whitespace-nowrap text-white font-semibold w-[80px] text-sm">%</TableHead>
+                <TableHead className="text-right whitespace-nowrap text-white font-semibold text-sm border-l-2 border-l-white/40">Total ({currency})</TableHead>
                 <TableHead className="text-right whitespace-nowrap text-white font-semibold text-sm">
                   <div className="leading-tight">
                     <div>{currency}/m²</div>
@@ -447,6 +447,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                     </div>
                   </div>
                 </TableHead>
+                <TableHead className="text-right whitespace-nowrap text-white font-semibold w-[80px] text-sm">%</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -460,7 +461,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                       className="font-semibold bg-neutral-100 cursor-pointer hover:bg-neutral-200/70 border-l-[3px] border-l-[#E87722] text-[15px]"
                       onClick={() => toggleExpanded(catId)}
                     >
-                      <TableCell>
+                      <TableCell className="sticky left-0 z-20 bg-neutral-100">
                         <span className="inline-flex items-center gap-1">
                           {isOpen
                             ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -468,7 +469,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                           <span className="text-[#E87722] font-mono">{cat.code}</span>
                         </span>
                       </TableCell>
-                      <TableCell>{cat.name}</TableCell>
+                      <TableCell className="sticky left-[110px] z-20 bg-neutral-100 min-w-[260px]">{cat.name}</TableCell>
                       {showSectorCols && displayedSectors.map((s) => {
                         const v = cat.bySector.get(s.id) || 0;
                         return (
@@ -477,12 +478,12 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                           </TableCell>
                         );
                       })}
-                      <TableCell className="text-right font-mono">{fmt(catTotal)}</TableCell>
-                      <TableCell className="text-right font-mono text-muted-foreground">
-                        {grandTotal > 0 ? `${((catTotal / grandTotal) * 100).toFixed(1)}%` : "—"}
-                      </TableCell>
+                      <TableCell className="text-right font-mono border-l-2 border-l-neutral-300">{fmt(catTotal)}</TableCell>
                       <TableCell className="text-right font-mono">
                         {totalAreaM2 > 0 ? fmt(perM2(catTotal)) : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-muted-foreground">
+                        {grandTotal > 0 ? `${((catTotal / grandTotal) * 100).toFixed(1)}%` : "—"}
                       </TableCell>
                     </TableRow>
                     {isOpen && Array.from(cat.subs.entries()).map(([subId, sub]) => {
@@ -497,7 +498,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                             className="bg-background cursor-pointer hover:bg-muted/30 text-sm"
                             onClick={() => toggleExpandedSub(subId)}
                           >
-                            <TableCell className="pl-8 text-muted-foreground">
+                            <TableCell className="pl-8 text-muted-foreground sticky left-0 z-20 bg-background">
                               <span className="inline-flex items-center gap-1">
                                 {arts.length > 0
                                   ? (subOpen
@@ -507,7 +508,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                 <span className="text-[#E87722] font-mono">{sub.code}</span>
                               </span>
                             </TableCell>
-                            <TableCell className="pl-8">{sub.name}</TableCell>
+                            <TableCell className="pl-8 sticky left-[110px] z-20 bg-background min-w-[260px]">{sub.name}</TableCell>
                             {showSectorCols && displayedSectors.map((s) => {
                               const v = sub.bySector.get(s.id) || 0;
                               return (
@@ -516,12 +517,12 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                 </TableCell>
                               );
                             })}
-                            <TableCell className="text-right font-mono">{fmt(subTotal)}</TableCell>
-                            <TableCell className="text-right font-mono text-muted-foreground">
-                              {grandTotal > 0 ? `${((subTotal / grandTotal) * 100).toFixed(1)}%` : "—"}
-                            </TableCell>
+                            <TableCell className="text-right font-mono border-l-2 border-l-neutral-300">{fmt(subTotal)}</TableCell>
                             <TableCell className="text-right font-mono">
                               {totalAreaM2 > 0 ? fmt(perM2(subTotal)) : <span className="text-muted-foreground">—</span>}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-muted-foreground">
+                              {grandTotal > 0 ? `${((subTotal / grandTotal) * 100).toFixed(1)}%` : "—"}
                             </TableCell>
                           </TableRow>
                           {subOpen && (
@@ -623,8 +624,8 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
               })}
               {/* Fila TOTAL */}
               <TableRow className={cn("font-bold border-t-2 border-neutral-900 bg-neutral-900 hover:bg-neutral-900")}>
-                <TableCell></TableCell>
-                <TableCell className="text-white uppercase tracking-wider text-xs">Total{isFiltered && <span className="normal-case ml-2">· {filterLabel}</span>}</TableCell>
+                <TableCell className="sticky left-0 z-20 bg-neutral-900"></TableCell>
+                <TableCell className="text-white uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-neutral-900 min-w-[260px]">Total{isFiltered && <span className="normal-case ml-2">· {filterLabel}</span>}</TableCell>
                 {showSectorCols && displayedSectors.map((s) => {
                   const v = grandBySector.get(s.id) || 0;
                   return (
@@ -633,12 +634,35 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                     </TableCell>
                   );
                 })}
-                <TableCell className="text-right font-mono text-[#E87722] text-base">{fmt(grandTotal)}</TableCell>
-                <TableCell className="text-right font-mono text-white">100.0%</TableCell>
+                <TableCell className="text-right font-mono text-[#E87722] text-base border-l-2 border-l-white/40">{fmt(grandTotal)}</TableCell>
                 <TableCell className="text-right font-mono text-[#E87722]">
                   {totalAreaM2 > 0 ? fmt(perM2(grandTotal)) : <span className="text-white/40">—</span>}
                 </TableCell>
+                <TableCell className="text-right font-mono text-white">100.0%</TableCell>
               </TableRow>
+
+              {/* Fila USD/m² por sector — sólo en vista detallada */}
+              {showSectorCols && (
+                <TableRow className="bg-neutral-800 hover:bg-neutral-800 text-sm">
+                  <TableCell className="sticky left-0 z-20 bg-neutral-800"></TableCell>
+                  <TableCell className="text-white/80 uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-neutral-800 min-w-[260px]">{currency}/m² por sector</TableCell>
+                  {displayedSectors.map((s) => {
+                    const cost = grandBySector.get(s.id) || 0;
+                    const sectorM2 = s.type === "fisico" ? Number(s.area_m2 || 0) : 0;
+                    const valuePerM2 = sectorM2 > 0 ? cost / sectorM2 : 0;
+                    return (
+                      <TableCell key={s.id} className="text-right font-mono text-white/90">
+                        {sectorM2 > 0
+                          ? fmt(valuePerM2)
+                          : <span className="text-white/40 text-xs italic">{s.type === "gastos_generales" ? "n/a" : "sin m²"}</span>}
+                      </TableCell>
+                    );
+                  })}
+                  <TableCell className="border-l-2 border-l-white/40"></TableCell>
+                  <TableCell></TableCell>
+                  <TableCell></TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>
