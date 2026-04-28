@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,6 +45,14 @@ export default function ProjectsPage() {
     local_currency: "PYG",
     exchange_rate: "7350",
   });
+  // Crear desde plantilla (import)
+  const [createMode, setCreateMode] = useState<"manual" | "template">("manual");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importParsing, setImportParsing] = useState(false);
+  const [importParsed, setImportParsed] = useState<ParsedImport | null>(null);
+  const [importErrors, setImportErrors] = useState<ImportError[]>([]);
+  const [importing, setImporting] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
   // Duplicate dialog state
   const [duplicateSource, setDuplicateSource] = useState<Project | null>(null);
   const [duplicateName, setDuplicateName] = useState("");
@@ -125,6 +133,73 @@ export default function ProjectsPage() {
       toast.success("Plantilla descargada");
     } catch (err) {
       toast.error(`Error al generar la plantilla: ${err instanceof Error ? err.message : "desconocido"}`);
+    }
+  }
+
+  function resetImportState() {
+    setImportFile(null);
+    setImportParsed(null);
+    setImportErrors([]);
+    setImportParsing(false);
+    setImporting(false);
+    if (importFileInputRef.current) importFileInputRef.current.value = "";
+  }
+
+  function handleDialogOpenChange(open: boolean) {
+    setDialogOpen(open);
+    if (!open) {
+      // Reset both forms
+      setNewProject({ name: "", project_type: "costo", local_currency: "PYG", exchange_rate: "7350" });
+      setCreateMode("manual");
+      resetImportState();
+    }
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportFile(file);
+    setImportParsing(true);
+    setImportParsed(null);
+    setImportErrors([]);
+    try {
+      const { parsed, errors } = await parseImportTemplate(file);
+      setImportParsed(parsed);
+      setImportErrors(errors);
+      if (errors.length === 0 && parsed) {
+        toast.success("Plantilla validada correctamente");
+      } else if (errors.length > 0) {
+        toast.error(`Se encontraron ${errors.length} error${errors.length === 1 ? "" : "es"} en la plantilla`);
+      }
+    } catch (err) {
+      toast.error(`Error al leer la plantilla: ${err instanceof Error ? err.message : "desconocido"}`);
+      setImportErrors([{ sheet: "Archivo", message: err instanceof Error ? err.message : "No se pudo leer el archivo." }]);
+    } finally {
+      setImportParsing(false);
+    }
+  }
+
+  async function submitImport() {
+    if (!importParsed || importing) return;
+    if (importErrors.length > 0) {
+      toast.error("Corregí los errores antes de continuar");
+      return;
+    }
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      toast.error("Sesión expirada — iniciá sesión nuevamente");
+      return;
+    }
+    setImporting(true);
+    try {
+      const projectId = await executeImport(importParsed, supabase, user.id);
+      toast.success("Proyecto creado desde plantilla");
+      handleDialogOpenChange(false);
+      router.push(`/project/${projectId}/settings`);
+    } catch (err) {
+      toast.error(`Error al importar: ${err instanceof Error ? err.message : "desconocido"}`);
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -244,7 +319,7 @@ export default function ProjectsPage() {
               <FileSpreadsheet className="h-4 w-4 mr-2" />
               Plantilla de importación
             </Button>
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
               <DialogTrigger
                 render={
                   <Button>
@@ -253,67 +328,221 @@ export default function ProjectsPage() {
                   </Button>
                 }
               />
-            <DialogContent>
+            <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>Nuevo Proyecto</DialogTitle>
                 <DialogDescription>
-                  Configura los datos básicos del proyecto
+                  Creá un proyecto manualmente o importalo desde una planilla.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={createProject} className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Nombre del proyecto</Label>
-                  <Input
-                    value={newProject.name}
-                    onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
-                    placeholder="Ej: Residencial Los Álamos"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Tipo de proyecto</Label>
-                  <Select
-                    value={newProject.project_type}
-                    onValueChange={(v) => v && setNewProject({ ...newProject, project_type: v as ProjectType })}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="costo">Costo interno</SelectItem>
-                      <SelectItem value="venta">Venta</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
+
+              {/* Mode tabs */}
+              <div className="flex items-center gap-1 border-b -mx-6 px-6">
+                <button
+                  type="button"
+                  onClick={() => setCreateMode("manual")}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                    createMode === "manual"
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Manual
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateMode("template")}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 ${
+                    createMode === "template"
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  Desde plantilla
+                </button>
+              </div>
+
+              {createMode === "manual" ? (
+                <form onSubmit={createProject} className="space-y-4">
                   <div className="space-y-2">
-                    <Label>Moneda local</Label>
-                    <Select
-                      value={newProject.local_currency}
-                      onValueChange={(v) => v && setNewProject({ ...newProject, local_currency: v })}
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {CURRENCIES.map((c) => (
-                          <SelectItem key={c.code} value={c.code}>
-                            {c.code} - {c.symbol}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Tipo de cambio</Label>
+                    <Label>Nombre del proyecto</Label>
                     <Input
-                      type="number"
-                      step="any"
-                      value={newProject.exchange_rate}
-                      onChange={(e) => setNewProject({ ...newProject, exchange_rate: e.target.value })}
-                      placeholder="1 USD = ?"
+                      value={newProject.name}
+                      onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
+                      placeholder="Ej: Residencial Los Álamos"
                       required
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label>Tipo de proyecto</Label>
+                    <Select
+                      value={newProject.project_type}
+                      onValueChange={(v) => v && setNewProject({ ...newProject, project_type: v as ProjectType })}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="costo">Costo interno</SelectItem>
+                        <SelectItem value="venta">Venta</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Moneda local</Label>
+                      <Select
+                        value={newProject.local_currency}
+                        onValueChange={(v) => v && setNewProject({ ...newProject, local_currency: v })}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {CURRENCIES.map((c) => (
+                            <SelectItem key={c.code} value={c.code}>
+                              {c.code} - {c.symbol}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Tipo de cambio</Label>
+                      <Input
+                        type="number"
+                        step="any"
+                        value={newProject.exchange_rate}
+                        onChange={(e) => setNewProject({ ...newProject, exchange_rate: e.target.value })}
+                        placeholder="1 USD = ?"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <Button type="submit" className="w-full">Crear Proyecto</Button>
+                </form>
+              ) : (
+                <div className="space-y-4">
+                  {/* Step 1: file picker */}
+                  <div className="space-y-2">
+                    <Label>Archivo de la plantilla (.xlsx)</Label>
+                    <input
+                      ref={importFileInputRef}
+                      type="file"
+                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      onChange={handleImportFile}
+                      className="hidden"
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => importFileInputRef.current?.click()}
+                        disabled={importParsing || importing}
+                      >
+                        <FileSpreadsheet className="h-4 w-4 mr-2" />
+                        {importFile ? "Cambiar archivo" : "Seleccionar archivo"}
+                      </Button>
+                      {importFile && (
+                        <span className="text-sm text-muted-foreground truncate" title={importFile.name}>
+                          {importFile.name}
+                        </span>
+                      )}
+                    </div>
+                    {!importFile && (
+                      <p className="text-xs text-muted-foreground">
+                        ¿Aún no tenés la plantilla? Descargala con el botón <span className="font-medium">Plantilla de importación</span>.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Step 2: parsing indicator */}
+                  {importParsing && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Leyendo y validando la plantilla…
+                    </div>
+                  )}
+
+                  {/* Step 3: errors */}
+                  {!importParsing && importErrors.length > 0 && (
+                    <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm">
+                      <div className="flex items-center gap-2 font-medium text-red-700 mb-2">
+                        <AlertTriangle className="h-4 w-4" />
+                        {importErrors.length} {importErrors.length === 1 ? "error encontrado" : "errores encontrados"}
+                      </div>
+                      <ul className="space-y-1 text-red-700 max-h-40 overflow-y-auto pl-4 list-disc">
+                        {importErrors.slice(0, 30).map((err, i) => (
+                          <li key={i}>
+                            <span className="font-mono text-xs">[{err.sheet}{err.row ? `:${err.row}` : ""}]</span>{" "}
+                            {err.message}
+                          </li>
+                        ))}
+                        {importErrors.length > 30 && (
+                          <li className="italic">…y {importErrors.length - 30} más.</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Step 4: preview */}
+                  {!importParsing && importParsed && importErrors.length === 0 && (
+                    <div className="rounded-md border bg-muted/30 p-3 space-y-2 text-sm">
+                      <div className="font-medium">Vista previa</div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                        <div className="text-muted-foreground">Nombre</div>
+                        <div className="font-medium truncate">{importParsed.project.name}</div>
+                        <div className="text-muted-foreground">Tipo</div>
+                        <div>{importParsed.project.project_type === "costo" ? "Costo interno" : "Venta"}</div>
+                        <div className="text-muted-foreground">Moneda local</div>
+                        <div>{importParsed.project.local_currency}</div>
+                        <div className="text-muted-foreground">Tipo de cambio</div>
+                        <div>{importParsed.project.exchange_rate}</div>
+                      </div>
+                      <div className="border-t pt-2 grid grid-cols-3 gap-2 text-xs">
+                        <div className="text-center">
+                          <div className="text-lg font-semibold">{importParsed.sectors.length}</div>
+                          <div className="text-muted-foreground">Sectores</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-semibold">{importParsed.edt.length}</div>
+                          <div className="text-muted-foreground">EDT</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-semibold">{importParsed.insumos.length}</div>
+                          <div className="text-muted-foreground">Insumos</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-semibold">{importParsed.articulos.length}</div>
+                          <div className="text-muted-foreground">Articulos</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-semibold">{importParsed.compositions.length}</div>
+                          <div className="text-muted-foreground">Composiciones</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-semibold">{importParsed.quantifications.length}</div>
+                          <div className="text-muted-foreground">Cuantif.</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Step 5: submit */}
+                  <Button
+                    type="button"
+                    className="w-full"
+                    onClick={submitImport}
+                    disabled={!importParsed || importErrors.length > 0 || importing || importParsing}
+                  >
+                    {importing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Creando proyecto…
+                      </>
+                    ) : (
+                      "Crear Proyecto"
+                    )}
+                  </Button>
                 </div>
-                <Button type="submit" className="w-full">Crear Proyecto</Button>
-              </form>
+              )}
             </DialogContent>
             </Dialog>
           </div>
@@ -628,6 +857,510 @@ export default function ProjectsPage() {
       </main>
     </div>
   );
+}
+
+/* ─────────────────────── Parser e Importer (Excel → Proyecto) ─────────────────────── */
+
+interface ParsedProject {
+  name: string;
+  project_type: "costo" | "venta";
+  local_currency: string;
+  exchange_rate: number;
+  client?: string | null;
+  location?: string | null;
+  estimated_start?: string | null;
+  responsible?: string | null;
+  proration_criteria?: "area" | "cantidad" | "manual";
+  number_format?: "es" | "en";
+}
+interface ParsedSector { order: number; name: string; type: "fisico" | "funcional"; area_m2: number | null; }
+interface ParsedEdtRow {
+  categoria_code: string;
+  categoria_name: string;
+  categoria_order: number | null;
+  subcategoria_code: string | null;
+  subcategoria_name: string | null;
+  subcategoria_order: number | null;
+}
+interface ParsedInsumo {
+  code: number | null;
+  type: "material" | "mano_de_obra" | "servicio";
+  family: string | null;
+  description: string;
+  unit: string;
+  pu_usd: number | null;
+  pu_local: number | null;
+  currency_input: "USD" | "local" | null;
+  reference: string | null;
+}
+interface ParsedArticulo {
+  number: number | null;
+  description: string;
+  unit: string;
+  profit_pct: number | null;
+  comment: string | null;
+}
+interface ParsedComposition {
+  articulo_ref: string;
+  insumo_ref: string;
+  quantity: number;
+  waste_pct: number | null;
+  margin_pct: number | null;
+}
+interface ParsedQuantification {
+  categoria_code: string;
+  subcategoria_code: string;
+  sector_name: string;
+  articulo_ref: string;
+  quantity: number;
+  comment: string | null;
+}
+interface ParsedImport {
+  project: ParsedProject;
+  sectors: ParsedSector[];
+  edt: ParsedEdtRow[];
+  insumos: ParsedInsumo[];
+  articulos: ParsedArticulo[];
+  compositions: ParsedComposition[];
+  quantifications: ParsedQuantification[];
+}
+interface ImportError { sheet: string; row?: number; message: string; }
+
+// Lee una celda como string limpio (trim, "" → null)
+function cellStr(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  // exceljs RichText / hyperlink etc. — extraer .text si está
+  if (typeof v === "object" && v !== null) {
+    const obj = v as { text?: string; result?: unknown; richText?: { text: string }[]; hyperlink?: string };
+    if (typeof obj.text === "string") return obj.text.trim() || null;
+    if (Array.isArray(obj.richText)) return obj.richText.map((r) => r.text).join("").trim() || null;
+    if (typeof obj.result === "string") return obj.result.trim() || null;
+    if (typeof obj.result === "number") return String(obj.result);
+  }
+  const s = String(v).trim();
+  return s === "" ? null : s;
+}
+function cellNum(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number") return v;
+  if (typeof v === "object" && v !== null && "result" in v) {
+    const r = (v as { result: unknown }).result;
+    if (typeof r === "number") return r;
+  }
+  const s = String(v).replace(/,/g, ".").trim();
+  if (s === "") return null;
+  const n = Number(s);
+  return isFinite(n) ? n : null;
+}
+
+async function parseImportTemplate(file: File): Promise<{ parsed: ParsedImport | null; errors: ImportError[] }> {
+  const errors: ImportError[] = [];
+  const ExcelJS = await import("exceljs");
+  const wb = new ExcelJS.Workbook();
+  const buf = await file.arrayBuffer();
+  await wb.xlsx.load(buf);
+
+  function getWs(name: string) {
+    const ws = wb.getWorksheet(name);
+    if (!ws) errors.push({ sheet: name, message: `Falta la hoja "${name}" en el archivo.` });
+    return ws;
+  }
+  // Las plantillas tienen filas 1-3 = título/descripción/spacing, 4 = header, 5 = hints, 6+ = datos.
+  const DATA_START = 6;
+
+  // ── 1.Proyecto ──
+  let project: ParsedProject | null = null;
+  const wsP = getWs("1.Proyecto");
+  if (wsP) {
+    const row = wsP.getRow(DATA_START);
+    const name = cellStr(row.getCell(1).value);
+    const project_type = cellStr(row.getCell(2).value)?.toLowerCase();
+    const local_currency = cellStr(row.getCell(3).value)?.toUpperCase();
+    const exchange_rate = cellNum(row.getCell(4).value);
+    if (!name) errors.push({ sheet: "1.Proyecto", row: DATA_START, message: "name es obligatorio" });
+    if (project_type !== "costo" && project_type !== "venta") {
+      errors.push({ sheet: "1.Proyecto", row: DATA_START, message: `project_type debe ser "costo" o "venta" (vino: "${project_type ?? ""}")` });
+    }
+    if (!local_currency) errors.push({ sheet: "1.Proyecto", row: DATA_START, message: "local_currency es obligatorio" });
+    if (!exchange_rate || exchange_rate <= 0) errors.push({ sheet: "1.Proyecto", row: DATA_START, message: "exchange_rate debe ser > 0" });
+    if (name && project_type && local_currency && exchange_rate && exchange_rate > 0) {
+      project = {
+        name,
+        project_type: project_type as "costo" | "venta",
+        local_currency,
+        exchange_rate,
+        client: cellStr(row.getCell(5).value),
+        location: cellStr(row.getCell(6).value),
+        estimated_start: cellStr(row.getCell(7).value),
+        responsible: cellStr(row.getCell(8).value),
+        proration_criteria: (cellStr(row.getCell(9).value)?.toLowerCase() as "area" | "cantidad" | "manual" | undefined) || "area",
+        number_format: (cellStr(row.getCell(10).value)?.toLowerCase() as "es" | "en" | undefined) || "es",
+      };
+    }
+  }
+
+  // ── 2.Sectores ──
+  const sectors: ParsedSector[] = [];
+  const wsS = getWs("2.Sectores");
+  if (wsS) {
+    for (let r = DATA_START; r <= wsS.rowCount; r++) {
+      const row = wsS.getRow(r);
+      const orderN = cellNum(row.getCell(1).value);
+      const name = cellStr(row.getCell(2).value);
+      const type = cellStr(row.getCell(3).value)?.toLowerCase();
+      const area_m2 = cellNum(row.getCell(4).value);
+      if (!name && !orderN && !type) continue; // fila vacía
+      if (!name) { errors.push({ sheet: "2.Sectores", row: r, message: "name es obligatorio" }); continue; }
+      if (type !== "fisico" && type !== "funcional") {
+        errors.push({ sheet: "2.Sectores", row: r, message: `type debe ser "fisico" o "funcional"` }); continue;
+      }
+      sectors.push({ order: orderN ?? sectors.length + 1, name, type: type as "fisico" | "funcional", area_m2 });
+    }
+  }
+
+  // ── 3.EDT ──
+  const edt: ParsedEdtRow[] = [];
+  const wsE = getWs("3.EDT");
+  if (wsE) {
+    for (let r = DATA_START; r <= wsE.rowCount; r++) {
+      const row = wsE.getRow(r);
+      const cc = cellStr(row.getCell(1).value);
+      const cn = cellStr(row.getCell(2).value);
+      if (!cc && !cn) continue;
+      if (!cc) { errors.push({ sheet: "3.EDT", row: r, message: "categoria_code es obligatorio" }); continue; }
+      if (!cn) { errors.push({ sheet: "3.EDT", row: r, message: "categoria_name es obligatorio" }); continue; }
+      edt.push({
+        categoria_code: cc,
+        categoria_name: cn,
+        categoria_order: cellNum(row.getCell(3).value),
+        subcategoria_code: cellStr(row.getCell(4).value),
+        subcategoria_name: cellStr(row.getCell(5).value),
+        subcategoria_order: cellNum(row.getCell(6).value),
+      });
+    }
+  }
+
+  // ── 4.Insumos ──
+  const insumos: ParsedInsumo[] = [];
+  const wsI = getWs("4.Insumos");
+  if (wsI) {
+    for (let r = DATA_START; r <= wsI.rowCount; r++) {
+      const row = wsI.getRow(r);
+      const description = cellStr(row.getCell(4).value);
+      const type = cellStr(row.getCell(2).value)?.toLowerCase();
+      const unit = cellStr(row.getCell(5).value);
+      if (!description && !type && !unit) continue;
+      if (!description) { errors.push({ sheet: "4.Insumos", row: r, message: "description es obligatorio" }); continue; }
+      if (type !== "material" && type !== "mano_de_obra" && type !== "servicio") {
+        errors.push({ sheet: "4.Insumos", row: r, message: `type debe ser material | mano_de_obra | servicio` }); continue;
+      }
+      if (!unit) { errors.push({ sheet: "4.Insumos", row: r, message: "unit es obligatorio" }); continue; }
+      const pu_usd = cellNum(row.getCell(6).value);
+      const pu_local = cellNum(row.getCell(7).value);
+      const currency_input = cellStr(row.getCell(8).value)?.toUpperCase() === "USD"
+        ? "USD"
+        : cellStr(row.getCell(8).value)?.toLowerCase() === "local"
+          ? "local"
+          : null;
+      insumos.push({
+        code: cellNum(row.getCell(1).value),
+        type: type as "material" | "mano_de_obra" | "servicio",
+        family: cellStr(row.getCell(3).value),
+        description,
+        unit,
+        pu_usd,
+        pu_local,
+        currency_input,
+        reference: cellStr(row.getCell(9).value),
+      });
+    }
+  }
+
+  // ── 5.Articulos ──
+  const articulos: ParsedArticulo[] = [];
+  const wsA = getWs("5.Articulos");
+  if (wsA) {
+    for (let r = DATA_START; r <= wsA.rowCount; r++) {
+      const row = wsA.getRow(r);
+      const description = cellStr(row.getCell(2).value);
+      const unit = cellStr(row.getCell(3).value);
+      if (!description && !unit) continue;
+      if (!description) { errors.push({ sheet: "5.Articulos", row: r, message: "description es obligatorio" }); continue; }
+      if (!unit) { errors.push({ sheet: "5.Articulos", row: r, message: "unit es obligatorio" }); continue; }
+      articulos.push({
+        number: cellNum(row.getCell(1).value),
+        description,
+        unit,
+        profit_pct: cellNum(row.getCell(4).value),
+        comment: cellStr(row.getCell(5).value),
+      });
+    }
+  }
+
+  // ── 6.Composiciones ──
+  const compositions: ParsedComposition[] = [];
+  const wsC = getWs("6.Composiciones");
+  if (wsC) {
+    for (let r = DATA_START; r <= wsC.rowCount; r++) {
+      const row = wsC.getRow(r);
+      const articulo_ref = cellStr(row.getCell(1).value);
+      const insumo_ref = cellStr(row.getCell(2).value);
+      const quantity = cellNum(row.getCell(3).value);
+      if (!articulo_ref && !insumo_ref) continue;
+      if (!articulo_ref) { errors.push({ sheet: "6.Composiciones", row: r, message: "articulo_ref es obligatorio" }); continue; }
+      if (!insumo_ref) { errors.push({ sheet: "6.Composiciones", row: r, message: "insumo_ref es obligatorio" }); continue; }
+      if (quantity === null || quantity <= 0) { errors.push({ sheet: "6.Composiciones", row: r, message: "quantity debe ser > 0" }); continue; }
+      compositions.push({
+        articulo_ref,
+        insumo_ref,
+        quantity,
+        waste_pct: cellNum(row.getCell(4).value),
+        margin_pct: cellNum(row.getCell(5).value),
+      });
+    }
+  }
+
+  // ── 7.Cuantificacion ──
+  const quantifications: ParsedQuantification[] = [];
+  const wsQ = getWs("7.Cuantificacion");
+  if (wsQ) {
+    for (let r = DATA_START; r <= wsQ.rowCount; r++) {
+      const row = wsQ.getRow(r);
+      const cc = cellStr(row.getCell(1).value);
+      const sc = cellStr(row.getCell(2).value);
+      const sec = cellStr(row.getCell(3).value);
+      const aref = cellStr(row.getCell(4).value);
+      const qty = cellNum(row.getCell(5).value);
+      if (!cc && !sc && !sec && !aref) continue;
+      if (!cc) { errors.push({ sheet: "7.Cuantificacion", row: r, message: "categoria_code es obligatorio" }); continue; }
+      if (!sc) { errors.push({ sheet: "7.Cuantificacion", row: r, message: "subcategoria_code es obligatorio" }); continue; }
+      if (!sec) { errors.push({ sheet: "7.Cuantificacion", row: r, message: "sector_name es obligatorio" }); continue; }
+      if (!aref) { errors.push({ sheet: "7.Cuantificacion", row: r, message: "articulo_ref es obligatorio" }); continue; }
+      if (qty === null || qty <= 0) { errors.push({ sheet: "7.Cuantificacion", row: r, message: "quantity debe ser > 0" }); continue; }
+      quantifications.push({
+        categoria_code: cc,
+        subcategoria_code: sc,
+        sector_name: sec,
+        articulo_ref: aref,
+        quantity: qty,
+        comment: cellStr(row.getCell(6).value),
+      });
+    }
+  }
+
+  if (!project) return { parsed: null, errors };
+
+  // Cross-reference validation
+  const sectorNames = new Set(sectors.map((s) => s.name));
+  const catCodes = new Set(edt.map((e) => e.categoria_code));
+  const subCodes = new Set(edt.filter((e) => e.subcategoria_code).map((e) => e.subcategoria_code!));
+  const articuloRefs = new Set([
+    ...articulos.map((a) => a.description),
+    ...articulos.filter((a) => a.number != null).map((a) => String(a.number)),
+  ]);
+  const insumoRefs = new Set([
+    ...insumos.map((i) => i.description),
+    ...insumos.filter((i) => i.code != null).map((i) => String(i.code)),
+  ]);
+  compositions.forEach((c, idx) => {
+    if (!articuloRefs.has(c.articulo_ref)) {
+      errors.push({ sheet: "6.Composiciones", row: DATA_START + idx, message: `articulo_ref "${c.articulo_ref}" no existe en 5.Articulos` });
+    }
+    if (!insumoRefs.has(c.insumo_ref)) {
+      errors.push({ sheet: "6.Composiciones", row: DATA_START + idx, message: `insumo_ref "${c.insumo_ref}" no existe en 4.Insumos` });
+    }
+  });
+  quantifications.forEach((q, idx) => {
+    if (!catCodes.has(q.categoria_code)) {
+      errors.push({ sheet: "7.Cuantificacion", row: DATA_START + idx, message: `categoria_code "${q.categoria_code}" no existe en 3.EDT` });
+    }
+    if (!subCodes.has(q.subcategoria_code)) {
+      errors.push({ sheet: "7.Cuantificacion", row: DATA_START + idx, message: `subcategoria_code "${q.subcategoria_code}" no existe en 3.EDT` });
+    }
+    if (!sectorNames.has(q.sector_name)) {
+      errors.push({ sheet: "7.Cuantificacion", row: DATA_START + idx, message: `sector_name "${q.sector_name}" no existe en 2.Sectores` });
+    }
+    if (!articuloRefs.has(q.articulo_ref)) {
+      errors.push({ sheet: "7.Cuantificacion", row: DATA_START + idx, message: `articulo_ref "${q.articulo_ref}" no existe en 5.Articulos` });
+    }
+  });
+
+  return {
+    parsed: { project, sectors, edt, insumos, articulos, compositions, quantifications },
+    errors,
+  };
+}
+
+interface SupabaseLikeClient { from: (table: string) => { insert: (...args: unknown[]) => unknown; delete: (...args: unknown[]) => unknown; }; }
+
+async function executeImport(parsed: ParsedImport, supabase: ReturnType<typeof createClient>, userId: string): Promise<string> {
+  // 1. Crear proyecto
+  const { data: project, error: pErr } = await supabase
+    .from("projects")
+    .insert({
+      name: parsed.project.name,
+      project_type: parsed.project.project_type,
+      local_currency: parsed.project.local_currency,
+      exchange_rate: parsed.project.exchange_rate,
+      client: parsed.project.client || null,
+      location: parsed.project.location || null,
+      estimated_start: parsed.project.estimated_start || null,
+      responsible: parsed.project.responsible || null,
+      proration_criteria: parsed.project.proration_criteria || "area",
+      number_format: parsed.project.number_format || "es",
+      created_by: userId,
+    })
+    .select()
+    .single();
+  if (pErr || !project) throw new Error(`No se pudo crear el proyecto: ${pErr?.message || "desconocido"}`);
+  const projectId = (project as { id: string }).id;
+
+  try {
+    // 2. Versión inicial de TC
+    await supabase.from("exchange_rate_versions").insert({
+      project_id: projectId, version: 1, rate: parsed.project.exchange_rate,
+    });
+
+    // 3. Sectores → mapa por nombre
+    const sectorByName = new Map<string, string>();
+    if (parsed.sectors.length > 0) {
+      const rows = parsed.sectors.map((s) => ({
+        project_id: projectId, name: s.name, type: s.type, area_m2: s.area_m2, order: s.order,
+      }));
+      const { data, error } = await supabase.from("sectors").insert(rows).select();
+      if (error) throw new Error(`Error al crear sectores: ${error.message}`);
+      (data as { id: string; name: string }[]).forEach((s) => sectorByName.set(s.name, s.id));
+    }
+
+    // 4. Categorías EDT (únicas por code)
+    const catByCode = new Map<string, string>();
+    const uniqueCats = new Map<string, { code: string; name: string; order: number }>();
+    parsed.edt.forEach((e) => {
+      if (!uniqueCats.has(e.categoria_code)) {
+        uniqueCats.set(e.categoria_code, {
+          code: e.categoria_code,
+          name: e.categoria_name,
+          order: e.categoria_order ?? uniqueCats.size,
+        });
+      }
+    });
+    if (uniqueCats.size > 0) {
+      const rows = Array.from(uniqueCats.values()).map((c) => ({
+        project_id: projectId, code: c.code, name: c.name, order: c.order,
+      }));
+      const { data, error } = await supabase.from("edt_categories").insert(rows).select();
+      if (error) throw new Error(`Error al crear categorías EDT: ${error.message}`);
+      (data as { id: string; code: string }[]).forEach((c) => catByCode.set(c.code, c.id));
+    }
+
+    // 5. Subcategorías
+    const subByCode = new Map<string, string>();
+    const subRows = parsed.edt
+      .filter((e) => e.subcategoria_code && e.subcategoria_name)
+      .map((e) => ({
+        project_id: projectId,
+        category_id: catByCode.get(e.categoria_code)!,
+        code: e.subcategoria_code!,
+        name: e.subcategoria_name!,
+        order: e.subcategoria_order ?? 0,
+      }));
+    if (subRows.length > 0) {
+      const { data, error } = await supabase.from("edt_subcategories").insert(subRows).select();
+      if (error) throw new Error(`Error al crear subcategorías EDT: ${error.message}`);
+      (data as { id: string; code: string }[]).forEach((s) => subByCode.set(s.code, s.id));
+    }
+
+    // 6. Insumos
+    const insumoByRef = new Map<string, string>();
+    if (parsed.insumos.length > 0) {
+      const rows = parsed.insumos.map((i) => ({
+        project_id: projectId,
+        type: i.type,
+        family: i.family || null,
+        description: i.description,
+        unit: i.unit,
+        pu_usd: i.pu_usd ?? null,
+        pu_local: i.pu_local ?? null,
+        currency_input: i.currency_input ?? (i.pu_usd != null ? "USD" : "local"),
+        reference: i.reference || null,
+        created_by: userId,
+        origin: "planning",
+      }));
+      const { data, error } = await supabase.from("insumos").insert(rows).select();
+      if (error) throw new Error(`Error al crear insumos: ${error.message}`);
+      (data as { id: string; description: string; code: number }[]).forEach((ins, idx) => {
+        insumoByRef.set(ins.description, ins.id);
+        if (ins.code != null) insumoByRef.set(String(ins.code), ins.id);
+        // También aceptar el code original que el usuario haya cargado
+        const userCode = parsed.insumos[idx].code;
+        if (userCode != null) insumoByRef.set(String(userCode), ins.id);
+      });
+    }
+
+    // 7. Articulos
+    const articuloByRef = new Map<string, string>();
+    if (parsed.articulos.length > 0) {
+      const rows = parsed.articulos.map((a) => ({
+        project_id: projectId,
+        description: a.description,
+        unit: a.unit,
+        profit_pct: a.profit_pct ?? 0,
+        comment: a.comment || null,
+        created_by: userId,
+      }));
+      const { data, error } = await supabase.from("articulos").insert(rows).select();
+      if (error) throw new Error(`Error al crear articulos: ${error.message}`);
+      (data as { id: string; description: string; number: number }[]).forEach((art, idx) => {
+        articuloByRef.set(art.description, art.id);
+        if (art.number != null) articuloByRef.set(String(art.number), art.id);
+        const userNum = parsed.articulos[idx].number;
+        if (userNum != null) articuloByRef.set(String(userNum), art.id);
+      });
+    }
+
+    // 8. Composiciones
+    if (parsed.compositions.length > 0) {
+      const rows = parsed.compositions
+        .map((c) => ({
+          articulo_id: articuloByRef.get(c.articulo_ref),
+          insumo_id: insumoByRef.get(c.insumo_ref),
+          quantity: c.quantity,
+          waste_pct: c.waste_pct ?? 0,
+          margin_pct: c.margin_pct ?? 0,
+        }))
+        .filter((r) => r.articulo_id && r.insumo_id);
+      if (rows.length > 0) {
+        const { error } = await supabase.from("articulo_compositions").insert(rows);
+        if (error) throw new Error(`Error al crear composiciones: ${error.message}`);
+      }
+    }
+
+    // 9. Cuantificación
+    if (parsed.quantifications.length > 0) {
+      const rows = parsed.quantifications
+        .map((q, idx) => ({
+          project_id: projectId,
+          category_id: catByCode.get(q.categoria_code),
+          subcategory_id: subByCode.get(q.subcategoria_code),
+          sector_id: sectorByName.get(q.sector_name),
+          articulo_id: articuloByRef.get(q.articulo_ref),
+          quantity: q.quantity,
+          comment: q.comment || null,
+          line_number: idx + 1,
+        }))
+        .filter((r) => r.category_id && r.subcategory_id && r.sector_id && r.articulo_id);
+      if (rows.length > 0) {
+        const { error } = await supabase.from("quantification_lines").insert(rows);
+        if (error) throw new Error(`Error al crear cuantificación: ${error.message}`);
+      }
+    }
+
+    return projectId;
+  } catch (err) {
+    // Rollback: borrar el proyecto (cascade limpia el resto)
+    await supabase.from("projects").delete().eq("id", projectId);
+    throw err;
+  }
 }
 
 /* ─────────────────────── Plantilla de importación ─────────────────────── */
