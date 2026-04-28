@@ -14,13 +14,12 @@ import {
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -30,7 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatNumber, convertCurrency } from "@/lib/utils/formula";
 import type { Project, Sector, Articulo } from "@/lib/types/database";
-import { DollarSign, ChevronDown, ChevronRight, Package, Boxes } from "lucide-react";
+import { DollarSign, ChevronDown, ChevronRight, Package, Boxes, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface BudgetRow {
@@ -106,7 +105,9 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true);
   const [showLocal, setShowLocal] = useState(false);
   const [viewMode, setViewMode] = useState<"simple" | "detailed">("simple"); // "simple" = sin columnas por sector
-  const [sectorFilter, setSectorFilter] = useState<string>("all"); // "all" o sector_id
+  // Filtro multi-selección. Set vacío = todos los sectores (sin filtro).
+  const [selectedSectors, setSelectedSectors] = useState<Set<string>>(new Set());
+  const [sectorPickerOpen, setSectorPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set()); // category ids con desglose visible
   const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set()); // subcategory ids con artículos visibles
   const [selectedArt, setSelectedArt] = useState<ArticuloRollup | null>(null); // articulo abierto en el modal
@@ -221,21 +222,23 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
     grandBySector.set(r.sector_id, (grandBySector.get(r.sector_id) || 0) + r.total_usd);
   }
 
-  // Aplicar filtro de sector: si "all", usa todo. Si sector_id, sólo ese.
-  const isFiltered = sectorFilter !== "all";
-  const filteredTotal = (byMap: Map<string, number>) => isFiltered
-    ? (byMap.get(sectorFilter) || 0)
-    : Array.from(byMap.values()).reduce((s, v) => s + v, 0);
+  // Aplicar filtro multi-sector. Si selectedSectors está vacío => sin filtro (todos).
+  const isFiltered = selectedSectors.size > 0;
+  const filteredTotal = (byMap: Map<string, number>) => {
+    if (!isFiltered) return Array.from(byMap.values()).reduce((s, v) => s + v, 0);
+    let sum = 0;
+    for (const id of selectedSectors) sum += byMap.get(id) || 0;
+    return sum;
+  };
 
   const grandTotal = isFiltered
-    ? (grandBySector.get(sectorFilter) || 0)
+    ? Array.from(selectedSectors).reduce((s, id) => s + (grandBySector.get(id) || 0), 0)
     : budgetData.reduce((s, r) => s + r.total_usd, 0);
 
-  // Área total de construcción: sólo sectores físicos marcados como is_construction
-  // (en settings se puede destildar p.ej. estacionamientos, calle lateral, pasillos).
-  // Si hay filtro de sector, considera ese sector individual (suma su m² si es físico).
+  // Área total de construcción: sólo sectores marcados como is_construction.
+  // Si hay filtro, sólo los seleccionados que sean construcción.
   const totalAreaM2 = (() => {
-    const target = isFiltered ? sectors.filter((s) => s.id === sectorFilter) : sectors;
+    const target = isFiltered ? sectors.filter((s) => selectedSectors.has(s.id)) : sectors;
     return target.filter((s) => s.is_construction).reduce((acc, sc) => acc + Number(sc.area_m2 || 0), 0);
   })();
   const perM2 = (val: number) => (totalAreaM2 > 0 ? val / totalAreaM2 : 0);
@@ -314,9 +317,14 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
   const sectorsWithData = sectors.filter((s) => grandBySector.has(s.id));
   const sectorList = sectorsWithData.length > 0 ? sectorsWithData : sectors;
   // Cuando viewMode = "detailed" mostramos columnas por sector. Si hay filtro, sólo el sector seleccionado.
-  const displayedSectors = isFiltered ? sectorList.filter((s) => s.id === sectorFilter) : sectorList;
+  const displayedSectors = isFiltered ? sectorList.filter((s) => selectedSectors.has(s.id)) : sectorList;
   const showSectorCols = viewMode === "detailed";
-  const filterLabel = isFiltered ? sectorList.find((s) => s.id === sectorFilter)?.name || "" : "";
+  const filterLabel = (() => {
+    if (!isFiltered) return "";
+    const names = sectorList.filter((s) => selectedSectors.has(s.id)).map((s) => s.name);
+    if (names.length === 1) return names[0];
+    return `${names.length} sectores`;
+  })();
 
   return (
     <div className="space-y-6">
@@ -382,18 +390,72 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
           </button>
         </div>
 
-        {/* Sector filter */}
+        {/* Sector multi-filter */}
         <div className="flex items-center gap-2">
-          <Label className="text-sm">Sector:</Label>
-          <Select value={sectorFilter} onValueChange={(v) => v && setSectorFilter(v)}>
-            <SelectTrigger className="w-[220px] h-9"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los sectores</SelectItem>
-              {sectorList.map((s) => (
-                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Label className="text-sm">Sectores:</Label>
+          <Popover open={sectorPickerOpen} onOpenChange={setSectorPickerOpen}>
+            <PopoverTrigger
+              render={
+                <Button variant="outline" className="w-[240px] h-9 justify-between font-normal">
+                  <span className="flex items-center gap-2 truncate">
+                    <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">
+                      {!isFiltered
+                        ? "Todos los sectores"
+                        : selectedSectors.size === 1
+                          ? filterLabel
+                          : `${selectedSectors.size} de ${sectorList.length} sectores`}
+                    </span>
+                  </span>
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                </Button>
+              }
+            />
+            <PopoverContent align="start" className="w-[280px] p-0">
+              <div className="flex items-center justify-between p-2 border-b text-xs">
+                <button
+                  type="button"
+                  className="text-foreground hover:underline"
+                  onClick={() => setSelectedSectors(new Set(sectorList.map((s) => s.id)))}
+                >
+                  Seleccionar todos
+                </button>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:underline"
+                  onClick={() => setSelectedSectors(new Set())}
+                >
+                  Limpiar (todos)
+                </button>
+              </div>
+              <div className="max-h-[320px] overflow-y-auto p-1">
+                {sectorList.map((s) => {
+                  const checked = selectedSectors.has(s.id);
+                  return (
+                    <label
+                      key={s.id}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted cursor-pointer text-sm"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(v) => {
+                          setSelectedSectors((prev) => {
+                            const next = new Set(prev);
+                            if (v) next.add(s.id); else next.delete(s.id);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span className="flex-1 truncate">{s.name}</span>
+                      <span className="text-[10px] text-muted-foreground uppercase">
+                        {s.type === "fisico" ? "FIS" : "GG"}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
 
         <Button variant="outline" size="sm" onClick={expandAll} disabled={categoryTotals.size === 0}>
