@@ -503,8 +503,20 @@ export function ProveedoresTab({ projectId }: Props) {
               .sort((a, b) => (b.issue_date || "").localeCompare(a.issue_date || ""));
             const ocCount = supplierOrders.filter((o) => o.status !== "cancelled").length;
 
-            function printSupplierReport() {
+            async function printSupplierReport() {
               if (!project) return;
+              // Embeber el logo como data-URI para que sobreviva al window.open()
+              // donde los paths relativos a /public no se resuelven igual.
+              let logoDataUri: string | null = null;
+              try {
+                const logoResp = await fetch("/logo-horizontal.svg");
+                if (logoResp.ok) {
+                  const logoSvg = await logoResp.text();
+                  logoDataUri = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(logoSvg)))}`;
+                }
+              } catch {
+                // Si falla el fetch, el HTML cae al texto sin logo.
+              }
               const html = buildSupplierReportHtml({
                 supplier: s!,
                 project,
@@ -514,6 +526,7 @@ export function ProveedoresTab({ projectId }: Props) {
                 payments,
                 tc,
                 paymentTermsLabel: s!.payment_terms ? PAYMENT_TERMS_LABELS[s!.payment_terms] : null,
+                logoDataUri,
               });
               const w = window.open("", "_blank", "width=1024,height=768");
               if (!w) {
@@ -1066,10 +1079,11 @@ interface ReportInput {
   payments: Payment[];
   tc: number;
   paymentTermsLabel: string | null;
+  logoDataUri: string | null;
 }
 
 function buildSupplierReportHtml(input: ReportInput): string {
-  const { supplier, project, stats, supplierOrders, invoices, payments, tc, paymentTermsLabel } = input;
+  const { supplier, project, stats, supplierOrders, invoices, payments, tc, paymentTermsLabel, logoDataUri } = input;
   const locale = getNumberLocale();
   const esc = (v: string | null | undefined) =>
     (v == null ? "" : String(v)).replace(/[&<>"']/g, (c) =>
@@ -1263,6 +1277,9 @@ function buildSupplierReportHtml(input: ReportInput): string {
     margin-bottom: 4px;
   }
   .header .meta { text-align: right; font-size: 10px; color: #737373; line-height: 1.5; }
+  .header .meta .brand-logo { display: inline-block; height: 36px; margin-bottom: 4px; }
+  .header .meta .brand-name { font-weight: 600; color: #0A0A0A; }
+  .header .meta .generated { font-size: 9px; color: #737373; }
   .summary { font-size: 11px; color: #737373; margin-top: 4px; }
   .ficha {
     display: grid;
@@ -1370,8 +1387,10 @@ function buildSupplierReportHtml(input: ReportInput): string {
       </div>
     </div>
     <div class="meta">
-      MasterPlan Connect<br />
-      Generado el ${esc(today)}
+      ${logoDataUri
+        ? `<img src="${logoDataUri}" alt="MasterPlan Connect" class="brand-logo" />`
+        : `<span class="brand-name">MasterPlan Connect</span>`}
+      <div class="generated">Generado el ${esc(today)}</div>
     </div>
   </div>
 
