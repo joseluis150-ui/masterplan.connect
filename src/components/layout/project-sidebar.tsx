@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ClipboardList,
   ShoppingCart,
+  FileText,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Project } from "@/lib/types/database";
@@ -28,6 +29,7 @@ const PLANNING_ITEMS = [
   { label: "Cuantificación", href: "cuantificacion", icon: Calculator },
   { label: "Cronograma", href: "cronograma", icon: Calendar },
   { label: "Paquetes", href: "paquetes", icon: Truck },
+  { label: "Reportes", href: "reportes", icon: FileText },
 ];
 
 interface ProjectSidebarProps {
