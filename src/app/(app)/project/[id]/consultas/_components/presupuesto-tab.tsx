@@ -419,7 +419,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
       ) : (
-        <div className="border rounded-lg overflow-x-auto">
+        <div className="border rounded-lg overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="bg-neutral-900 hover:bg-neutral-900">
