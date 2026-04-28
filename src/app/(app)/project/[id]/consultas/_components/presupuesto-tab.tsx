@@ -420,10 +420,10 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
         </Card>
       ) : (
         <div className="border rounded-lg overflow-hidden">
-          <Table>
+          <Table className="border-separate border-spacing-0 [&_tr]:border-b-0 [&_td]:border-b [&_td]:border-border [&_th]:border-b [&_th]:border-border">
             <TableHeader>
               <TableRow className="bg-neutral-900 hover:bg-neutral-900">
-                <TableHead className="w-[110px] text-white font-semibold text-sm sticky left-0 z-30 bg-neutral-900">Código</TableHead>
+                <TableHead className="w-[110px] min-w-[110px] max-w-[110px] text-white font-semibold text-sm sticky left-0 z-30 bg-neutral-900">Código</TableHead>
                 <TableHead className="text-white font-semibold text-sm sticky left-[110px] z-30 bg-neutral-900 min-w-[260px]">Descripción</TableHead>
                 {showSectorCols && displayedSectors.map((s) => {
                   const m2 = Number(s.area_m2 || 0);
@@ -461,7 +461,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                       className="font-semibold bg-neutral-100 cursor-pointer hover:bg-neutral-200/70 border-l-[3px] border-l-[#E87722] text-[15px]"
                       onClick={() => toggleExpanded(catId)}
                     >
-                      <TableCell className="sticky left-0 z-20 bg-neutral-100">
+                      <TableCell className="sticky left-0 z-20 bg-neutral-100 w-[110px] min-w-[110px] max-w-[110px]">
                         <span className="inline-flex items-center gap-1">
                           {isOpen
                             ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -498,7 +498,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                             className="bg-background cursor-pointer hover:bg-muted/30 text-sm"
                             onClick={() => toggleExpandedSub(subId)}
                           >
-                            <TableCell className="pl-8 text-muted-foreground sticky left-0 z-20 bg-background">
+                            <TableCell className="pl-4 text-muted-foreground sticky left-0 z-20 bg-background w-[110px] min-w-[110px] max-w-[110px]">
                               <span className="inline-flex items-center gap-1">
                                 {arts.length > 0
                                   ? (subOpen
@@ -624,7 +624,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
               })}
               {/* Fila TOTAL */}
               <TableRow className={cn("font-bold border-t-2 border-neutral-900 bg-neutral-900 hover:bg-neutral-900")}>
-                <TableCell className="sticky left-0 z-20 bg-neutral-900"></TableCell>
+                <TableCell className="sticky left-0 z-20 bg-neutral-900 w-[110px] min-w-[110px] max-w-[110px]"></TableCell>
                 <TableCell className="text-white uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-neutral-900 min-w-[260px]">Total{isFiltered && <span className="normal-case ml-2">· {filterLabel}</span>}</TableCell>
                 {showSectorCols && displayedSectors.map((s) => {
                   const v = grandBySector.get(s.id) || 0;
@@ -643,22 +643,22 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
 
               {/* Fila USD/m² por sector — sólo en vista detallada */}
               {showSectorCols && (
-                <TableRow className="bg-neutral-800 hover:bg-neutral-800 text-sm">
-                  <TableCell className="sticky left-0 z-20 bg-neutral-800"></TableCell>
-                  <TableCell className="text-white/80 uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-neutral-800 min-w-[260px]">{currency}/m² por sector</TableCell>
+                <TableRow className="bg-background hover:bg-background text-sm">
+                  <TableCell className="sticky left-0 z-20 bg-background w-[110px] min-w-[110px] max-w-[110px]"></TableCell>
+                  <TableCell className="text-muted-foreground uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-background min-w-[260px]">{currency}/m² por sector</TableCell>
                   {displayedSectors.map((s) => {
                     const cost = grandBySector.get(s.id) || 0;
                     const sectorM2 = s.type === "fisico" ? Number(s.area_m2 || 0) : 0;
                     const valuePerM2 = sectorM2 > 0 ? cost / sectorM2 : 0;
                     return (
-                      <TableCell key={s.id} className="text-right font-mono text-white/90">
+                      <TableCell key={s.id} className="text-right font-mono text-muted-foreground">
                         {sectorM2 > 0
                           ? fmt(valuePerM2)
-                          : <span className="text-white/40 text-xs italic">{s.type === "gastos_generales" ? "n/a" : "sin m²"}</span>}
+                          : <span className="text-muted-foreground/50 text-xs italic">{s.type === "gastos_generales" ? "n/a" : "sin m²"}</span>}
                       </TableCell>
                     );
                   })}
-                  <TableCell className="border-l-2 border-l-white/40"></TableCell>
+                  <TableCell className="border-l-2 border-l-neutral-300"></TableCell>
                   <TableCell></TableCell>
                   <TableCell></TableCell>
                 </TableRow>
