@@ -94,7 +94,17 @@ interface CatAgg {
   subs: Map<string, SubAgg>;
 }
 
-export function PresupuestoTab({ projectId }: { projectId: string }) {
+type DisplayMode = "abs" | "per_m2";
+
+export function PresupuestoTab({
+  projectId,
+  mode = "abs",
+}: {
+  projectId: string;
+  /** "abs" = montos absolutos, "per_m2" = todos los montos divididos por m² */
+  mode?: DisplayMode;
+}) {
+  const isPerM2 = mode === "per_m2";
   const [budgetData, setBudgetData] = useState<BudgetRow[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [sectors, setSectors] = useState<Sector[]>([]);
@@ -241,7 +251,30 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
     const target = isFiltered ? sectors.filter((s) => selectedSectors.has(s.id)) : sectors;
     return target.filter((s) => s.is_construction).reduce((acc, sc) => acc + Number(sc.area_m2 || 0), 0);
   })();
+  // Área total del proyecto (sin filtro). La uso para dividir el costo de los
+  // sectores tipo "gastos_generales" — su costo aplica a todo el proyecto.
+  const projectAreaM2 = sectors
+    .filter((s) => s.is_construction)
+    .reduce((acc, sc) => acc + Number(sc.area_m2 || 0), 0);
   const perM2 = (val: number) => (totalAreaM2 > 0 ? val / totalAreaM2 : 0);
+
+  /**
+   * Formatea una celda de monto respetando el modo (abs vs per_m2).
+   * - Si sector está provisto: la celda corresponde a un sector específico.
+   *   En per_m2 divide por su área (físico) o por la del proyecto (gastos_generales).
+   * - Si sector NO está provisto: es una celda Total (cat/sub/art/grandTotal).
+   *   En per_m2 divide por totalAreaM2 (m² de construcción del proyecto/filtro).
+   */
+  const fmtAmount = (value: number, sector?: Sector): string => {
+    if (!isPerM2) return fmt(value);
+    let area = 0;
+    if (sector) {
+      area = sector.type === "fisico" ? Number(sector.area_m2 || 0) : projectAreaM2;
+    } else {
+      area = totalAreaM2;
+    }
+    return area > 0 ? fmt(value / area) : "—";
+  };
 
   function toggleExpanded(catId: string) {
     setExpanded((prev) => {
@@ -330,13 +363,22 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
     <div className="space-y-6">
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        {/* En modo per_m2 la card principal es el costo por m² (orange highlight),
+            y la secundaria es el monto absoluto. En modo abs es al revés. */}
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-sm text-muted-foreground mb-1">
-              Total{isFiltered && <span className="font-medium text-foreground"> · {filterLabel}</span>}
+              {isPerM2 ? "Costo por m²" : "Total"}
+              {isFiltered && <span className="font-medium text-foreground"> · {filterLabel}</span>}
             </p>
             <p className="text-3xl font-bold leading-tight">
-              {fmt(grandTotal)} <span className="text-base font-normal text-muted-foreground">{currency}</span>
+              {isPerM2 ? (
+                totalAreaM2 > 0
+                  ? <>{fmt(perM2(grandTotal))} <span className="text-base font-normal text-muted-foreground">{currency}/m²</span></>
+                  : <span className="text-muted-foreground text-lg font-normal">—</span>
+              ) : (
+                <>{fmt(grandTotal)} <span className="text-base font-normal text-muted-foreground">{currency}</span></>
+              )}
             </p>
           </CardContent>
         </Card>
@@ -354,11 +396,15 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-muted-foreground mb-1">Costo por m²</p>
+            <p className="text-sm text-muted-foreground mb-1">{isPerM2 ? "Total" : "Costo por m²"}</p>
             <p className="text-3xl font-bold leading-tight">
-              {totalAreaM2 > 0
-                ? <>{fmt(perM2(grandTotal))} <span className="text-base font-normal text-muted-foreground">{currency}/m²</span></>
-                : <span className="text-muted-foreground text-lg font-normal">—</span>}
+              {isPerM2 ? (
+                <>{fmt(grandTotal)} <span className="text-base font-normal text-muted-foreground">{currency}</span></>
+              ) : (
+                totalAreaM2 > 0
+                  ? <>{fmt(perM2(grandTotal))} <span className="text-base font-normal text-muted-foreground">{currency}/m²</span></>
+                  : <span className="text-muted-foreground text-lg font-normal">—</span>
+              )}
             </p>
           </CardContent>
         </Card>
@@ -507,15 +553,28 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                     </TableHead>
                   );
                 })}
-                <TableHead className="text-right whitespace-nowrap text-white font-semibold text-sm border-l-2 border-l-white/40">Total ({currency})</TableHead>
-                <TableHead className="text-right whitespace-nowrap text-white font-semibold text-sm">
-                  <div className="leading-tight">
-                    <div>{currency}/m²</div>
-                    <div className="text-[11px] font-normal text-white/60">
-                      {totalAreaM2 > 0 ? `${formatNumber(totalAreaM2, 0)} m²` : "sin m²"}
+                <TableHead className="text-right whitespace-nowrap text-white font-semibold text-sm border-l-2 border-l-white/40">
+                  {isPerM2 ? (
+                    <div className="leading-tight">
+                      <div>Total {currency}/m²</div>
+                      <div className="text-[11px] font-normal text-white/60">
+                        {totalAreaM2 > 0 ? `${formatNumber(totalAreaM2, 0)} m²` : "sin m²"}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <>Total ({currency})</>
+                  )}
                 </TableHead>
+                {!isPerM2 && (
+                  <TableHead className="text-right whitespace-nowrap text-white font-semibold text-sm">
+                    <div className="leading-tight">
+                      <div>{currency}/m²</div>
+                      <div className="text-[11px] font-normal text-white/60">
+                        {totalAreaM2 > 0 ? `${formatNumber(totalAreaM2, 0)} m²` : "sin m²"}
+                      </div>
+                    </div>
+                  </TableHead>
+                )}
                 <TableHead className="text-right whitespace-nowrap text-white font-semibold w-[80px] text-sm">%</TableHead>
               </TableRow>
             </TableHeader>
@@ -543,14 +602,16 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                         const v = cat.bySector.get(s.id) || 0;
                         return (
                           <TableCell key={s.id} className="text-right font-mono">
-                            {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
+                            {v > 0 ? fmtAmount(v, s) : <span className="text-muted-foreground">—</span>}
                           </TableCell>
                         );
                       })}
-                      <TableCell className="text-right font-mono border-l-2 border-l-neutral-300">{fmt(catTotal)}</TableCell>
-                      <TableCell className="text-right font-mono">
-                        {totalAreaM2 > 0 ? fmt(perM2(catTotal)) : <span className="text-muted-foreground">—</span>}
-                      </TableCell>
+                      <TableCell className="text-right font-mono border-l-2 border-l-neutral-300">{fmtAmount(catTotal)}</TableCell>
+                      {!isPerM2 && (
+                        <TableCell className="text-right font-mono">
+                          {totalAreaM2 > 0 ? fmt(perM2(catTotal)) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                      )}
                       <TableCell className="text-right font-mono text-muted-foreground">
                         {grandTotal > 0 ? `${((catTotal / grandTotal) * 100).toFixed(1)}%` : "—"}
                       </TableCell>
@@ -582,14 +643,16 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                               const v = sub.bySector.get(s.id) || 0;
                               return (
                                 <TableCell key={s.id} className="text-right font-mono">
-                                  {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
+                                  {v > 0 ? fmtAmount(v, s) : <span className="text-muted-foreground">—</span>}
                                 </TableCell>
                               );
                             })}
-                            <TableCell className="text-right font-mono border-l-2 border-l-neutral-300">{fmt(subTotal)}</TableCell>
-                            <TableCell className="text-right font-mono">
-                              {totalAreaM2 > 0 ? fmt(perM2(subTotal)) : <span className="text-muted-foreground">—</span>}
-                            </TableCell>
+                            <TableCell className="text-right font-mono border-l-2 border-l-neutral-300">{fmtAmount(subTotal)}</TableCell>
+                            {!isPerM2 && (
+                              <TableCell className="text-right font-mono">
+                                {totalAreaM2 > 0 ? fmt(perM2(subTotal)) : <span className="text-muted-foreground">—</span>}
+                              </TableCell>
+                            )}
                             <TableCell className="text-right font-mono text-muted-foreground">
                               {grandTotal > 0 ? `${((subTotal / grandTotal) * 100).toFixed(1)}%` : "—"}
                             </TableCell>
@@ -622,7 +685,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                                 {s.name}
                                               </th>
                                             ))}
-                                            <th className="text-right px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[130px]">Total ({currency})</th>
+                                            <th className="text-right px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[130px]">{isPerM2 ? `Total ${currency}/m²` : `Total (${currency})`}</th>
                                           </tr>
                                         </thead>
                                         <tbody>
@@ -652,12 +715,12 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                                   return (
                                                     <td key={s.id} className="px-3 py-2 text-right font-mono">
                                                       {v > 0
-                                                        ? fmt(v)
+                                                        ? fmtAmount(v, s)
                                                         : <span className="text-muted-foreground">—</span>}
                                                     </td>
                                                   );
                                                 })}
-                                                <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(aTotal)}</td>
+                                                <td className="px-3 py-2 text-right font-mono font-semibold">{fmtAmount(aTotal)}</td>
                                               </tr>
                                             );
                                           })}
@@ -669,12 +732,12 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                               const v = arts.reduce((sum, a) => sum + (a.costBySector.get(s.id) || 0), 0);
                                               return (
                                                 <td key={s.id} className="px-3 py-2 text-right font-mono text-white">
-                                                  {v > 0 ? fmt(v) : <span className="text-white/40">—</span>}
+                                                  {v > 0 ? fmtAmount(v, s) : <span className="text-white/40">—</span>}
                                                 </td>
                                               );
                                             })}
                                             <td className="px-3 py-2 text-right font-mono text-[#E87722]">
-                                              {fmt(arts.reduce((s, a) => s + filteredTotal(a.costBySector), 0))}
+                                              {fmtAmount(arts.reduce((s, a) => s + filteredTotal(a.costBySector), 0))}
                                             </td>
                                           </tr>
                                         </tbody>
@@ -699,25 +762,23 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                   const v = grandBySector.get(s.id) || 0;
                   return (
                     <TableCell key={s.id} className="text-right font-mono text-white">
-                      {v > 0 ? fmt(v) : <span className="text-white/40">—</span>}
+                      {v > 0 ? fmtAmount(v, s) : <span className="text-white/40">—</span>}
                     </TableCell>
                   );
                 })}
-                <TableCell className="text-right font-mono text-[#E87722] text-base border-l-2 border-l-white/40">{fmt(grandTotal)}</TableCell>
-                <TableCell className="text-right font-mono text-[#E87722]">
-                  {totalAreaM2 > 0 ? fmt(perM2(grandTotal)) : <span className="text-white/40">—</span>}
-                </TableCell>
+                <TableCell className="text-right font-mono text-[#E87722] text-base border-l-2 border-l-white/40">{fmtAmount(grandTotal)}</TableCell>
+                {!isPerM2 && (
+                  <TableCell className="text-right font-mono text-[#E87722]">
+                    {totalAreaM2 > 0 ? fmt(perM2(grandTotal)) : <span className="text-white/40">—</span>}
+                  </TableCell>
+                )}
                 <TableCell className="text-right font-mono text-white">100.0%</TableCell>
               </TableRow>
 
-              {/* Fila USD/m² por sector — sólo en vista detallada.
-                  Para sectores físicos: costo / area propia.
-                  Para gastos_generales (Rubros Generales): costo / area total del proyecto. */}
-              {showSectorCols && (() => {
-                // Área del proyecto = m² de los sectores marcados como construcción
-                const projectAreaM2 = sectors
-                  .filter((s) => s.is_construction)
-                  .reduce((acc, sc) => acc + Number(sc.area_m2 || 0), 0);
+              {/* Fila USD/m² por sector — sólo en vista detallada Y modo absoluto.
+                  En modo per_m2 toda la tabla ya muestra USD/m² así que esta fila
+                  es redundante y se omite. */}
+              {showSectorCols && !isPerM2 && (() => {
                 return (
                   <TableRow className="bg-background hover:bg-background text-sm">
                     <TableCell className="sticky left-0 z-20 bg-background w-[110px] min-w-[110px] max-w-[110px]"></TableCell>

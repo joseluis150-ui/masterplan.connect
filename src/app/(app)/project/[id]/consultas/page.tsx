@@ -2,15 +2,16 @@
 
 import { useState, use } from "react";
 import { cn } from "@/lib/utils";
-import { DollarSign, TrendingUp, BarChart3 } from "lucide-react";
+import { DollarSign, TrendingUp, BarChart3, Ruler } from "lucide-react";
 import { PresupuestoTab } from "./_components/presupuesto-tab";
 import { FlujoTab } from "./_components/flujo-tab";
 import { DashboardTab } from "./_components/dashboard-tab";
 
-type TabKey = "presupuesto" | "flujo" | "dashboard";
+type TabKey = "presupuesto" | "presupuesto_m2" | "flujo" | "dashboard";
 
 const TABS: { key: TabKey; label: string; icon: typeof DollarSign }[] = [
   { key: "presupuesto", label: "Presupuesto", icon: DollarSign },
+  { key: "presupuesto_m2", label: "Presupuesto / m²", icon: Ruler },
   { key: "flujo", label: "Flujo de Efectivo", icon: TrendingUp },
   { key: "dashboard", label: "Dashboard", icon: BarChart3 },
 ];
@@ -52,8 +53,11 @@ export default function ConsultasPage({ params }: { params: Promise<{ id: string
         </div>
       </div>
 
-      {/* Tab content */}
-      {activeTab === "presupuesto" && <PresupuestoTab projectId={projectId} />}
+      {/* Tab content. PresupuestoTab se monta una sola vez por modo
+          (key distinto) para que cada vista tenga su propio state local
+          (filtros, expansiones, etc.). */}
+      {activeTab === "presupuesto" && <PresupuestoTab key="abs" projectId={projectId} mode="abs" />}
+      {activeTab === "presupuesto_m2" && <PresupuestoTab key="per_m2" projectId={projectId} mode="per_m2" />}
       {activeTab === "flujo" && <FlujoTab projectId={projectId} />}
       {activeTab === "dashboard" && <DashboardTab projectId={projectId} />}
     </div>
