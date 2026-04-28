@@ -15,6 +15,13 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -98,6 +105,8 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
   const [compsByArticulo, setCompsByArticulo] = useState<Map<string, Omit<InsumoCompRow, "totalQuantity" | "total">[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [showLocal, setShowLocal] = useState(false);
+  const [viewMode, setViewMode] = useState<"simple" | "detailed">("simple"); // "simple" = sin columnas por sector
+  const [sectorFilter, setSectorFilter] = useState<string>("all"); // "all" o sector_id
   const [expanded, setExpanded] = useState<Set<string>>(new Set()); // category ids con desglose visible
   const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set()); // subcategory ids con artículos visibles
   const [selectedArt, setSelectedArt] = useState<ArticuloRollup | null>(null); // articulo abierto en el modal
@@ -205,12 +214,29 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
     sub.bySector.set(row.sector_id, (sub.bySector.get(row.sector_id) || 0) + row.total_usd);
   }
 
-  const grandTotal = budgetData.reduce((s, r) => s + r.total_usd, 0);
+  // Total general (sin filtros)
   const grandBySector = new Map<string, number>();
   for (const r of budgetData) {
     grandBySector.set(r.sector_id, (grandBySector.get(r.sector_id) || 0) + r.total_usd);
   }
-  const totalAreaM2 = sectors.reduce((s, sc) => s + Number(sc.area_m2 || 0), 0);
+
+  // Aplicar filtro de sector: si "all", usa todo. Si sector_id, sólo ese.
+  const isFiltered = sectorFilter !== "all";
+  const filteredTotal = (byMap: Map<string, number>) => isFiltered
+    ? (byMap.get(sectorFilter) || 0)
+    : Array.from(byMap.values()).reduce((s, v) => s + v, 0);
+
+  const grandTotal = isFiltered
+    ? (grandBySector.get(sectorFilter) || 0)
+    : budgetData.reduce((s, r) => s + r.total_usd, 0);
+
+  // Área total: sólo sectores físicos (los "gastos_generales" no tienen área propia,
+  // su area_m2 representa el total del proyecto y duplica al sumarse).
+  // Si hay filtro de sector, área = la del sector seleccionado (sólo si físico).
+  const totalAreaM2 = (() => {
+    const target = isFiltered ? sectors.filter((s) => s.id === sectorFilter) : sectors;
+    return target.filter((s) => s.type === "fisico").reduce((acc, sc) => acc + Number(sc.area_m2 || 0), 0);
+  })();
   const perM2 = (val: number) => (totalAreaM2 > 0 ? val / totalAreaM2 : 0);
 
   function toggleExpanded(catId: string) {
@@ -286,6 +312,10 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
   // Sectores que efectivamente tienen al menos una línea de presupuesto
   const sectorsWithData = sectors.filter((s) => grandBySector.has(s.id));
   const sectorList = sectorsWithData.length > 0 ? sectorsWithData : sectors;
+  // Cuando viewMode = "detailed" mostramos columnas por sector. Si hay filtro, sólo el sector seleccionado.
+  const displayedSectors = isFiltered ? sectorList.filter((s) => s.id === sectorFilter) : sectorList;
+  const showSectorCols = viewMode === "detailed";
+  const filterLabel = isFiltered ? sectorList.find((s) => s.id === sectorFilter)?.name || "" : "";
 
   return (
     <div className="space-y-6">
@@ -293,29 +323,33 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-muted-foreground mb-1">Total</p>
-            <p className="text-2xl font-bold">
-              {fmt(grandTotal)} <span className="text-sm font-normal">{currency}</span>
+            <p className="text-sm text-muted-foreground mb-1">
+              Total{isFiltered && <span className="font-medium text-foreground"> · {filterLabel}</span>}
+            </p>
+            <p className="text-3xl font-bold leading-tight">
+              {fmt(grandTotal)} <span className="text-base font-normal text-muted-foreground">{currency}</span>
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-muted-foreground mb-1">Área total</p>
-            <p className="text-2xl font-bold">
+            <p className="text-sm text-muted-foreground mb-1">
+              Área {isFiltered ? "del sector" : "total del proyecto"}
+            </p>
+            <p className="text-3xl font-bold leading-tight">
               {totalAreaM2 > 0
-                ? <>{formatNumber(totalAreaM2, 0)} <span className="text-sm font-normal">m²</span></>
-                : <span className="text-muted-foreground text-base font-normal">— sin áreas cargadas</span>}
+                ? <>{formatNumber(totalAreaM2, 0)} <span className="text-base font-normal text-muted-foreground">m²</span></>
+                : <span className="text-muted-foreground text-lg font-normal">— sin áreas</span>}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
             <p className="text-sm text-muted-foreground mb-1">Costo por m²</p>
-            <p className="text-2xl font-bold">
+            <p className="text-3xl font-bold leading-tight">
               {totalAreaM2 > 0
-                ? <>{fmt(perM2(grandTotal))} <span className="text-sm font-normal">{currency}/m²</span></>
-                : <span className="text-muted-foreground text-base font-normal">—</span>}
+                ? <>{fmt(perM2(grandTotal))} <span className="text-base font-normal text-muted-foreground">{currency}/m²</span></>
+                : <span className="text-muted-foreground text-lg font-normal">—</span>}
             </p>
           </CardContent>
         </Card>
@@ -323,6 +357,44 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
 
       {/* Controls */}
       <div className="flex gap-2 items-center flex-wrap">
+        {/* View mode toggle */}
+        <div className="inline-flex rounded-md border bg-background overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setViewMode("simple")}
+            className={cn(
+              "px-3 py-1.5 text-sm font-medium transition-colors",
+              viewMode === "simple" ? "bg-neutral-900 text-white" : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            Simplificado
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("detailed")}
+            className={cn(
+              "px-3 py-1.5 text-sm font-medium transition-colors border-l",
+              viewMode === "detailed" ? "bg-neutral-900 text-white" : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            Detallado por sector
+          </button>
+        </div>
+
+        {/* Sector filter */}
+        <div className="flex items-center gap-2">
+          <Label className="text-sm">Sector:</Label>
+          <Select value={sectorFilter} onValueChange={(v) => v && setSectorFilter(v)}>
+            <SelectTrigger className="w-[220px] h-9"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los sectores</SelectItem>
+              {sectorList.map((s) => (
+                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         <Button variant="outline" size="sm" onClick={expandAll} disabled={categoryTotals.size === 0}>
           Expandir todo
         </Button>
@@ -350,28 +422,28 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
           <Table>
             <TableHeader>
               <TableRow className="bg-neutral-900 hover:bg-neutral-900">
-                <TableHead className="w-[110px] text-white font-semibold">Código</TableHead>
-                <TableHead className="text-white font-semibold">Descripción</TableHead>
-                {sectorList.map((s) => {
+                <TableHead className="w-[120px] text-white font-semibold text-sm">Código</TableHead>
+                <TableHead className="text-white font-semibold text-sm">Descripción</TableHead>
+                {showSectorCols && displayedSectors.map((s) => {
                   const m2 = Number(s.area_m2 || 0);
                   return (
-                    <TableHead key={s.id} className="text-right whitespace-nowrap text-white font-semibold">
+                    <TableHead key={s.id} className="text-right whitespace-nowrap text-white font-semibold text-sm">
                       <div className="leading-tight">
                         <div>{s.name}</div>
-                        <div className="text-[10px] font-normal text-white/60">
-                          {m2 > 0 ? `${formatNumber(m2, 0)} m²` : "sin m²"}
+                        <div className="text-[11px] font-normal text-white/60">
+                          {s.type === "fisico" && m2 > 0 ? `${formatNumber(m2, 0)} m²` : s.type === "gastos_generales" ? "GG" : "sin m²"}
                         </div>
                       </div>
                     </TableHead>
                   );
                 })}
-                <TableHead className="text-right whitespace-nowrap text-white font-semibold">Total ({currency})</TableHead>
-                <TableHead className="text-right whitespace-nowrap text-white font-semibold w-[80px]">%</TableHead>
-                <TableHead className="text-right whitespace-nowrap text-white font-semibold">
+                <TableHead className="text-right whitespace-nowrap text-white font-semibold text-sm">Total ({currency})</TableHead>
+                <TableHead className="text-right whitespace-nowrap text-white font-semibold w-[80px] text-sm">%</TableHead>
+                <TableHead className="text-right whitespace-nowrap text-white font-semibold text-sm">
                   <div className="leading-tight">
                     <div>{currency}/m²</div>
-                    <div className="text-[10px] font-normal text-white/60">
-                      {totalAreaM2 > 0 ? `${formatNumber(totalAreaM2, 0)} m² total` : "sin m²"}
+                    <div className="text-[11px] font-normal text-white/60">
+                      {totalAreaM2 > 0 ? `${formatNumber(totalAreaM2, 0)} m²` : "sin m²"}
                     </div>
                   </div>
                 </TableHead>
@@ -380,22 +452,24 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
             <TableBody>
               {Array.from(categoryTotals.entries()).map(([catId, cat]) => {
                 const isOpen = expanded.has(catId);
+                const catTotal = filteredTotal(cat.bySector);
+                if (isFiltered && catTotal === 0) return null; // ocultar categorías sin datos en el sector
                 return (
                   <React.Fragment key={catId}>
                     <TableRow
-                      className="font-semibold bg-neutral-100 cursor-pointer hover:bg-neutral-200/70 border-l-[3px] border-l-[#E87722]"
+                      className="font-semibold bg-neutral-100 cursor-pointer hover:bg-neutral-200/70 border-l-[3px] border-l-[#E87722] text-[15px]"
                       onClick={() => toggleExpanded(catId)}
                     >
                       <TableCell>
                         <span className="inline-flex items-center gap-1">
                           {isOpen
-                            ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                            : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                            ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                            : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
                           <span className="text-[#E87722] font-mono">{cat.code}</span>
                         </span>
                       </TableCell>
                       <TableCell>{cat.name}</TableCell>
-                      {sectorList.map((s) => {
+                      {showSectorCols && displayedSectors.map((s) => {
                         const v = cat.bySector.get(s.id) || 0;
                         return (
                           <TableCell key={s.id} className="text-right font-mono">
@@ -403,49 +477,51 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                           </TableCell>
                         );
                       })}
-                      <TableCell className="text-right font-mono">{fmt(cat.total)}</TableCell>
+                      <TableCell className="text-right font-mono">{fmt(catTotal)}</TableCell>
                       <TableCell className="text-right font-mono text-muted-foreground">
-                        {grandTotal > 0 ? `${((cat.total / grandTotal) * 100).toFixed(1)}%` : "—"}
+                        {grandTotal > 0 ? `${((catTotal / grandTotal) * 100).toFixed(1)}%` : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {totalAreaM2 > 0 ? fmt(perM2(cat.total)) : <span className="text-muted-foreground">—</span>}
+                        {totalAreaM2 > 0 ? fmt(perM2(catTotal)) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
                     </TableRow>
                     {isOpen && Array.from(cat.subs.entries()).map(([subId, sub]) => {
                       const subOpen = expandedSubs.has(subId);
                       const arts = articulosBySub.get(subId) || [];
-                      const colSpanFull = 5 + sectorList.length; // toda la fila
+                      const subTotal = filteredTotal(sub.bySector);
+                      if (isFiltered && subTotal === 0) return null;
+                      const colSpanFull = 5 + (showSectorCols ? displayedSectors.length : 0); // toda la fila
                       return (
                         <React.Fragment key={subId}>
                           <TableRow
-                            className="bg-background cursor-pointer hover:bg-muted/30"
+                            className="bg-background cursor-pointer hover:bg-muted/30 text-sm"
                             onClick={() => toggleExpandedSub(subId)}
                           >
                             <TableCell className="pl-8 text-muted-foreground">
                               <span className="inline-flex items-center gap-1">
                                 {arts.length > 0
                                   ? (subOpen
-                                    ? <ChevronDown className="h-3 w-3" />
-                                    : <ChevronRight className="h-3 w-3" />)
-                                  : <span className="inline-block w-3" />}
-                                <span className="text-[#E87722] font-mono text-xs">{sub.code}</span>
+                                    ? <ChevronDown className="h-3.5 w-3.5" />
+                                    : <ChevronRight className="h-3.5 w-3.5" />)
+                                  : <span className="inline-block w-3.5" />}
+                                <span className="text-[#E87722] font-mono">{sub.code}</span>
                               </span>
                             </TableCell>
                             <TableCell className="pl-8">{sub.name}</TableCell>
-                            {sectorList.map((s) => {
+                            {showSectorCols && displayedSectors.map((s) => {
                               const v = sub.bySector.get(s.id) || 0;
                               return (
-                                <TableCell key={s.id} className="text-right font-mono text-sm">
+                                <TableCell key={s.id} className="text-right font-mono">
                                   {v > 0 ? fmt(v) : <span className="text-muted-foreground">—</span>}
                                 </TableCell>
                               );
                             })}
-                            <TableCell className="text-right font-mono text-sm">{fmt(sub.total)}</TableCell>
-                            <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                              {grandTotal > 0 ? `${((sub.total / grandTotal) * 100).toFixed(1)}%` : "—"}
+                            <TableCell className="text-right font-mono">{fmt(subTotal)}</TableCell>
+                            <TableCell className="text-right font-mono text-muted-foreground">
+                              {grandTotal > 0 ? `${((subTotal / grandTotal) * 100).toFixed(1)}%` : "—"}
                             </TableCell>
-                            <TableCell className="text-right font-mono text-sm">
-                              {totalAreaM2 > 0 ? fmt(perM2(sub.total)) : <span className="text-muted-foreground">—</span>}
+                            <TableCell className="text-right font-mono">
+                              {totalAreaM2 > 0 ? fmt(perM2(subTotal)) : <span className="text-muted-foreground">—</span>}
                             </TableCell>
                           </TableRow>
                           {subOpen && (
@@ -465,57 +541,61 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                     </p>
                                   ) : (
                                     <div className="border rounded-md overflow-hidden bg-background">
-                                      <table className="w-full text-xs">
+                                      <table className="w-full text-sm">
                                         <thead>
                                           <tr className="bg-neutral-900">
-                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[70px]">Cód.</th>
-                                            <th className="text-left px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white">Artículo</th>
-                                            <th className="text-center px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[60px]">Unidad</th>
-                                            {sectorList.map((s) => (
-                                              <th key={s.id} className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white whitespace-nowrap">
+                                            <th className="text-left px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[80px]">Cód.</th>
+                                            <th className="text-left px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white">Artículo</th>
+                                            <th className="text-center px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[70px]">Unidad</th>
+                                            {showSectorCols && displayedSectors.map((s) => (
+                                              <th key={s.id} className="text-right px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white whitespace-nowrap">
                                                 {s.name}
                                               </th>
                                             ))}
-                                            <th className="text-right px-3 py-2 font-semibold text-[10px] uppercase tracking-wider text-white w-[120px]">Total ({currency})</th>
+                                            <th className="text-right px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[130px]">Total ({currency})</th>
                                           </tr>
                                         </thead>
                                         <tbody>
-                                          {arts.map((a) => (
-                                            <tr
-                                              key={a.articuloId}
-                                              className="border-t hover:bg-muted/10 cursor-pointer"
-                                              onClick={() => setSelectedArt(a)}
-                                              title="Ver insumos del artículo"
-                                            >
-                                              <td className="px-3 py-2 font-mono text-muted-foreground">{a.number}</td>
-                                              <td className="px-3 py-2">
-                                                <div className="flex items-center gap-1.5">
-                                                  <Boxes className="h-3 w-3 text-muted-foreground/60 shrink-0" />
-                                                  {a.description}
-                                                </div>
-                                                <div className="text-[10px] text-muted-foreground mt-0.5">
-                                                  Cant. total: <span className="font-mono">{formatNumber(a.quantity)}</span> {a.unit} · P.U. <span className="font-mono">{fmt(a.unitCost)}</span> {currency}
-                                                </div>
-                                              </td>
-                                              <td className="px-3 py-2 text-center text-muted-foreground">{a.unit}</td>
-                                              {sectorList.map((s) => {
-                                                const v = a.costBySector.get(s.id) || 0;
-                                                return (
-                                                  <td key={s.id} className="px-3 py-2 text-right font-mono">
-                                                    {v > 0
-                                                      ? fmt(v)
-                                                      : <span className="text-muted-foreground">—</span>}
-                                                  </td>
-                                                );
-                                              })}
-                                              <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(a.total)}</td>
-                                            </tr>
-                                          ))}
+                                          {arts.map((a) => {
+                                            const aTotal = filteredTotal(a.costBySector);
+                                            if (isFiltered && aTotal === 0) return null;
+                                            return (
+                                              <tr
+                                                key={a.articuloId}
+                                                className="border-t hover:bg-muted/10 cursor-pointer"
+                                                onClick={() => setSelectedArt(a)}
+                                                title="Ver insumos del artículo"
+                                              >
+                                                <td className="px-3 py-2 font-mono text-muted-foreground">{a.number}</td>
+                                                <td className="px-3 py-2">
+                                                  <div className="flex items-center gap-1.5">
+                                                    <Boxes className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+                                                    {a.description}
+                                                  </div>
+                                                  <div className="text-xs text-muted-foreground mt-0.5">
+                                                    Cant. total: <span className="font-mono">{formatNumber(a.quantity)}</span> {a.unit} · P.U. <span className="font-mono">{fmt(a.unitCost)}</span> {currency}
+                                                  </div>
+                                                </td>
+                                                <td className="px-3 py-2 text-center text-muted-foreground">{a.unit}</td>
+                                                {showSectorCols && displayedSectors.map((s) => {
+                                                  const v = a.costBySector.get(s.id) || 0;
+                                                  return (
+                                                    <td key={s.id} className="px-3 py-2 text-right font-mono">
+                                                      {v > 0
+                                                        ? fmt(v)
+                                                        : <span className="text-muted-foreground">—</span>}
+                                                    </td>
+                                                  );
+                                                })}
+                                                <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(aTotal)}</td>
+                                              </tr>
+                                            );
+                                          })}
                                           <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
-                                            <td colSpan={3} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-white">
+                                            <td colSpan={3} className="px-3 py-2 text-right text-xs uppercase tracking-wider text-white">
                                               Subtotal
                                             </td>
-                                            {sectorList.map((s) => {
+                                            {showSectorCols && displayedSectors.map((s) => {
                                               const v = arts.reduce((sum, a) => sum + (a.costBySector.get(s.id) || 0), 0);
                                               return (
                                                 <td key={s.id} className="px-3 py-2 text-right font-mono text-white">
@@ -524,7 +604,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                               );
                                             })}
                                             <td className="px-3 py-2 text-right font-mono text-[#E87722]">
-                                              {fmt(arts.reduce((s, a) => s + a.total, 0))}
+                                              {fmt(arts.reduce((s, a) => s + filteredTotal(a.costBySector), 0))}
                                             </td>
                                           </tr>
                                         </tbody>
@@ -544,8 +624,8 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
               {/* Fila TOTAL */}
               <TableRow className={cn("font-bold border-t-2 border-neutral-900 bg-neutral-900 hover:bg-neutral-900")}>
                 <TableCell></TableCell>
-                <TableCell className="text-white uppercase tracking-wider text-[11px]">Total</TableCell>
-                {sectorList.map((s) => {
+                <TableCell className="text-white uppercase tracking-wider text-xs">Total{isFiltered && <span className="normal-case ml-2">· {filterLabel}</span>}</TableCell>
+                {showSectorCols && displayedSectors.map((s) => {
                   const v = grandBySector.get(s.id) || 0;
                   return (
                     <TableCell key={s.id} className="text-right font-mono text-white">
@@ -553,7 +633,7 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                     </TableCell>
                   );
                 })}
-                <TableCell className="text-right font-mono text-[#E87722] text-[13px]">{fmt(grandTotal)}</TableCell>
+                <TableCell className="text-right font-mono text-[#E87722] text-base">{fmt(grandTotal)}</TableCell>
                 <TableCell className="text-right font-mono text-white">100.0%</TableCell>
                 <TableCell className="text-right font-mono text-[#E87722]">
                   {totalAreaM2 > 0 ? fmt(perM2(grandTotal)) : <span className="text-white/40">—</span>}
