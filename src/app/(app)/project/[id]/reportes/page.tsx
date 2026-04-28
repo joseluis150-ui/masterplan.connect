@@ -422,189 +422,396 @@ function escHtml(v: string | number | null | undefined): string {
 
 /* ─────────────────────── Excel ─────────────────────── */
 
+// xlsx-js-style es drop-in de xlsx pero con soporte de cell.s (estilos)
+type XlsxModule = typeof import("xlsx-js-style");
+type WS = ReturnType<XlsxModule["utils"]["book_new"]>["Sheets"][string];
+
+const COLOR = {
+  amberSignal: "E87722",
+  amberDeep: "B85A0F",
+  amberLight: "FCE8D6",
+  amberFaint: "FFF7ED",
+  ink: "0A0A0A",
+  ash: "737373",
+  borderSoft: "E5E5E5",
+  borderFaint: "EFEFEF",
+};
+
+function thinBorder(rgb: string) {
+  return {
+    top: { style: "thin", color: { rgb } },
+    right: { style: "thin", color: { rgb } },
+    bottom: { style: "thin", color: { rgb } },
+    left: { style: "thin", color: { rgb } },
+  };
+}
+
+const NUM_2D = "#,##0.00";
+const NUM_0 = "#,##0";
+
+const STYLES = {
+  title: {
+    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 14, name: "Calibri" },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberSignal } },
+    alignment: { horizontal: "left", vertical: "center", indent: 1 },
+  },
+  subtitle: {
+    font: { italic: true, color: { rgb: COLOR.ash }, sz: 10 },
+    alignment: { horizontal: "left", vertical: "center", indent: 1 },
+  },
+  header: {
+    font: { bold: true, color: { rgb: "FFFFFF" }, sz: 10, name: "Calibri" },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberDeep } },
+    alignment: { horizontal: "center", vertical: "center", wrapText: true },
+    border: thinBorder(COLOR.amberDeep),
+  },
+  catLeft: {
+    font: { bold: true, color: { rgb: COLOR.ink }, sz: 11 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberLight } },
+    alignment: { horizontal: "left", vertical: "center", indent: 1 },
+    border: thinBorder(COLOR.amberSignal),
+  },
+  catRight: {
+    font: { bold: true, color: { rgb: COLOR.ink }, sz: 11 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberLight } },
+    alignment: { horizontal: "right", vertical: "center" },
+    border: thinBorder(COLOR.amberSignal),
+    numFmt: NUM_2D,
+  },
+  subLeft: {
+    font: { color: { rgb: COLOR.ink }, sz: 10 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberFaint } },
+    alignment: { horizontal: "left", vertical: "center", indent: 2 },
+    border: thinBorder(COLOR.borderSoft),
+  },
+  subRight: {
+    font: { color: { rgb: COLOR.ink }, sz: 10 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberFaint } },
+    alignment: { horizontal: "right", vertical: "center" },
+    border: thinBorder(COLOR.borderSoft),
+    numFmt: NUM_2D,
+  },
+  artLeft: {
+    font: { color: { rgb: "404040" }, sz: 10 },
+    alignment: { horizontal: "left", vertical: "center", indent: 3 },
+    border: thinBorder(COLOR.borderFaint),
+  },
+  artRight: {
+    font: { color: { rgb: "404040" }, sz: 10 },
+    alignment: { horizontal: "right", vertical: "center" },
+    border: thinBorder(COLOR.borderFaint),
+    numFmt: NUM_2D,
+  },
+  totalLeft: {
+    font: { bold: true, color: { rgb: COLOR.ink }, sz: 12 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberLight } },
+    alignment: { horizontal: "left", vertical: "center", indent: 1 },
+    border: {
+      top: { style: "double", color: { rgb: COLOR.amberSignal } },
+      bottom: { style: "thin", color: { rgb: COLOR.amberSignal } },
+      left: { style: "thin", color: { rgb: COLOR.amberSignal } },
+      right: { style: "thin", color: { rgb: COLOR.amberSignal } },
+    },
+  },
+  totalRight: {
+    font: { bold: true, color: { rgb: COLOR.ink }, sz: 12 },
+    fill: { patternType: "solid", fgColor: { rgb: COLOR.amberLight } },
+    alignment: { horizontal: "right", vertical: "center" },
+    border: {
+      top: { style: "double", color: { rgb: COLOR.amberSignal } },
+      bottom: { style: "thin", color: { rgb: COLOR.amberSignal } },
+      left: { style: "thin", color: { rgb: COLOR.amberSignal } },
+      right: { style: "thin", color: { rgb: COLOR.amberSignal } },
+    },
+    numFmt: NUM_2D,
+  },
+} as const;
+
+type CellValue = string | number | null | undefined;
+type CellStyle = object | undefined;
+interface CellSpec { v: CellValue; s?: CellStyle; t?: "n" | "s"; }
+
+function setCell(XLSX: XlsxModule, ws: WS, row: number, col: number, spec: CellSpec | CellValue, style?: CellStyle) {
+  const ref = XLSX.utils.encode_cell({ r: row, c: col });
+  const value = typeof spec === "object" && spec !== null ? spec.v : spec;
+  const cellStyle = typeof spec === "object" && spec !== null && spec.s !== undefined ? spec.s : style;
+  let t: "n" | "s" = "s";
+  let v: string | number = "";
+  if (value === null || value === undefined || value === "") {
+    v = "";
+    t = "s";
+  } else if (typeof value === "number") {
+    v = value;
+    t = "n";
+  } else {
+    v = String(value);
+    t = "s";
+  }
+  ws[ref] = { v, t };
+  if (cellStyle) (ws[ref] as { s?: CellStyle }).s = cellStyle;
+}
+
+function setRange(XLSX: XlsxModule, ws: WS, lastRow: number, lastCol: number) {
+  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastRow, c: lastCol } });
+}
+
 async function generateExcel(d: ReportData, opts: ReportOptions) {
-  const XLSX = await import("xlsx");
+  const XLSX = (await import("xlsx-js-style")) as unknown as XlsxModule;
   const wb = XLSX.utils.book_new();
   const cur = opts.showLocal ? d.project.local_currency : "USD";
+  const tc = Number(d.project.exchange_rate || 1);
+  const totalAreaM2 = d.sectors.reduce((s, sc) => s + Number(sc.area_m2 || 0), 0);
   const subArtMap = buildSubArticulos(d);
   const artById = new Map(d.articulos.map((a) => [a.id, a]));
   const subById = new Map(d.subs.map((s) => [s.id, s]));
   const sectorById = new Map(d.sectors.map((s) => [s.id, s]));
   const insumoById = new Map(d.insumos.map((i) => [i.id, i]));
 
-  function fmtMoney(usd: number): number {
-    if (opts.showLocal) {
-      const tc = Number(d.project.exchange_rate || 1);
-      return Number(convertCurrency(usd, tc, "usd_to_local").toFixed(2));
-    }
+  function fm(usd: number): number {
+    if (opts.showLocal) return Number(convertCurrency(usd, tc, "usd_to_local").toFixed(2));
     return Number(usd.toFixed(2));
   }
 
-  if (opts.includeHierarchy) {
-    type Row = Record<string, string | number>;
-    const rows: Row[] = [];
-    const colCantidad = "Cantidad";
-    const colPU = `P.U. (${cur})`;
-    const colTotal = `Total (${cur})`;
-    let grandTotal = 0;
-    for (const cat of d.cats) {
-      const catSubs = d.subs.filter((s) => s.category_id === cat.id);
-      let catTotal = 0;
-      for (const sub of catSubs) {
+  // Pre-compute totals por categoría/subcategoría
+  type SubAgg = { sub: EdtSubcategory; total: number; };
+  type CatAgg = { cat: EdtCategory; total: number; subs: SubAgg[]; };
+  const catAggs: CatAgg[] = d.cats.map((cat) => {
+    const subs: SubAgg[] = d.subs
+      .filter((s) => s.category_id === cat.id)
+      .map((sub) => {
         const arts = subArtMap.get(sub.id);
-        if (!arts) continue;
-        for (const [artId, qty] of arts) {
-          const pu = d.articuloCosts.get(artId) || 0;
-          catTotal += pu * qty;
-        }
-      }
-      grandTotal += catTotal;
-      rows.push({
-        Nivel: "CATEGORÍA",
-        Código: cat.code,
-        Descripción: cat.name,
-        Unidad: "",
-        [colCantidad]: "",
-        [colPU]: "",
-        [colTotal]: fmtMoney(catTotal),
+        let total = 0;
+        if (arts) for (const [artId, qty] of arts) total += (d.articuloCosts.get(artId) || 0) * qty;
+        return { sub, total };
       });
-      for (const sub of catSubs) {
-        const arts = subArtMap.get(sub.id);
-        let subTotal = 0;
-        if (arts) for (const [artId, qty] of arts) subTotal += (d.articuloCosts.get(artId) || 0) * qty;
-        rows.push({
-          Nivel: "  Subcategoría",
-          Código: sub.code,
-          Descripción: sub.name,
-          Unidad: "",
-          [colCantidad]: "",
-          [colPU]: "",
-          [colTotal]: fmtMoney(subTotal),
-        });
-        if (arts) {
-          const sorted = Array.from(arts.entries())
-            .map(([artId, qty]) => ({ art: artById.get(artId), qty }))
-            .filter((x) => x.art)
-            .sort((a, b) => (a.art!.number || 0) - (b.art!.number || 0));
-          for (const { art, qty } of sorted) {
-            const pu = d.articuloCosts.get(art!.id) || 0;
-            rows.push({
-              Nivel: "    Artículo",
-              Código: String(art!.number),
-              Descripción: art!.description,
-              Unidad: art!.unit,
-              [colCantidad]: Number(qty.toFixed(4)),
-              [colPU]: fmtMoney(pu),
-              [colTotal]: fmtMoney(pu * qty),
-            });
-          }
+    const total = subs.reduce((s, x) => s + x.total, 0);
+    return { cat, total, subs };
+  });
+  const grandTotal = catAggs.reduce((s, c) => s + c.total, 0);
+
+  // ────────────────── Hoja 1 — Resumen (Cat + Sub + Total + $/m²) ──────────────────
+  if (opts.includeHierarchy) {
+    const ws: WS = {};
+    let r = 0;
+    // Title
+    setCell(XLSX, ws, r, 0, `PRESUPUESTO RESUMEN — ${d.project.name}`, STYLES.title);
+    for (let c = 1; c <= 4; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
+    r++;
+    // Subtitle
+    const subtitleParts = [
+      totalAreaM2 > 0 ? `Área total: ${formatNumber(totalAreaM2, 0)} m²` : "Sin áreas cargadas",
+      `TC del proyecto: ${formatNumber(tc, 0)}`,
+      `Importes en ${cur}`,
+      `Generado el ${new Date().toLocaleDateString(getNumberLocale(), { year: "numeric", month: "long", day: "numeric" })}`,
+    ];
+    setCell(XLSX, ws, r, 0, subtitleParts.join(" · "), STYLES.subtitle);
+    for (let c = 1; c <= 4; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
+    r++;
+    // Empty
+    r++;
+    // Header
+    const headers = ["Código", "Descripción", `Total (${cur})`, "% del total", `${cur}/m²`];
+    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
+    r++;
+    // Rows
+    for (const ca of catAggs) {
+      const pct = grandTotal > 0 ? ca.total / grandTotal : 0;
+      const perM2 = totalAreaM2 > 0 ? fm(ca.total) / totalAreaM2 : 0;
+      setCell(XLSX, ws, r, 0, ca.cat.code, STYLES.catLeft);
+      setCell(XLSX, ws, r, 1, ca.cat.name, STYLES.catLeft);
+      setCell(XLSX, ws, r, 2, fm(ca.total), STYLES.catRight);
+      setCell(XLSX, ws, r, 3, pct, { ...STYLES.catRight, numFmt: "0.0%" });
+      setCell(XLSX, ws, r, 4, perM2, STYLES.catRight);
+      r++;
+      for (const sa of ca.subs) {
+        const subPct = grandTotal > 0 ? sa.total / grandTotal : 0;
+        const subPerM2 = totalAreaM2 > 0 ? fm(sa.total) / totalAreaM2 : 0;
+        setCell(XLSX, ws, r, 0, sa.sub.code, STYLES.subLeft);
+        setCell(XLSX, ws, r, 1, sa.sub.name, STYLES.subLeft);
+        setCell(XLSX, ws, r, 2, fm(sa.total), STYLES.subRight);
+        setCell(XLSX, ws, r, 3, subPct, { ...STYLES.subRight, numFmt: "0.0%" });
+        setCell(XLSX, ws, r, 4, subPerM2, STYLES.subRight);
+        r++;
+      }
+    }
+    // Total row
+    setCell(XLSX, ws, r, 0, "", STYLES.totalLeft);
+    setCell(XLSX, ws, r, 1, "TOTAL PRESUPUESTO", STYLES.totalLeft);
+    setCell(XLSX, ws, r, 2, fm(grandTotal), STYLES.totalRight);
+    setCell(XLSX, ws, r, 3, 1, { ...STYLES.totalRight, numFmt: "0.0%" });
+    setCell(XLSX, ws, r, 4, totalAreaM2 > 0 ? fm(grandTotal) / totalAreaM2 : 0, STYLES.totalRight);
+    const lastRow = r;
+    setRange(XLSX, ws, lastRow, 4);
+
+    ws["!cols"] = [{ wch: 14 }, { wch: 60 }, { wch: 18 }, { wch: 14 }, { wch: 16 }];
+    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
+    ];
+    ws["!freeze"] = { xSplit: 0, ySplit: 4 } as never;
+    XLSX.utils.book_append_sheet(wb, ws, "Resumen");
+  }
+
+  // ────────────────── Hoja 2 — Detalle (Cat + Sub + Artículos) ──────────────────
+  if (opts.includeHierarchy) {
+    const ws: WS = {};
+    let r = 0;
+    setCell(XLSX, ws, r, 0, `PRESUPUESTO DETALLADO — ${d.project.name}`, STYLES.title);
+    for (let c = 1; c <= 5; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
+    r++;
+    setCell(XLSX, ws, r, 0, `TC: ${formatNumber(tc, 0)} · Importes en ${cur} · Generado el ${new Date().toLocaleDateString(getNumberLocale(), { year: "numeric", month: "long", day: "numeric" })}`, STYLES.subtitle);
+    for (let c = 1; c <= 5; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
+    r++;
+    r++;
+    const headers = ["Código", "Descripción", "Unidad", "Cantidad", `P.U. (${cur})`, `Total (${cur})`];
+    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
+    r++;
+    for (const ca of catAggs) {
+      setCell(XLSX, ws, r, 0, ca.cat.code, STYLES.catLeft);
+      setCell(XLSX, ws, r, 1, ca.cat.name, STYLES.catLeft);
+      setCell(XLSX, ws, r, 2, "", STYLES.catLeft);
+      setCell(XLSX, ws, r, 3, "", STYLES.catRight);
+      setCell(XLSX, ws, r, 4, "", STYLES.catRight);
+      setCell(XLSX, ws, r, 5, fm(ca.total), STYLES.catRight);
+      r++;
+      for (const sa of ca.subs) {
+        setCell(XLSX, ws, r, 0, sa.sub.code, STYLES.subLeft);
+        setCell(XLSX, ws, r, 1, sa.sub.name, STYLES.subLeft);
+        setCell(XLSX, ws, r, 2, "", STYLES.subLeft);
+        setCell(XLSX, ws, r, 3, "", STYLES.subRight);
+        setCell(XLSX, ws, r, 4, "", STYLES.subRight);
+        setCell(XLSX, ws, r, 5, fm(sa.total), STYLES.subRight);
+        r++;
+        const arts = subArtMap.get(sa.sub.id);
+        if (!arts) continue;
+        const sorted = Array.from(arts.entries())
+          .map(([artId, qty]) => ({ art: artById.get(artId), qty }))
+          .filter((x) => x.art)
+          .sort((a, b) => (a.art!.number || 0) - (b.art!.number || 0));
+        for (const { art, qty } of sorted) {
+          const pu = d.articuloCosts.get(art!.id) || 0;
+          setCell(XLSX, ws, r, 0, String(art!.number), STYLES.artLeft);
+          setCell(XLSX, ws, r, 1, art!.description, STYLES.artLeft);
+          setCell(XLSX, ws, r, 2, art!.unit, STYLES.artLeft);
+          setCell(XLSX, ws, r, 3, Number(qty.toFixed(4)), { ...STYLES.artRight, numFmt: "#,##0.0000" });
+          setCell(XLSX, ws, r, 4, fm(pu), STYLES.artRight);
+          setCell(XLSX, ws, r, 5, fm(pu * qty), STYLES.artRight);
+          r++;
         }
       }
     }
-    rows.push({
-      Nivel: "TOTAL",
-      Código: "",
-      Descripción: "Total presupuesto",
-      Unidad: "",
-      [colCantidad]: "",
-      [colPU]: "",
-      [colTotal]: fmtMoney(grandTotal),
-    });
-    const ws = XLSX.utils.json_to_sheet(rows, {
-      header: ["Nivel", "Código", "Descripción", "Unidad", colCantidad, colPU, colTotal],
-    });
-    ws["!cols"] = [{ wch: 16 }, { wch: 14 }, { wch: 50 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 16 }];
-    XLSX.utils.book_append_sheet(wb, ws, "Presupuesto");
+    setCell(XLSX, ws, r, 0, "", STYLES.totalLeft);
+    setCell(XLSX, ws, r, 1, "TOTAL PRESUPUESTO", STYLES.totalLeft);
+    setCell(XLSX, ws, r, 2, "", STYLES.totalLeft);
+    setCell(XLSX, ws, r, 3, "", STYLES.totalRight);
+    setCell(XLSX, ws, r, 4, "", STYLES.totalRight);
+    setCell(XLSX, ws, r, 5, fm(grandTotal), STYLES.totalRight);
+    setRange(XLSX, ws, r, 5);
+    ws["!cols"] = [{ wch: 14 }, { wch: 56 }, { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 18 }];
+    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+    ];
+    ws["!freeze"] = { xSplit: 0, ySplit: 4 } as never;
+    XLSX.utils.book_append_sheet(wb, ws, "Detalle");
   }
 
+  // ────────────────── Hoja — Composición de artículos × insumos ──────────────────
   if (opts.includeComposition) {
-    type Row = Record<string, string | number>;
-    const rows: Row[] = [];
+    const ws: WS = {};
+    let r = 0;
+    setCell(XLSX, ws, r, 0, "COMPOSICIÓN DE ARTÍCULOS (APU)", STYLES.title);
+    for (let c = 1; c <= 8; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
+    r++;
+    setCell(XLSX, ws, r, 0, `Importes en ${cur}`, STYLES.subtitle);
+    for (let c = 1; c <= 8; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
+    r++;
+    r++;
+    const headers = ["Código", "Descripción", "Unidad", "Cantidad", "Desperdicio %", "Margen %", `P.U. (${cur})`, `Subtotal (${cur})`];
+    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
+    r++;
     const sortedArts = [...d.articulos].sort((a, b) => (a.number || 0) - (b.number || 0));
-    const colPU = `P.U. (${cur})`;
-    const colSubtotal = `Subtotal (${cur})`;
     for (const art of sortedArts) {
       const artComps = d.comps.filter((c) => c.articulo_id === art.id);
       const puArt = d.articuloCosts.get(art.id) || 0;
-      rows.push({
-        Nivel: "ARTÍCULO",
-        Código: String(art.number),
-        Descripción: art.description,
-        Unidad: art.unit,
-        Cantidad: "",
-        "Desperdicio %": "",
-        "Margen %": "",
-        [colPU]: "",
-        [colSubtotal]: fmtMoney(puArt),
-      });
+      setCell(XLSX, ws, r, 0, String(art.number), STYLES.catLeft);
+      setCell(XLSX, ws, r, 1, art.description, STYLES.catLeft);
+      setCell(XLSX, ws, r, 2, art.unit, STYLES.catLeft);
+      for (let c = 3; c <= 6; c++) setCell(XLSX, ws, r, c, "", STYLES.catRight);
+      setCell(XLSX, ws, r, 7, fm(puArt), STYLES.catRight);
+      r++;
       for (const c of artComps) {
         const insumo = insumoById.get(c.insumo_id);
         const insumoPuUsd = Number(insumo?.pu_usd || 0);
         const lineSubtotal = Number(c.quantity || 0) * (1 + Number(c.waste_pct || 0) / 100) * insumoPuUsd * (1 + Number(c.margin_pct || 0) / 100);
-        rows.push({
-          Nivel: "  Insumo",
-          Código: insumo?.code != null ? String(insumo.code) : "",
-          Descripción: insumo?.description || "(insumo no encontrado)",
-          Unidad: insumo?.unit || "",
-          Cantidad: Number(Number(c.quantity || 0).toFixed(4)),
-          "Desperdicio %": Number(c.waste_pct || 0),
-          "Margen %": Number(c.margin_pct || 0),
-          [colPU]: fmtMoney(insumoPuUsd),
-          [colSubtotal]: fmtMoney(lineSubtotal),
-        });
+        setCell(XLSX, ws, r, 0, insumo?.code != null ? String(insumo.code) : "", STYLES.artLeft);
+        setCell(XLSX, ws, r, 1, insumo?.description || "(insumo no encontrado)", STYLES.artLeft);
+        setCell(XLSX, ws, r, 2, insumo?.unit || "", STYLES.artLeft);
+        setCell(XLSX, ws, r, 3, Number(Number(c.quantity || 0).toFixed(4)), { ...STYLES.artRight, numFmt: "#,##0.0000" });
+        setCell(XLSX, ws, r, 4, Number(c.waste_pct || 0), { ...STYLES.artRight, numFmt: "0.0\"%\"" });
+        setCell(XLSX, ws, r, 5, Number(c.margin_pct || 0), { ...STYLES.artRight, numFmt: "0.0\"%\"" });
+        setCell(XLSX, ws, r, 6, fm(insumoPuUsd), STYLES.artRight);
+        setCell(XLSX, ws, r, 7, fm(lineSubtotal), STYLES.artRight);
+        r++;
       }
     }
-    const ws = XLSX.utils.json_to_sheet(rows, {
-      header: ["Nivel", "Código", "Descripción", "Unidad", "Cantidad", "Desperdicio %", "Margen %", colPU, colSubtotal],
-    });
-    ws["!cols"] = [
-      { wch: 12 }, { wch: 12 }, { wch: 50 }, { wch: 10 },
-      { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 16 },
+    setRange(XLSX, ws, r - 1, 7);
+    ws["!cols"] = [{ wch: 12 }, { wch: 50 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 16 }];
+    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
     ];
+    ws["!freeze"] = { xSplit: 0, ySplit: 4 } as never;
     XLSX.utils.book_append_sheet(wb, ws, "Composición");
   }
 
+  // ────────────────── Hoja — Paquetes (opcional) ──────────────────
   if (opts.includePackages && d.packages.length > 0) {
-    type Row = Record<string, string | number>;
-    const rows: Row[] = [];
+    const ws: WS = {};
+    let r = 0;
+    setCell(XLSX, ws, r, 0, "PAQUETES DE CONTRATACIÓN", STYLES.title);
+    for (let c = 1; c <= 8; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
+    r++;
+    setCell(XLSX, ws, r, 0, `${d.packages.length} paquete${d.packages.length === 1 ? "" : "s"} en el proyecto`, STYLES.subtitle);
+    for (let c = 1; c <= 8; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
+    r++;
+    r++;
+    const headers = ["Paquete", "Tipo compra", "Estado", "Días anticipo", "Insumo", "Unidad", "Cantidad", "Fecha necesidad"];
+    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
+    r++;
     for (const pkg of d.packages) {
-      rows.push({
-        Nivel: "PAQUETE",
-        Paquete: pkg.name,
-        "Tipo compra": pkg.purchase_type,
-        Estado: pkg.status,
-        "Días anticipo": Number(pkg.advance_days || 0),
-        Insumo: "",
-        Unidad: "",
-        Cantidad: "",
-        "Fecha necesidad": "",
-      });
+      setCell(XLSX, ws, r, 0, pkg.name, STYLES.catLeft);
+      setCell(XLSX, ws, r, 1, pkg.purchase_type, STYLES.catLeft);
+      setCell(XLSX, ws, r, 2, pkg.status, STYLES.catLeft);
+      setCell(XLSX, ws, r, 3, Number(pkg.advance_days || 0), { ...STYLES.catRight, numFmt: NUM_0 });
+      for (let c = 4; c <= 7; c++) setCell(XLSX, ws, r, c, "", STYLES.catLeft);
+      r++;
       const lines = d.procLines.filter((l) => l.package_id === pkg.id);
       for (const l of lines) {
         const ins = insumoById.get(l.insumo_id);
-        rows.push({
-          Nivel: "  Línea",
-          Paquete: "",
-          "Tipo compra": "",
-          Estado: "",
-          "Días anticipo": "",
-          Insumo: ins?.description || "(no encontrado)",
-          Unidad: ins?.unit || "",
-          Cantidad: Number(Number(l.quantity || 0).toFixed(4)),
-          "Fecha necesidad": l.need_date || "",
-        });
+        for (let c = 0; c <= 3; c++) setCell(XLSX, ws, r, c, "", STYLES.artLeft);
+        setCell(XLSX, ws, r, 4, ins?.description || "(no encontrado)", STYLES.artLeft);
+        setCell(XLSX, ws, r, 5, ins?.unit || "", STYLES.artLeft);
+        setCell(XLSX, ws, r, 6, Number(Number(l.quantity || 0).toFixed(4)), { ...STYLES.artRight, numFmt: "#,##0.0000" });
+        setCell(XLSX, ws, r, 7, l.need_date || "", STYLES.artLeft);
+        r++;
       }
     }
-    const ws = XLSX.utils.json_to_sheet(rows, {
-      header: ["Nivel", "Paquete", "Tipo compra", "Estado", "Días anticipo", "Insumo", "Unidad", "Cantidad", "Fecha necesidad"],
-    });
-    ws["!cols"] = [
-      { wch: 14 }, { wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
-      { wch: 40 }, { wch: 10 }, { wch: 12 }, { wch: 14 },
+    setRange(XLSX, ws, r - 1, 7);
+    ws["!cols"] = [{ wch: 28 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 40 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
+    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } },
     ];
+    ws["!freeze"] = { xSplit: 0, ySplit: 4 } as never;
     XLSX.utils.book_append_sheet(wb, ws, "Paquetes");
   }
 
+  // ────────────────── Hoja — Cronograma (opcional) ──────────────────
   if (opts.includeSchedule && d.schedConfig && d.schedWeeks.length > 0) {
     const weeksByLine = new Map<string, Set<number>>();
     let maxWeek = 0;
@@ -615,29 +822,53 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
       weeksByLine.set(w.quantification_line_id, set);
       if (w.week_number > maxWeek) maxWeek = w.week_number;
     }
-    type Row = Record<string, string | number>;
-    const rows: Row[] = [];
-    const headers = ["EDT", "Sector", "Artículo", "Cantidad", "Unidad", ...Array.from({ length: maxWeek + 1 }, (_, i) => `Semana ${i}`)];
+    const ws: WS = {};
+    let r = 0;
+    const totalCols = 5 + (maxWeek + 1);
+    setCell(XLSX, ws, r, 0, "CRONOGRAMA", STYLES.title);
+    for (let c = 1; c < totalCols; c++) setCell(XLSX, ws, r, c, "", STYLES.title);
+    r++;
+    setCell(XLSX, ws, r, 0, `Inicio: ${d.schedConfig.start_date} · Duración: ${maxWeek + 1} semanas`, STYLES.subtitle);
+    for (let c = 1; c < totalCols; c++) setCell(XLSX, ws, r, c, "", STYLES.subtitle);
+    r++;
+    r++;
+    const headers = ["EDT", "Sector", "Artículo", "Cantidad", "Unidad", ...Array.from({ length: maxWeek + 1 }, (_, i) => `S${i}`)];
+    for (let c = 0; c < headers.length; c++) setCell(XLSX, ws, r, c, headers[c], STYLES.header);
+    r++;
     for (const ql of d.qLines) {
       const sub = subById.get(ql.subcategory_id);
       const sector = sectorById.get(ql.sector_id);
       const art = ql.articulo_id ? artById.get(ql.articulo_id) : null;
-      const row: Row = {
-        EDT: sub ? `${sub.code} ${sub.name}` : "",
-        Sector: sector?.name || "",
-        Artículo: art ? `${art.number} ${art.description}` : "(sin artículo)",
-        Cantidad: Number(Number(ql.quantity || 0).toFixed(4)),
-        Unidad: art?.unit || "",
-      };
+      setCell(XLSX, ws, r, 0, sub ? `${sub.code} ${sub.name}` : "", STYLES.artLeft);
+      setCell(XLSX, ws, r, 1, sector?.name || "", STYLES.artLeft);
+      setCell(XLSX, ws, r, 2, art ? `${art.number} ${art.description}` : "(sin artículo)", STYLES.artLeft);
+      setCell(XLSX, ws, r, 3, Number(Number(ql.quantity || 0).toFixed(4)), { ...STYLES.artRight, numFmt: "#,##0.0000" });
+      setCell(XLSX, ws, r, 4, art?.unit || "", STYLES.artLeft);
       const weeks = weeksByLine.get(ql.id) || new Set();
-      for (let w = 0; w <= maxWeek; w++) row[`Semana ${w}`] = weeks.has(w) ? "✓" : "";
-      rows.push(row);
+      for (let w = 0; w <= maxWeek; w++) {
+        const on = weeks.has(w);
+        setCell(XLSX, ws, r, 5 + w, on ? "●" : "", on ? {
+          font: { color: { rgb: COLOR.amberSignal }, bold: true, sz: 11 },
+          alignment: { horizontal: "center", vertical: "center" },
+          border: thinBorder(COLOR.borderFaint),
+        } : {
+          alignment: { horizontal: "center", vertical: "center" },
+          border: thinBorder(COLOR.borderFaint),
+        });
+      }
+      r++;
     }
-    const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+    setRange(XLSX, ws, r - 1, totalCols - 1);
     ws["!cols"] = [
-      { wch: 28 }, { wch: 12 }, { wch: 36 }, { wch: 10 }, { wch: 8 },
-      ...Array.from({ length: maxWeek + 1 }, () => ({ wch: 9 })),
+      { wch: 28 }, { wch: 12 }, { wch: 36 }, { wch: 12 }, { wch: 8 },
+      ...Array.from({ length: maxWeek + 1 }, () => ({ wch: 4 })),
     ];
+    ws["!rows"] = [{ hpt: 26 }, { hpt: 18 }, undefined, { hpt: 22 }] as Array<{ hpt: number } | undefined> as never;
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } },
+    ];
+    ws["!freeze"] = { xSplit: 5, ySplit: 4 } as never;
     XLSX.utils.book_append_sheet(wb, ws, "Cronograma");
   }
 
@@ -645,7 +876,7 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
   const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
   const date = new Date().toISOString().slice(0, 10);
   const safeName = d.project.name.replace(/[^a-zA-Z0-9_-]+/g, "_");
-  downloadBlob(buf, `presupuesto_${safeName}_${date}.xlsx`);
+  downloadBlob(buf as ArrayBuffer, `presupuesto_${safeName}_${date}.xlsx`);
 }
 
 /* ─────────────────────── PDF (HTML print) ─────────────────────── */
