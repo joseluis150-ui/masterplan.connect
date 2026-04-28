@@ -328,7 +328,7 @@ export default function ProjectsPage() {
                   </Button>
                 }
               />
-            <DialogContent className="max-w-lg">
+            <DialogContent className="sm:max-w-xl">
               <DialogHeader>
                 <DialogTitle>Nuevo Proyecto</DialogTitle>
                 <DialogDescription>
@@ -337,7 +337,7 @@ export default function ProjectsPage() {
               </DialogHeader>
 
               {/* Mode tabs */}
-              <div className="flex items-center gap-1 border-b -mx-6 px-6">
+              <div className="flex items-center gap-1 border-b -mx-4 px-4">
                 <button
                   type="button"
                   onClick={() => setCreateMode("manual")}
@@ -484,43 +484,30 @@ export default function ProjectsPage() {
 
                   {/* Step 4: preview */}
                   {!importParsing && importParsed && importErrors.length === 0 && (
-                    <div className="rounded-md border bg-muted/30 p-3 space-y-2 text-sm">
+                    <div className="rounded-md border bg-muted/30 p-3 space-y-3 text-sm">
                       <div className="font-medium">Vista previa</div>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <div className="grid grid-cols-4 gap-x-3 gap-y-1 text-xs">
                         <div className="text-muted-foreground">Nombre</div>
-                        <div className="font-medium truncate">{importParsed.project.name}</div>
+                        <div className="col-span-3 font-medium truncate">{importParsed.project.name}</div>
                         <div className="text-muted-foreground">Tipo</div>
                         <div>{importParsed.project.project_type === "costo" ? "Costo interno" : "Venta"}</div>
-                        <div className="text-muted-foreground">Moneda local</div>
-                        <div>{importParsed.project.local_currency}</div>
-                        <div className="text-muted-foreground">Tipo de cambio</div>
-                        <div>{importParsed.project.exchange_rate}</div>
+                        <div className="text-muted-foreground">Moneda</div>
+                        <div>{importParsed.project.local_currency} · TC {importParsed.project.exchange_rate}</div>
                       </div>
-                      <div className="border-t pt-2 grid grid-cols-3 gap-2 text-xs">
-                        <div className="text-center">
-                          <div className="text-lg font-semibold">{importParsed.sectors.length}</div>
-                          <div className="text-muted-foreground">Sectores</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-semibold">{importParsed.edt.length}</div>
-                          <div className="text-muted-foreground">EDT</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-semibold">{importParsed.insumos.length}</div>
-                          <div className="text-muted-foreground">Insumos</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-semibold">{importParsed.articulos.length}</div>
-                          <div className="text-muted-foreground">Articulos</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-semibold">{importParsed.compositions.length}</div>
-                          <div className="text-muted-foreground">Composiciones</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-semibold">{importParsed.quantifications.length}</div>
-                          <div className="text-muted-foreground">Cuantif.</div>
-                        </div>
+                      <div className="border-t pt-3 grid grid-cols-6 gap-2 text-xs">
+                        {[
+                          { label: "Sectores", value: importParsed.sectors.length },
+                          { label: "EDT", value: importParsed.edt.length },
+                          { label: "Insumos", value: importParsed.insumos.length },
+                          { label: "Articulos", value: importParsed.articulos.length },
+                          { label: "Composic.", value: importParsed.compositions.length },
+                          { label: "Cuantif.", value: importParsed.quantifications.length },
+                        ].map((it) => (
+                          <div key={it.label} className="text-center">
+                            <div className="text-lg font-semibold leading-tight">{it.value}</div>
+                            <div className="text-muted-foreground">{it.label}</div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
