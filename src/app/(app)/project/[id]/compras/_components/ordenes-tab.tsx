@@ -161,6 +161,12 @@ export function OrdenesTab({ projectId }: Props) {
   const [editRetentionPct, setEditRetentionPct] = useState(0);
   const [editReturnCondition, setEditReturnCondition] = useState("");
   const [editComment, setEditComment] = useState("");
+  // Anticipo (puede agregarse a una OC creada sin anticipo, mientras no haya
+  // recepciones — ver canEditOC).
+  const [editHasAdvance, setEditHasAdvance] = useState(false);
+  const [editAdvanceAmount, setEditAdvanceAmount] = useState(0);
+  const [editAdvanceType, setEditAdvanceType] = useState<"amount" | "percentage">("percentage");
+  const [editAmortMode, setEditAmortMode] = useState<"percentage" | "per_certification">("percentage");
   // Line edits: Map<lineId, { quantity, unit_price }>
   const [editLines, setEditLines] = useState<Map<string, { quantity: number; unit_price: number }>>(new Map());
   const [historyOpen, setHistoryOpen] = useState<string | null>(null);
@@ -582,6 +588,10 @@ export function OrdenesTab({ projectId }: Props) {
     setEditRetentionPct(Number(oc.retention_pct || 0));
     setEditReturnCondition(oc.return_condition || "");
     setEditComment(oc.comment || "");
+    setEditHasAdvance(!!oc.has_advance);
+    setEditAdvanceAmount(Number(oc.advance_amount || 0));
+    setEditAdvanceType((oc.advance_type as "amount" | "percentage") || "percentage");
+    setEditAmortMode((oc.amortization_mode as "percentage" | "per_certification") || "percentage");
     const lineMap = new Map<string, { quantity: number; unit_price: number }>();
     for (const l of oc.lines) {
       lineMap.set(l.id, { quantity: Number(l.quantity), unit_price: Number(l.unit_price) });
@@ -648,22 +658,62 @@ export function OrdenesTab({ projectId }: Props) {
       }
     }
 
+    // Validate: si tiene anticipo, monto > 0 y modo de amortización válido
+    if (editHasAdvance) {
+      if (!editAdvanceAmount || editAdvanceAmount <= 0) {
+        toast.error(`Debés ingresar el ${editAdvanceType === "percentage" ? "% del anticipo" : "monto del anticipo"}`);
+        return;
+      }
+      if (editAmortMode === "percentage" && (!editAmortPct || editAmortPct <= 0)) {
+        toast.error("Debés ingresar el % de amortización o cambiar a 'monto por certificación'");
+        return;
+      }
+    }
+
     setSavingEdit(true);
     try {
+      const wasHasAdvance = !!editingOC.has_advance;
+      // amortization_pct efectivo según el modo: si tiene anticipo en modo
+      // 'per_certification' se guarda 0; en cualquier otro caso se respeta el
+      // valor ingresado.
+      const effectiveAmortPct = editHasAdvance && editAmortMode === "per_certification"
+        ? 0
+        : editAmortPct;
+
       // Compute diff
       const changes: { field: string; from: string | number | boolean | null; to: string | number | boolean | null }[] = [];
       if (editSupplier.trim() !== editingOC.supplier)
         changes.push({ field: "Proveedor", from: editingOC.supplier, to: editSupplier.trim() });
       if (editCurrency !== editingOC.currency)
         changes.push({ field: "Moneda", from: editingOC.currency, to: editCurrency });
-      if (editAmortPct !== Number(editingOC.amortization_pct || 0))
-        changes.push({ field: "Amortización %", from: Number(editingOC.amortization_pct || 0), to: editAmortPct });
+      if (effectiveAmortPct !== Number(editingOC.amortization_pct || 0))
+        changes.push({ field: "Amortización %", from: Number(editingOC.amortization_pct || 0), to: effectiveAmortPct });
       if (editRetentionPct !== Number(editingOC.retention_pct || 0))
         changes.push({ field: "Retención %", from: Number(editingOC.retention_pct || 0), to: editRetentionPct });
       if ((editReturnCondition || null) !== (editingOC.return_condition || null))
         changes.push({ field: "Condición devolución", from: editingOC.return_condition, to: editReturnCondition || null });
       if ((editComment || null) !== (editingOC.comment || null))
         changes.push({ field: "Comentario", from: editingOC.comment, to: editComment || null });
+      // Anticipo
+      if (editHasAdvance !== wasHasAdvance) {
+        changes.push({ field: "Tiene anticipo", from: wasHasAdvance, to: editHasAdvance });
+      }
+      if (editHasAdvance) {
+        const prevAmt = Number(editingOC.advance_amount || 0);
+        if (editAdvanceAmount !== prevAmt) {
+          changes.push({
+            field: editAdvanceType === "percentage" ? "% anticipo" : "Monto anticipo",
+            from: prevAmt,
+            to: editAdvanceAmount,
+          });
+        }
+        if (editAdvanceType !== (editingOC.advance_type || null)) {
+          changes.push({ field: "Tipo anticipo", from: editingOC.advance_type || null, to: editAdvanceType });
+        }
+        if (editAmortMode !== (editingOC.amortization_mode || "percentage")) {
+          changes.push({ field: "Modo amortización", from: editingOC.amortization_mode || "percentage", to: editAmortMode });
+        }
+      }
 
       // Per-line changes
       for (const line of editingOC.lines) {
@@ -701,7 +751,11 @@ export function OrdenesTab({ projectId }: Props) {
           supplier: editSupplier.trim(),
           supplier_id: editSupplierId,
           currency: editCurrency,
-          amortization_pct: editAmortPct,
+          has_advance: editHasAdvance,
+          advance_amount: editHasAdvance ? editAdvanceAmount : 0,
+          advance_type: editHasAdvance ? editAdvanceType : null,
+          amortization_mode: editHasAdvance ? editAmortMode : "percentage",
+          amortization_pct: effectiveAmortPct,
           retention_pct: editRetentionPct,
           return_condition: editReturnCondition || null,
           comment: editComment || null,
@@ -727,6 +781,24 @@ export function OrdenesTab({ projectId }: Props) {
             toast.error(`Error al actualizar línea: ${lErr.message}`);
             return;
           }
+        }
+      }
+
+      // Si se agregó anticipo (false → true), generar la recepción tipo
+      // 'advance' equivalente a la del flujo de creación.
+      if (!wasHasAdvance && editHasAdvance && editAdvanceAmount > 0) {
+        const ocTotal = editingOC.lines.reduce((s, l) => {
+          const e = editLines.get(l.id) || { quantity: Number(l.quantity), unit_price: Number(l.unit_price) };
+          return s + e.quantity * e.unit_price;
+        }, 0);
+        const advanceAbs = resolveAdvanceAmount(editAdvanceType, editAdvanceAmount, ocTotal);
+        if (advanceAbs > 0) {
+          await createAdvanceReception({
+            supabase,
+            orderId: editingOC.id,
+            advanceAmountAbsolute: advanceAbs,
+            note: `Anticipo agregado en edición · OC ${editingOC.number}`,
+          });
         }
       }
 
@@ -2627,14 +2699,102 @@ export function OrdenesTab({ projectId }: Props) {
                 </div>
               </div>
 
+              {/* Anticipo */}
+              <div className="border rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="editHasAdvance"
+                    checked={editHasAdvance}
+                    onCheckedChange={(v) => setEditHasAdvance(!!v)}
+                    disabled={!!editingOC.has_advance}
+                  />
+                  <label htmlFor="editHasAdvance" className="text-xs font-medium">Tiene anticipo</label>
+                  {editingOC.has_advance && (
+                    <span className="text-[10px] text-muted-foreground italic ml-2">
+                      el anticipo ya fue generado y no se puede quitar desde acá
+                    </span>
+                  )}
+                  {editHasAdvance && (
+                    <div className="grid grid-cols-[140px_120px] gap-2 ml-auto">
+                      <Select value={editAdvanceType} onValueChange={(v) => setEditAdvanceType(v as "amount" | "percentage")}>
+                        <SelectTrigger className="h-8 text-xs w-full">
+                          <span>{editAdvanceType === "percentage" ? "Porcentaje" : "Monto fijo"}</span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="percentage">Porcentaje</SelectItem>
+                          <SelectItem value="amount">Monto fijo</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        className={cn(
+                          "h-8 text-xs",
+                          (!editAdvanceAmount || editAdvanceAmount <= 0) && "border-destructive/60 focus-visible:ring-destructive/30"
+                        )}
+                        type="number"
+                        value={editAdvanceAmount || ""}
+                        onChange={(e) => setEditAdvanceAmount(parseFloat(e.target.value) || 0)}
+                        placeholder={editAdvanceType === "percentage" ? "% *" : "Monto *"}
+                      />
+                    </div>
+                  )}
+                </div>
+                {editHasAdvance && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] text-muted-foreground font-medium">
+                      Forma de amortización <span className="text-destructive">*</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditAmortMode("percentage")}
+                        className={cn(
+                          "flex-1 text-xs px-3 py-2 rounded-md border transition-colors text-left",
+                          editAmortMode === "percentage"
+                            ? "bg-primary/10 border-primary text-foreground"
+                            : "bg-background hover:bg-muted"
+                        )}
+                      >
+                        <div className="font-medium">% fijo por medición</div>
+                        <div className="text-[10px] text-muted-foreground">Mismo % en cada recepción</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditAmortMode("per_certification")}
+                        className={cn(
+                          "flex-1 text-xs px-3 py-2 rounded-md border transition-colors text-left",
+                          editAmortMode === "per_certification"
+                            ? "bg-primary/10 border-primary text-foreground"
+                            : "bg-background hover:bg-muted"
+                        )}
+                      >
+                        <div className="font-medium">Monto por certificación</div>
+                        <div className="text-[10px] text-muted-foreground">Indicás el monto al recepcionar</div>
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {!editingOC.has_advance && editHasAdvance && (
+                  <p className="text-[10px] text-amber-700 italic">
+                    Al guardar se generará automáticamente la recepción de anticipo (status &quot;pendiente de aprobación&quot;).
+                  </p>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground">Amortización %</label>
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Amortización %{editHasAdvance && editAmortMode === "per_certification" && (
+                      <span className="text-[10px] text-muted-foreground/70 ml-1 font-normal">
+                        (no aplica con monto por certificación)
+                      </span>
+                    )}
+                  </label>
                   <Input
                     className="mt-1"
                     type="number"
                     value={editAmortPct || ""}
                     onChange={(e) => setEditAmortPct(parseFloat(e.target.value) || 0)}
+                    disabled={editHasAdvance && editAmortMode === "per_certification"}
                   />
                 </div>
                 <div>
