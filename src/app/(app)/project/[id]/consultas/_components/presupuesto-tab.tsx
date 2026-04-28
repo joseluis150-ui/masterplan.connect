@@ -648,28 +648,35 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                 <TableCell className="text-right font-mono text-white">100.0%</TableCell>
               </TableRow>
 
-              {/* Fila USD/m² por sector — sólo en vista detallada */}
-              {showSectorCols && (
-                <TableRow className="bg-background hover:bg-background text-sm">
-                  <TableCell className="sticky left-0 z-20 bg-background w-[110px] min-w-[110px] max-w-[110px]"></TableCell>
-                  <TableCell className="text-muted-foreground uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-background min-w-[260px] border-r-2 border-r-neutral-300">{currency}/m² por sector</TableCell>
-                  {displayedSectors.map((s) => {
-                    const cost = grandBySector.get(s.id) || 0;
-                    const sectorM2 = s.type === "fisico" ? Number(s.area_m2 || 0) : 0;
-                    const valuePerM2 = sectorM2 > 0 ? cost / sectorM2 : 0;
-                    return (
-                      <TableCell key={s.id} className="text-right font-mono text-muted-foreground">
-                        {sectorM2 > 0
-                          ? fmt(valuePerM2)
-                          : <span className="text-muted-foreground/50 text-xs italic">{s.type === "gastos_generales" ? "n/a" : "sin m²"}</span>}
-                      </TableCell>
-                    );
-                  })}
-                  <TableCell className="border-l-2 border-l-neutral-300"></TableCell>
-                  <TableCell></TableCell>
-                  <TableCell></TableCell>
-                </TableRow>
-              )}
+              {/* Fila USD/m² por sector — sólo en vista detallada.
+                  Para sectores físicos: costo / area propia.
+                  Para gastos_generales (Rubros Generales): costo / area total del proyecto. */}
+              {showSectorCols && (() => {
+                const projectAreaM2 = sectors
+                  .filter((s) => s.type === "fisico")
+                  .reduce((acc, sc) => acc + Number(sc.area_m2 || 0), 0);
+                return (
+                  <TableRow className="bg-background hover:bg-background text-sm">
+                    <TableCell className="sticky left-0 z-20 bg-background w-[110px] min-w-[110px] max-w-[110px]"></TableCell>
+                    <TableCell className="text-muted-foreground uppercase tracking-wider text-xs sticky left-[110px] z-20 bg-background min-w-[260px] border-r-2 border-r-neutral-300">{currency}/m² por sector</TableCell>
+                    {displayedSectors.map((s) => {
+                      const cost = grandBySector.get(s.id) || 0;
+                      const m2 = s.type === "fisico" ? Number(s.area_m2 || 0) : projectAreaM2;
+                      const valuePerM2 = m2 > 0 ? cost / m2 : 0;
+                      return (
+                        <TableCell key={s.id} className="text-right font-mono text-muted-foreground">
+                          {m2 > 0
+                            ? fmt(valuePerM2)
+                            : <span className="text-muted-foreground/50 text-xs italic">sin m²</span>}
+                        </TableCell>
+                      );
+                    })}
+                    <TableCell className="border-l-2 border-l-neutral-300"></TableCell>
+                    <TableCell></TableCell>
+                    <TableCell></TableCell>
+                  </TableRow>
+                );
+              })()}
             </TableBody>
           </Table>
         </div>
