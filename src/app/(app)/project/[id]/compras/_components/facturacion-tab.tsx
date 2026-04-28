@@ -737,72 +737,67 @@ export function FacturacionTab({ projectId }: Props) {
           {view === "invoiced" && "No hay facturas pendientes de pagar."}
           {view === "paid" && "No hay recepciones pagadas todavía."}
         </div>
-      ) : visible.length === 0 ? (
-        <div className="border rounded-lg overflow-hidden">
-          {view === "paid" ? (
-            <div className="grid grid-cols-[140px_140px_1fr_90px_110px_110px_110px_120px_140px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
-              <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
-              <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
-              <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
-              <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
-              <span className="text-right">Local ({localCurrency})</span>
-              <span className="text-right">USD</span>
-              <span className="text-right">Equiv. USD</span>
-              <ColumnFilter label="N° Factura" values={allInvoiceNumbers} selected={filterInvoice} onChange={setFilterInvoice} />
-              <span className="text-right">Acción</span>
+      ) : (() => {
+        // Layout único — define grid columns y header según el view.
+        // Pending no tiene N° Factura (todavía no hay factura emitida).
+        // Invoiced y Paid muestran N° Factura como tercera columna, justo
+        // después de OC, según pedido del usuario.
+        const gridCols = view === "paid"
+          ? "grid-cols-[140px_140px_140px_1fr_90px_110px_110px_110px_140px]"
+          : view === "invoiced"
+            ? "grid-cols-[140px_140px_140px_1fr_90px_130px_170px]"
+            : "grid-cols-[140px_140px_1fr_90px_130px_170px]";
+
+        // Cada header se centra horizontalmente dentro de su celda para
+        // que la alineación visual de los rótulos sea uniforme.
+        const headerCenter = "flex items-center justify-center";
+        const headerHtml = (
+          <div className={cn("grid gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b", gridCols)}>
+            <div className={headerCenter}>
+              <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} align="center" />
             </div>
-          ) : (
-            <div className="grid grid-cols-[140px_140px_1fr_90px_130px_120px_170px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
-              <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
-              <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
-              <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
-              <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
-              <span className="text-right">
+            <div className={headerCenter}>
+              <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} align="center" />
+            </div>
+            {view !== "pending" && (
+              <div className={headerCenter}>
+                <ColumnFilter label="N° Factura" values={allInvoiceNumbers} selected={filterInvoice} onChange={setFilterInvoice} align="center" />
+              </div>
+            )}
+            <div className={headerCenter}>
+              <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} align="center" />
+            </div>
+            <div className={headerCenter}>
+              <ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} align="center" />
+            </div>
+            {view === "paid" ? (
+              <>
+                <span className="text-center">Local ({localCurrency})</span>
+                <span className="text-center">USD</span>
+                <span className="text-center">Equiv. USD</span>
+              </>
+            ) : (
+              <span className="text-center">
                 {view === "pending" ? "Monto a facturar" : "Saldo pendiente"}
               </span>
-              {view !== "pending" ? (
-                <ColumnFilter label="N° Factura" values={allInvoiceNumbers} selected={filterInvoice} onChange={setFilterInvoice} />
-              ) : (
-                <span />
-              )}
-              <span className="text-right">Acción</span>
-            </div>
-          )}
-          <div className="text-center py-8 text-muted-foreground text-sm">
-            Ninguna fila coincide con los filtros aplicados.
+            )}
+            <span className="text-center">Acción</span>
           </div>
-        </div>
-      ) : (
+        );
+
+        if (visible.length === 0) {
+          return (
+            <div className="border rounded-lg overflow-hidden">
+              {headerHtml}
+              <div className="text-center py-8 text-muted-foreground text-sm">
+                Ninguna fila coincide con los filtros aplicados.
+              </div>
+            </div>
+          );
+        }
+        return (
         <div className="border rounded-lg overflow-hidden">
-          {view === "paid" ? (
-            <div className="grid grid-cols-[140px_140px_1fr_90px_110px_110px_110px_120px_140px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
-              <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
-              <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
-              <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
-              <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
-              <span className="text-right">Local ({localCurrency})</span>
-              <span className="text-right">USD</span>
-              <span className="text-right">Equiv. USD</span>
-              <ColumnFilter label="N° Factura" values={allInvoiceNumbers} selected={filterInvoice} onChange={setFilterInvoice} />
-              <span className="text-right">Acción</span>
-            </div>
-          ) : (
-            <div className="grid grid-cols-[140px_140px_1fr_90px_130px_120px_170px] gap-2 px-4 py-2 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider border-b">
-              <ColumnFilter label="Recepción" values={allReceptionRefs} selected={filterReception} onChange={setFilterReception} />
-              <ColumnFilter label="OC" values={allOcNumbers} selected={filterOC} onChange={setFilterOC} />
-              <ColumnFilter label="Proveedor" values={allSuppliers} selected={filterSupplier} onChange={setFilterSupplier} />
-              <div className="flex items-center justify-center"><ColumnFilter label="Fecha" values={allDates} valueLabels={dateLabels} selected={filterDate} onChange={setFilterDate} /></div>
-              <span className="text-right">
-                {view === "pending" ? "Monto a facturar" : "Saldo pendiente"}
-              </span>
-              {view !== "pending" ? (
-                <ColumnFilter label="N° Factura" values={allInvoiceNumbers} selected={filterInvoice} onChange={setFilterInvoice} />
-              ) : (
-                <span />
-              )}
-              <span className="text-right">Acción</span>
-            </div>
-          )}
+          {headerHtml}
 
           {visible.map((rec) => {
             const payable = rec.lines.reduce((s, l) => s + Number(l.payable_amount || 0), 0);
@@ -810,9 +805,6 @@ export function FacturacionTab({ projectId }: Props) {
             const paidSoFar = rec.paidAmount || 0;
             const remaining = invAmt - paidSoFar;
             const bd = rec.invoice ? breakdownByInvoice.get(rec.invoice.id) : null;
-            const gridCols = view === "paid"
-              ? "grid-cols-[140px_140px_1fr_90px_110px_110px_110px_120px_140px]"
-              : "grid-cols-[140px_140px_1fr_90px_130px_120px_170px]";
             return (
               <div
                 key={rec.id}
@@ -821,7 +813,7 @@ export function FacturacionTab({ projectId }: Props) {
                   gridCols
                 )}
               >
-                <span className="font-mono font-semibold flex items-center gap-1.5">
+                <span className="font-mono font-semibold flex items-center justify-center gap-1.5 text-center">
                   {rec.order.number}-REC-{String(rec.number).padStart(3, "0")}
                   {rec.type === "advance" && (
                     <Badge className="text-[9px] bg-amber-100 text-amber-700 hover:bg-amber-100 font-normal px-1.5 py-0">
@@ -829,34 +821,39 @@ export function FacturacionTab({ projectId }: Props) {
                     </Badge>
                   )}
                 </span>
-                <span className="font-mono text-muted-foreground">{rec.order.number}</span>
-                <span className="truncate" title={rec.order.supplier}>{rec.order.supplier}</span>
+                <span className="font-mono text-muted-foreground text-center">{rec.order.number}</span>
+                {view !== "pending" && (
+                  <span className="font-mono text-xs text-center">
+                    {rec.invoice?.invoice_number || <span className="text-muted-foreground">—</span>}
+                  </span>
+                )}
+                <span className="truncate text-center" title={rec.order.supplier}>{rec.order.supplier}</span>
                 <span className="text-center text-muted-foreground">
                   {new Date(rec.date).toLocaleDateString("es")}
                 </span>
                 {view === "paid" ? (
                   <>
-                    <span className="text-right font-mono font-semibold text-emerald-700">
+                    <span className="text-center font-mono font-semibold text-emerald-700">
                       {bd && bd.local > 0
                         ? bd.local.toLocaleString(getNumberLocale(), { maximumFractionDigits: 0 })
                         : <span className="text-muted-foreground">—</span>}
                     </span>
-                    <span className="text-right font-mono font-semibold text-emerald-700">
+                    <span className="text-center font-mono font-semibold text-emerald-700">
                       {bd && bd.usd > 0
                         ? bd.usd.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                         : <span className="text-muted-foreground">—</span>}
                     </span>
-                    <span className="text-right font-mono font-semibold text-emerald-700">
+                    <span className="text-center font-mono font-semibold text-emerald-700">
                       {bd && bd.usdEq > 0
                         ? bd.usdEq.toLocaleString(getNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                         : <span className="text-muted-foreground">—</span>}
                     </span>
                   </>
                 ) : (
-                  <span className="text-right font-mono font-semibold" style={{ color: "#E87722" }}>
+                  <span className="text-center font-mono font-semibold" style={{ color: "#E87722" }}>
                     {view === "pending" && formatMoney(payable, rec.order.currency)}
                     {view === "invoiced" && (
-                      <span className="flex flex-col items-end leading-tight">
+                      <span className="flex flex-col items-center leading-tight">
                         <span className="text-sm">{formatMoney(remaining, rec.order.currency)}</span>
                         {paidSoFar > 0 && (
                           <span className="text-[9px] text-muted-foreground font-normal">
@@ -867,12 +864,7 @@ export function FacturacionTab({ projectId }: Props) {
                     )}
                   </span>
                 )}
-                <span className="flex items-center gap-1">
-                  {view !== "pending" && rec.invoice?.invoice_number && (
-                    <span className="font-mono text-xs">{rec.invoice.invoice_number}</span>
-                  )}
-                </span>
-                <span className="flex items-center justify-end gap-2">
+                <span className="flex items-center justify-center gap-2">
                   {view !== "pending" && rec.invoice?.attachment_url && (
                     <Button
                       variant="outline"
@@ -912,7 +904,8 @@ export function FacturacionTab({ projectId }: Props) {
             );
           })}
         </div>
-      )}
+        );
+      })()}
 
       {/* ─────── Invoice Dialog ─────── */}
       <Dialog open={invoicingRec !== null} onOpenChange={(open) => !open && setInvoicingRec(null)}>
