@@ -16,7 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { formatNumber, convertCurrency } from "@/lib/utils/formula";
 import type { Project, Sector, Articulo } from "@/lib/types/database";
-import { DollarSign, ChevronDown, ChevronRight, Package } from "lucide-react";
+import { DollarSign, ChevronDown, ChevronRight, Package, Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface BudgetRow {
@@ -53,6 +53,18 @@ interface ArticuloRollup {
   total: number;
 }
 
+interface InsumoCompRow {
+  insumoId: string;
+  insumoCode: number | null;
+  description: string;
+  type: string;
+  unit: string;
+  compQuantity: number;   // cantidad de insumo por unidad de articulo (con waste aplicado)
+  totalQuantity: number;  // compQuantity × cantidad total del articulo
+  unitCost: number;       // P.U. del insumo en USD
+  total: number;          // totalQuantity × unitCost
+}
+
 interface SubAgg {
   code: string;
   name: string;
@@ -74,14 +86,16 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
   const [qLines, setQLines] = useState<QLine[]>([]);
   const [articulos, setArticulos] = useState<Articulo[]>([]);
   const [articuloCosts, setArticuloCosts] = useState<Map<string, number>>(new Map());
+  const [compsByArticulo, setCompsByArticulo] = useState<Map<string, Omit<InsumoCompRow, "totalQuantity" | "total">[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [showLocal, setShowLocal] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set()); // category ids con desglose visible
   const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set()); // subcategory ids con artículos visibles
+  const [expandedArts, setExpandedArts] = useState<Set<string>>(new Set()); // articulo ids con insumos visibles
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
-    const [projRes, sectorsRes, budgetRes, qlRes, artsRes, costsRes] = await Promise.all([
+    const [projRes, sectorsRes, budgetRes, qlRes, artsRes, costsRes, compsRes] = await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).single(),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.rpc("get_budget_summary", { p_project_id: projectId }),
@@ -92,6 +106,11 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
         .is("deleted_at", null),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.rpc("get_project_articulo_totals", { p_project_id: projectId }),
+      // composiciones con info del insumo, filtradas por proyecto vía join con articulos
+      supabase
+        .from("articulo_compositions")
+        .select("articulo_id, quantity, waste_pct, articulo:articulos!inner(project_id), insumo:insumos(id, code, description, type, unit, pu_usd)")
+        .eq("articulo.project_id", projectId),
     ]);
     if (projRes.data) setProject(projRes.data);
     setSectors(sectorsRes.data || []);
@@ -109,6 +128,34 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
       costMap.set(r.articulo_id, Number(r.pu_costo) || 0);
     }
     setArticuloCosts(costMap);
+    // Composiciones agrupadas por articulo. Supabase puede devolver `insumo` como objeto
+    // único o como array de un sólo elemento según la inferencia del esquema; manejamos ambos.
+    type InsumoLite = { id: string; code: number | null; description: string; type: string; unit: string; pu_usd: number | string | null };
+    type CompRaw = {
+      articulo_id: string;
+      quantity: number | string;
+      waste_pct: number | string | null;
+      insumo: InsumoLite | InsumoLite[] | null;
+    };
+    const compsMap = new Map<string, Omit<InsumoCompRow, "totalQuantity" | "total">[]>();
+    for (const c of (compsRes.data || []) as unknown as CompRaw[]) {
+      const ins = Array.isArray(c.insumo) ? c.insumo[0] : c.insumo;
+      if (!ins) continue;
+      const waste = Number(c.waste_pct || 0) / 100;
+      const compQty = Number(c.quantity || 0) * (1 + waste);
+      const list = compsMap.get(c.articulo_id) || [];
+      list.push({
+        insumoId: ins.id,
+        insumoCode: ins.code,
+        description: ins.description,
+        type: ins.type,
+        unit: ins.unit,
+        compQuantity: compQty,
+        unitCost: Number(ins.pu_usd || 0),
+      });
+      compsMap.set(c.articulo_id, list);
+    }
+    setCompsByArticulo(compsMap);
     setLoading(false);
   }, [projectId]);
 
@@ -171,12 +218,20 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
       return next;
     });
   }
+  function toggleExpandedArt(artId: string) {
+    setExpandedArts((prev) => {
+      const next = new Set(prev);
+      if (next.has(artId)) next.delete(artId); else next.add(artId);
+      return next;
+    });
+  }
   function expandAll() {
     setExpanded(new Set(Array.from(categoryTotals.keys())));
   }
   function collapseAll() {
     setExpanded(new Set());
     setExpandedSubs(new Set());
+    setExpandedArts(new Set());
   }
 
   // Articulos agrupados por subcategoría — qty total y costo total
@@ -409,16 +464,96 @@ export function PresupuestoTab({ projectId }: { projectId: string }) {
                                           </tr>
                                         </thead>
                                         <tbody>
-                                          {arts.map((a) => (
-                                            <tr key={a.articuloId} className="border-t hover:bg-muted/10">
-                                              <td className="px-3 py-2 font-mono text-muted-foreground">{a.number}</td>
-                                              <td className="px-3 py-2">{a.description}</td>
-                                              <td className="px-3 py-2 text-center text-muted-foreground">{a.unit}</td>
-                                              <td className="px-3 py-2 text-right font-mono">{formatNumber(a.quantity)}</td>
-                                              <td className="px-3 py-2 text-right font-mono">{fmt(a.unitCost)}</td>
-                                              <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(a.total)}</td>
-                                            </tr>
-                                          ))}
+                                          {arts.map((a) => {
+                                            const artOpen = expandedArts.has(a.articuloId);
+                                            const comps = compsByArticulo.get(a.articuloId) || [];
+                                            return (
+                                              <React.Fragment key={a.articuloId}>
+                                                <tr
+                                                  className={cn("border-t hover:bg-muted/10 cursor-pointer", artOpen && "bg-muted/20")}
+                                                  onClick={() => toggleExpandedArt(a.articuloId)}
+                                                >
+                                                  <td className="px-3 py-2 font-mono text-muted-foreground">
+                                                    <span className="inline-flex items-center gap-1">
+                                                      {comps.length > 0
+                                                        ? (artOpen
+                                                          ? <ChevronDown className="h-3 w-3" />
+                                                          : <ChevronRight className="h-3 w-3" />)
+                                                        : <span className="inline-block w-3" />}
+                                                      {a.number}
+                                                    </span>
+                                                  </td>
+                                                  <td className="px-3 py-2">{a.description}</td>
+                                                  <td className="px-3 py-2 text-center text-muted-foreground">{a.unit}</td>
+                                                  <td className="px-3 py-2 text-right font-mono">{formatNumber(a.quantity)}</td>
+                                                  <td className="px-3 py-2 text-right font-mono">{fmt(a.unitCost)}</td>
+                                                  <td className="px-3 py-2 text-right font-mono font-semibold">{fmt(a.total)}</td>
+                                                </tr>
+                                                {artOpen && (
+                                                  <tr className="bg-muted/10">
+                                                    <td colSpan={6} className="p-0">
+                                                      <div className="px-6 py-2">
+                                                        <div className="flex items-center gap-2 mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                                          <Boxes className="h-3 w-3" />
+                                                          Insumos del artículo
+                                                          <span className="text-[10px] normal-case text-muted-foreground/80">
+                                                            ({comps.length} {comps.length === 1 ? "insumo" : "insumos"})
+                                                          </span>
+                                                        </div>
+                                                        {comps.length === 0 ? (
+                                                          <p className="text-[11px] italic text-muted-foreground py-1">
+                                                            Este artículo no tiene insumos en su composición.
+                                                          </p>
+                                                        ) : (
+                                                          <div className="border rounded-md overflow-hidden bg-background">
+                                                            <table className="w-full text-[11px]">
+                                                              <thead>
+                                                                <tr className="bg-neutral-700">
+                                                                  <th className="text-left px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white">Insumo</th>
+                                                                  <th className="text-center px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[50px]">Unidad</th>
+                                                                  <th className="text-right px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[100px]">Cant. p/u</th>
+                                                                  <th className="text-right px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[110px]">Cant. total</th>
+                                                                  <th className="text-right px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[100px]">P.U. ({currency})</th>
+                                                                  <th className="text-right px-2 py-1.5 font-semibold text-[9px] uppercase tracking-wider text-white w-[110px]">Total ({currency})</th>
+                                                                </tr>
+                                                              </thead>
+                                                              <tbody>
+                                                                {comps.map((c, idx) => {
+                                                                  const totalQty = c.compQuantity * a.quantity;
+                                                                  const totalCost = totalQty * c.unitCost;
+                                                                  return (
+                                                                    <tr key={`${c.insumoId}-${idx}`} className="border-t">
+                                                                      <td className="px-2 py-1.5">
+                                                                        <span className="inline-flex items-center gap-1.5">
+                                                                          <span className={cn(
+                                                                            "w-1.5 h-1.5 rounded-full shrink-0",
+                                                                            c.type === "material" ? "bg-neutral-700" :
+                                                                            c.type === "mano_de_obra" ? "bg-amber-400" :
+                                                                            c.type === "servicio" ? "bg-emerald-400" : "bg-gray-400"
+                                                                          )} />
+                                                                          {c.insumoCode != null && <span className="font-mono text-muted-foreground text-[10px]">{c.insumoCode}</span>}
+                                                                          {c.description}
+                                                                        </span>
+                                                                      </td>
+                                                                      <td className="px-2 py-1.5 text-center text-muted-foreground">{c.unit}</td>
+                                                                      <td className="px-2 py-1.5 text-right font-mono">{formatNumber(c.compQuantity, 4)}</td>
+                                                                      <td className="px-2 py-1.5 text-right font-mono">{formatNumber(totalQty)}</td>
+                                                                      <td className="px-2 py-1.5 text-right font-mono">{fmt(c.unitCost)}</td>
+                                                                      <td className="px-2 py-1.5 text-right font-mono font-medium">{fmt(totalCost)}</td>
+                                                                    </tr>
+                                                                  );
+                                                                })}
+                                                              </tbody>
+                                                            </table>
+                                                          </div>
+                                                        )}
+                                                      </div>
+                                                    </td>
+                                                  </tr>
+                                                )}
+                                              </React.Fragment>
+                                            );
+                                          })}
                                           <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
                                             <td colSpan={5} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-white">
                                               Subtotal
