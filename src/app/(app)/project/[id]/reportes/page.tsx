@@ -420,6 +420,122 @@ function escHtml(v: string | number | null | undefined): string {
   );
 }
 
+/**
+ * Calcula los datos derivados de cada procurement_line en USD:
+ *   - quantity: suma de quantification_lines de la articulo de la composición
+ *               (ó l.quantity si la línea no tiene composition_id).
+ *   - unitCost: composición × insumo.pu_usd × (1+waste) × (1+margin)
+ *               (ó simplemente insumo.pu_usd si no hay composición).
+ *   - totalCost: unitCost × quantity.
+ *   - needDate:  fecha calculada como inicio del cronograma + earliest week
+ *               del articulo, restando advance_days del paquete (si hay
+ *               cronograma cargado y la articulo está cuantificada con
+ *               semana asignada). Si no, null.
+ */
+interface ProcurementRollup {
+  insumoDescription: string;
+  insumoUnit: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  needDate: Date | null;
+  needDateLabel: string;
+}
+
+function buildProcurementRollup(d: ReportData): Map<string, ProcurementRollup> {
+  const result = new Map<string, ProcurementRollup>();
+  const compById = new Map(d.comps.map((c) => [c.id, c]));
+  const insumoById = new Map(d.insumos.map((i) => [i.id, i]));
+  const pkgById = new Map(d.packages.map((p) => [p.id, p]));
+
+  // articulo → suma de cantidades cuantificadas
+  const artQty = new Map<string, number>();
+  for (const ql of d.qLines) {
+    if (!ql.articulo_id) continue;
+    artQty.set(ql.articulo_id, (artQty.get(ql.articulo_id) || 0) + Number(ql.quantity || 0));
+  }
+  // articulo → earliest semana asignada en cronograma (vía qLine + schedule_weeks)
+  const qlEarliestWeek = new Map<string, number>();
+  for (const sw of d.schedWeeks) {
+    if (!sw.active) continue;
+    const prev = qlEarliestWeek.get(sw.quantification_line_id);
+    if (prev === undefined || sw.week_number < prev) {
+      qlEarliestWeek.set(sw.quantification_line_id, sw.week_number);
+    }
+  }
+  const artEarliestWeek = new Map<string, number>();
+  for (const ql of d.qLines) {
+    if (!ql.articulo_id) continue;
+    const w = qlEarliestWeek.get(ql.id);
+    if (w === undefined) continue;
+    const prev = artEarliestWeek.get(ql.articulo_id);
+    if (prev === undefined || w < prev) artEarliestWeek.set(ql.articulo_id, w);
+  }
+  const startDate = d.schedConfig ? new Date(d.schedConfig.start_date) : null;
+  // start of week (lunes)
+  function startOfMonday(date: Date): Date {
+    const d2 = new Date(date);
+    const day = d2.getUTCDay();
+    const diff = (day + 6) % 7; // domingo=0 → 6, lunes=1 → 0
+    d2.setUTCDate(d2.getUTCDate() - diff);
+    return d2;
+  }
+  function addDays(date: Date, days: number): Date {
+    const d2 = new Date(date);
+    d2.setUTCDate(d2.getUTCDate() + days);
+    return d2;
+  }
+
+  for (const pl of d.procLines) {
+    const insumo = insumoById.get(pl.insumo_id);
+    const pkg = pkgById.get(pl.package_id);
+    let quantity = Number(pl.quantity || 0);
+    let unitCost = Number(insumo?.pu_usd || 0);
+
+    const comp = pl.composition_id ? compById.get(pl.composition_id) : null;
+    if (comp && insumo) {
+      const qlQty = artQty.get(comp.articulo_id) || 0;
+      const compQty = Number(comp.quantity || 0);
+      const waste = Number(comp.waste_pct || 0);
+      const margin = Number(comp.margin_pct || 0);
+      const insumoPu = Number(insumo.pu_usd || 0);
+      // Costo unitario = unidad de la articulo, no del insumo. Para la línea
+      // de paquetes mostramos esto como P.U. del insumo en el contexto del
+      // paquete (alineado con la lógica de flujo-tab).
+      unitCost = compQty * (1 + waste / 100) * insumoPu * (1 + margin / 100);
+      quantity = qlQty;
+    }
+
+    const totalCost = unitCost * quantity;
+
+    // Fecha de necesidad: si hay cronograma + articulo con semana, calcular
+    let needDate: Date | null = null;
+    let needDateLabel = "";
+    if (comp && startDate && pkg) {
+      const earliestWeek = artEarliestWeek.get(comp.articulo_id);
+      if (earliestWeek !== undefined) {
+        const monday = startOfMonday(startDate);
+        const weekStart = addDays(monday, earliestWeek * 7);
+        needDate = addDays(weekStart, -(Number(pkg.advance_days || 0)));
+      }
+    }
+    if (needDate) {
+      needDateLabel = needDate.toISOString().slice(0, 10);
+    }
+
+    result.set(pl.id, {
+      insumoDescription: insumo?.description || "(insumo no encontrado)",
+      insumoUnit: insumo?.unit || "",
+      quantity,
+      unitCost,
+      totalCost,
+      needDate,
+      needDateLabel,
+    });
+  }
+  return result;
+}
+
 /* ─────────────────────── Excel (exceljs) ─────────────────────── */
 
 // ExcelJS usa ARGB (alfa por delante). Mantengo los seis dígitos brand
@@ -868,31 +984,55 @@ async function generateExcel(d: ReportData, opts: ReportOptions) {
 
   // ────────────────── Hoja 4 — Paquetes (opcional) ──────────────────
   if (opts.includePackages && d.packages.length > 0) {
+    const rollup = buildProcurementRollup(d);
     const ws = wb.addWorksheet("Paquetes");
-    const lastCol = 9;
-    setColWidths(ws, [26, 14, 14, 14, 12, 36, 10, 14, 14]);
+    const lastCol = 8;
+    // Paquete (header) | Insumo | Unidad | Cantidad | P.U. | Total | Fecha nec. | Estado/Tipo
+    setColWidths(ws, [10, 44, 8, 13, 14, 16, 14, 18]);
     let r = addBranding(ws, "PAQUETES DE CONTRATACIÓN", metaText(), lastCol);
-    applyHeader(ws, r, ["Paquete", "Tipo compra", "Estado", "Días anticipo", "—", "Insumo", "Unidad", "Cantidad", "Fecha necesidad"]);
+    applyHeader(ws, r, ["Cód.", "Insumo", "Unidad", "Cantidad", `P.U. (${cur})`, `Total (${cur})`, "Fecha necesidad", "Tipo / Estado"]);
     const headerRow = r;
     r++;
+    let grandTotalPaquetes = 0;
     for (const pkg of d.packages) {
-      setCell(ws, r, 1, pkg.name, S.catFirst);
-      setCell(ws, r, 2, pkg.purchase_type, S.catLeft);
-      setCell(ws, r, 3, pkg.status, S.catLeft);
-      setCell(ws, r, 4, Number(pkg.advance_days || 0), { ...S.catRight, numFmt: NUM_0 });
-      for (let c = 5; c <= 9; c++) setCell(ws, r, c, "", S.catLeft);
-      r++;
       const lines = d.procLines.filter((l) => l.package_id === pkg.id);
+      // Pkg header row (descripción del paquete + meta a la derecha)
+      const pkgTotal = lines.reduce((s, l) => s + (rollup.get(l.id)?.totalCost || 0), 0);
+      grandTotalPaquetes += pkgTotal;
+      const pkgMeta = `${pkg.purchase_type} · ${pkg.status}${pkg.advance_days ? ` · ${pkg.advance_days}d ant.` : ""}`;
+      setCell(ws, r, 1, "", S.catFirst);
+      setCell(ws, r, 2, pkg.name, S.catLeft);
+      setCell(ws, r, 3, "", S.catLeft);
+      setCell(ws, r, 4, "", S.catRight);
+      setCell(ws, r, 5, "", S.catRight);
+      setCell(ws, r, 6, fm(pkgTotal), S.catRight);
+      setCell(ws, r, 7, "", S.catLeft);
+      setCell(ws, r, 8, pkgMeta, S.catLeft);
+      r++;
       for (const l of lines) {
+        const roll = rollup.get(l.id);
         const ins = insumoById.get(l.insumo_id);
-        for (let c = 1; c <= 5; c++) setCell(ws, r, c, "", S.artLeft);
-        setCell(ws, r, 6, ins?.description || "(no encontrado)", S.artLeft);
-        setCell(ws, r, 7, ins?.unit || "", S.artLeft);
-        setCell(ws, r, 8, Number(Number(l.quantity || 0).toFixed(2)), { ...S.artRight, numFmt: NUM_2D });
-        setCell(ws, r, 9, l.need_date || "", S.artLeft);
+        const insCode = ins?.code != null ? String(ins.code) : "";
+        setCell(ws, r, 1, insCode, S.artLeft);
+        setCell(ws, r, 2, roll?.insumoDescription || ins?.description || "(no encontrado)", S.artLeft);
+        setCell(ws, r, 3, roll?.insumoUnit || ins?.unit || "", S.artLeft);
+        setCell(ws, r, 4, Number((roll?.quantity || 0).toFixed(2)), { ...S.artRight, numFmt: NUM_2D });
+        setCell(ws, r, 5, fm(roll?.unitCost || 0), S.artRight);
+        setCell(ws, r, 6, fm(roll?.totalCost || 0), S.artRight);
+        setCell(ws, r, 7, roll?.needDateLabel || "—", S.artLeft);
+        setCell(ws, r, 8, "", S.artLeft);
         r++;
       }
     }
+    // Total general
+    setCell(ws, r, 1, "", S.totalLeft);
+    setCell(ws, r, 2, "TOTAL PAQUETES", S.totalLeft);
+    setCell(ws, r, 3, "", S.totalLeft);
+    setCell(ws, r, 4, "", S.totalRightLabel);
+    setCell(ws, r, 5, "", S.totalRightLabel);
+    setCell(ws, r, 6, fm(grandTotalPaquetes), S.totalRight);
+    setCell(ws, r, 7, "", S.totalRightLabel);
+    setCell(ws, r, 8, "", S.totalRightLabel);
     freezeAfterHeader(ws, headerRow);
     setupPrint(ws, true);
   }
@@ -1156,38 +1296,53 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
   // ── Sección: Paquetes ──
   let packagesHtml = "";
   if (opts.includePackages && d.packages.length > 0) {
+    const rollup = buildProcurementRollup(d);
     const cards: string[] = [];
+    let grandTotal = 0;
     for (const pkg of d.packages) {
       const lines = d.procLines.filter((l) => l.package_id === pkg.id);
+      const pkgTotal = lines.reduce((s, l) => s + (rollup.get(l.id)?.totalCost || 0), 0);
+      grandTotal += pkgTotal;
       const lineRows = lines.map((l) => {
         const ins = insumoById.get(l.insumo_id);
+        const roll = rollup.get(l.id);
+        const qty = roll?.quantity || 0;
+        const pu = roll?.unitCost || 0;
+        const total = roll?.totalCost || 0;
         return `<tr>
           <td class="ins-code">${escHtml(ins?.code != null ? String(ins.code) : "—")}</td>
-          <td class="ins-desc">${escHtml(ins?.description || "(no encontrado)")}</td>
-          <td class="ins-unit">${escHtml(ins?.unit || "")}</td>
-          <td class="num">${formatNumber(Number(l.quantity || 0), 2)}</td>
-          <td>${escHtml(l.need_date || "—")}</td>
+          <td class="ins-desc">${escHtml(roll?.insumoDescription || ins?.description || "(no encontrado)")}</td>
+          <td class="ins-unit">${escHtml(roll?.insumoUnit || ins?.unit || "")}</td>
+          <td class="num">${formatNumber(qty, 2)}</td>
+          <td class="num">${fm(pu)}</td>
+          <td class="num strong">${fm(total)}</td>
+          <td>${escHtml(roll?.needDateLabel || "—")}</td>
         </tr>`;
-      }).join("\n") || `<tr><td colspan="5" class="muted-italic">Sin líneas en este paquete</td></tr>`;
+      }).join("\n") || `<tr><td colspan="7" class="muted-italic">Sin líneas en este paquete</td></tr>`;
       cards.push(`
         <div class="pkg-card">
           <div class="pkg-card-header">
             <span class="pkg-card-name">${escHtml(pkg.name)}</span>
             <span class="pkg-card-meta">${escHtml(pkg.purchase_type)} · ${escHtml(pkg.status)}${pkg.advance_days ? ` · ${pkg.advance_days} días anticipo` : ""}</span>
+            <span class="pkg-card-pu">${fm(pkgTotal)} ${escHtml(cur)}</span>
           </div>
           <table class="report-table composition">
             <colgroup>
-              <col style="width:10%" />
-              <col style="width:48%" />
               <col style="width:8%" />
-              <col style="width:18%" />
-              <col style="width:16%" />
+              <col style="width:34%" />
+              <col style="width:7%" />
+              <col style="width:11%" />
+              <col style="width:11%" />
+              <col style="width:14%" />
+              <col style="width:15%" />
             </colgroup>
             <thead><tr>
               <th>Cód.</th>
               <th>Insumo</th>
               <th>Un.</th>
               <th class="num">Cantidad</th>
+              <th class="num">P.U.</th>
+              <th class="num">Total</th>
               <th>Fecha necesidad</th>
             </tr></thead>
             <tbody>${lineRows}</tbody>
@@ -1198,7 +1353,14 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
     packagesHtml = `
       <section class="report-section">
         <h2 class="sec-title">Paquetes de contratación</h2>
+        <p class="sec-help">
+          Cantidades derivadas de la cuantificación de los artículos asociados (vía composición × insumo). P.U. y total en ${escHtml(cur)} usando precios de los insumos. Fecha de necesidad calculada como inicio de la semana del cronograma menos los días de anticipo del paquete; "—" cuando no aplica.
+        </p>
         <div class="pkg-cards">${cards.join("\n")}</div>
+        <div class="pkg-grand-total">
+          <span>Total paquetes de contratación</span>
+          <span class="num strong">${fm(grandTotal)} ${escHtml(cur)}</span>
+        </div>
       </section>
     `;
   }
@@ -1579,6 +1741,36 @@ function buildReportHtml(d: ReportData, opts: ReportOptions, logoDataUri: string
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+  }
+  .pkg-card-header .pkg-card-pu {
+    font-family: "SF Mono", Menlo, monospace;
+    font-weight: 700;
+    font-size: 11px;
+    color: #0A0A0A;
+    background: #FFFFFF;
+    padding: 3px 9px;
+    border-radius: 2px;
+    border: 1px solid #0A0A0A;
+    white-space: nowrap;
+  }
+  .pkg-grand-total {
+    margin-top: 8px;
+    padding: 8px 14px;
+    background: #0A0A0A;
+    color: #FFFFFF;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+  }
+  .pkg-grand-total .num {
+    color: #E87722;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    white-space: nowrap;
   }
 
   /* ── Schedule (landscape) ── */
