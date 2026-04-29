@@ -114,7 +114,7 @@ export function PresupuestoTab({
   const [compsByArticulo, setCompsByArticulo] = useState<Map<string, Omit<InsumoCompRow, "totalQuantity" | "total">[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [showLocal, setShowLocal] = useState(false);
-  const [viewMode, setViewMode] = useState<"simple" | "detailed">("simple"); // "simple" = sin columnas por sector
+  const [viewMode, setViewMode] = useState<"simple" | "detailed">("detailed"); // default: vista detallada con columnas por sector
   // Filtro multi-selección. Set vacío = todos los sectores (sin filtro).
   const [selectedSectors, setSelectedSectors] = useState<Set<string>>(new Set());
   const [sectorPickerOpen, setSectorPickerOpen] = useState(false);
