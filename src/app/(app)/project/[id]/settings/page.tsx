@@ -19,6 +19,7 @@ import { CURRENCIES } from "@/lib/constants/units";
 import type { Project, Sector, SectorType, ExchangeRateVersion } from "@/lib/types/database";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import { MembersSection } from "./_components/members-section";
 import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
@@ -554,6 +555,9 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
           )}
         </CardContent>
       </Card>
+
+      {/* Miembros y permisos */}
+      <MembersSection projectId={projectId} />
     </div>
   );
 }

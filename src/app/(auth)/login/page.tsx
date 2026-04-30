@@ -1,21 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
+
+  // returnTo: a dónde redirigir después del login. email: prefill (para invitaciones).
+  const returnTo = searchParams?.get("returnTo") || "/projects";
+  useEffect(() => {
+    const presetEmail = searchParams?.get("email");
+    if (presetEmail) {
+      setEmail(presetEmail);
+      setIsSignUp(true); // si vino por invitación, lo más común es que aún no tenga cuenta
+    }
+  }, [searchParams]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -32,7 +51,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/projects");
+    router.push(returnTo);
     router.refresh();
   }
 
