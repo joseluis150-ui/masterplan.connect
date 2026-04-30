@@ -1577,7 +1577,7 @@ export function OrdenesTab({ projectId }: Props) {
                           · {totalReceived.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} de {totalOrdered.toLocaleString(getNumberLocale(), { maximumFractionDigits: 2 })} unidades recibidas
                         </span>
                         <div className="flex-1" />
-                        {hasPendingToReceive && oc.status === "open" && (
+                        {hasPendingToReceive && oc.status === "open" && oc.approval_status === "approved" && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -1587,6 +1587,11 @@ export function OrdenesTab({ projectId }: Props) {
                             <Truck className="h-3 w-3 mr-1" />
                             Nueva Recepción
                           </Button>
+                        )}
+                        {hasPendingToReceive && oc.status === "open" && oc.approval_status !== "approved" && (
+                          <span className="text-[11px] text-muted-foreground italic">
+                            La OC debe estar aprobada para registrar recepciones
+                          </span>
                         )}
                       </header>
                       <div className="p-4">
@@ -1677,7 +1682,7 @@ export function OrdenesTab({ projectId }: Props) {
                       Editar OC
                     </Button>
                   )}
-                  {hasPendingToReceive && oc.status === "open" && (
+                  {hasPendingToReceive && oc.status === "open" && oc.approval_status === "approved" && (
                     <Button
                       onClick={() => { setDetailOCId(null); openReceptionDialog(oc); }}
                     >
