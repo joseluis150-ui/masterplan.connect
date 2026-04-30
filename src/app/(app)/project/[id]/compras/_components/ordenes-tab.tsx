@@ -55,7 +55,7 @@ import { usePermission } from "@/lib/permissions";
 import { SupplierPicker } from "@/components/shared/supplier-picker";
 import { cn } from "@/lib/utils";
 import { logActivity } from "@/lib/utils/activity-log";
-import { createAdvanceReception, resolveAdvanceAmount } from "@/lib/utils/oc-advance";
+import { resolveAdvanceAmount } from "@/lib/utils/oc-advance";
 
 interface Props {
   projectId: string;
@@ -331,19 +331,8 @@ export function OrdenesTab({ projectId }: Props) {
         return;
       }
 
-      // Auto-generate advance reception if OC has advance
-      if (newHasAdvance && newAdvanceAmount > 0) {
-        const ocTotal = newLines.reduce((s, l) => s + (l.quantity * l.unit_price), 0);
-        const advanceAbs = resolveAdvanceAmount(newAdvanceType, newAdvanceAmount, ocTotal);
-        if (advanceAbs > 0) {
-          await createAdvanceReception({
-            supabase,
-            orderId: ocData.id,
-            advanceAmountAbsolute: advanceAbs,
-            note: `Anticipo ${newAdvanceType === "percentage" ? `${newAdvanceAmount}%` : "monto fijo"} · OC ${number}`,
-          });
-        }
-      }
+      // La recepción de anticipo se genera automáticamente cuando el aprobador
+      // firma la OC (RPC decide_oc_approval). En creación queda sólo el draft.
 
       await logActivity({
         projectId,
@@ -835,23 +824,8 @@ export function OrdenesTab({ projectId }: Props) {
         }
       }
 
-      // Si se agregó anticipo (false → true), generar la recepción tipo
-      // 'advance' equivalente a la del flujo de creación.
-      if (!wasHasAdvance && editHasAdvance && editAdvanceAmount > 0) {
-        const ocTotal = editingOC.lines.reduce((s, l) => {
-          const e = editLines.get(l.id) || { quantity: Number(l.quantity), unit_price: Number(l.unit_price) };
-          return s + e.quantity * e.unit_price;
-        }, 0);
-        const advanceAbs = resolveAdvanceAmount(editAdvanceType, editAdvanceAmount, ocTotal);
-        if (advanceAbs > 0) {
-          await createAdvanceReception({
-            supabase,
-            orderId: editingOC.id,
-            advanceAmountAbsolute: advanceAbs,
-            note: `Anticipo agregado en edición · OC ${editingOC.number}`,
-          });
-        }
-      }
+      // La recepción de anticipo no se genera en edición. Se genera al aprobar
+      // la OC (RPC decide_oc_approval), respetando el flujo de aprobación.
 
       await logActivity({
         projectId,

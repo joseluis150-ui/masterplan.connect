@@ -53,7 +53,7 @@ import { InsumoPicker } from "./insumo-picker";
 import { SupplierPicker } from "@/components/shared/supplier-picker";
 import { cn } from "@/lib/utils";
 import { logActivity } from "@/lib/utils/activity-log";
-import { createAdvanceReception, resolveAdvanceAmount } from "@/lib/utils/oc-advance";
+import { resolveAdvanceAmount } from "@/lib/utils/oc-advance";
 import { PriceSuggestionsInput, type PriceRef } from "./price-suggestions";
 
 interface Props {
@@ -719,22 +719,8 @@ export function SolicitudesTab({ projectId }: Props) {
           .eq("id", oc.id);
       }
 
-      // Auto-generate advance reception if OC has advance
-      if (ocHasAdvance && ocAdvanceAmount > 0) {
-        const ocTotal = ocLinesPayload.reduce(
-          (s, l) => s + (Number(l.quantity) * Number(l.unit_price)),
-          0
-        );
-        const advanceAbs = resolveAdvanceAmount(ocAdvanceType, ocAdvanceAmount, ocTotal);
-        if (advanceAbs > 0) {
-          await createAdvanceReception({
-            supabase,
-            orderId: oc.id,
-            advanceAmountAbsolute: advanceAbs,
-            note: `Anticipo ${ocAdvanceType === "percentage" ? `${ocAdvanceAmount}%` : "monto fijo"} · OC ${number}`,
-          });
-        }
-      }
+      // La recepción de anticipo se genera al aprobar la OC (decide_oc_approval).
+      // Sin aprobación, no debería existir movimiento sobre la OC.
 
       await logActivity({
         projectId,
