@@ -35,7 +35,33 @@ export interface Project {
   updated_at: string;
   deleted_at: string | null;
   client_logo_data: string | null;
+  /** Bandera de color para agrupar/clasificar visualmente. Slug de paleta o null. */
+  flag_color: ProjectFlagColor | null;
 }
+
+export const PROJECT_FLAG_COLORS = [
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "blue",
+  "purple",
+  "pink",
+  "gray",
+] as const;
+export type ProjectFlagColor = (typeof PROJECT_FLAG_COLORS)[number];
+
+/** Mapa visual de los colores de bandera. Usado en cards y popover. */
+export const PROJECT_FLAG_COLOR_META: Record<ProjectFlagColor, { label: string; bg: string; ring: string }> = {
+  red:    { label: "Rojo",    bg: "bg-red-500",    ring: "ring-red-500" },
+  orange: { label: "Naranja", bg: "bg-orange-500", ring: "ring-orange-500" },
+  yellow: { label: "Amarillo", bg: "bg-yellow-400", ring: "ring-yellow-400" },
+  green:  { label: "Verde",   bg: "bg-green-500",  ring: "ring-green-500" },
+  blue:   { label: "Azul",    bg: "bg-blue-500",   ring: "ring-blue-500" },
+  purple: { label: "Violeta", bg: "bg-purple-500", ring: "ring-purple-500" },
+  pink:   { label: "Rosa",    bg: "bg-pink-500",   ring: "ring-pink-500" },
+  gray:   { label: "Gris",    bg: "bg-neutral-500", ring: "ring-neutral-500" },
+};
 
 export interface ProjectVersion {
   id: string;

@@ -23,21 +23,54 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { CURRENCIES } from "@/lib/constants/units";
-import type { Project, ProjectType } from "@/lib/types/database";
-import { Plus, Building2, LogOut, Copy, Loader2, Trash2, RotateCcw, AlertTriangle, FileSpreadsheet } from "lucide-react";
+import {
+  PROJECT_FLAG_COLORS,
+  PROJECT_FLAG_COLOR_META,
+  type Project,
+  type ProjectType,
+  type ProjectFlagColor,
+} from "@/lib/types/database";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Plus, Building2, LogOut, Copy, Loader2, Trash2, RotateCcw, AlertTriangle, FileSpreadsheet, Flag } from "lucide-react";
 import { downloadBlob } from "@/lib/utils/excel";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 type DuplicateScope = "planning" | "all";
 type ViewMode = "active" | "trash";
+type GroupByMode = "none" | "client" | "flag";
 
 const TRASH_RETENTION_DAYS = 15;
+
+// Tailwind necesita las clases completas en el código fuente para no podarlas.
+// Mapa de border-l por color de bandera.
+const FLAG_BORDER_CLASS: Record<ProjectFlagColor, string> = {
+  red:    "border-l-red-500",
+  orange: "border-l-orange-500",
+  yellow: "border-l-yellow-400",
+  green:  "border-l-green-500",
+  blue:   "border-l-blue-500",
+  purple: "border-l-purple-500",
+  pink:   "border-l-pink-500",
+  gray:   "border-l-neutral-500",
+};
+const FLAG_TEXT_CLASS: Record<ProjectFlagColor, string> = {
+  red:    "text-red-500",
+  orange: "text-orange-500",
+  yellow: "text-yellow-400",
+  green:  "text-green-500",
+  blue:   "text-blue-500",
+  purple: "text-purple-500",
+  pink:   "text-pink-500",
+  gray:   "text-neutral-500",
+};
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>("active");
+  const [groupBy, setGroupBy] = useState<GroupByMode>("none");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newProject, setNewProject] = useState({
     name: "",
@@ -89,6 +122,46 @@ export default function ProjectsPage() {
   const trashProjects = projects.filter((p) => !!p.deleted_at);
   const visibleProjects = view === "active" ? activeProjects : trashProjects;
 
+  // Agrupar (sólo cuando view === "active" y groupBy != "none")
+  const projectGroups: { key: string; label: string; flag?: ProjectFlagColor | null; projects: Project[] }[] = (() => {
+    if (view !== "active" || groupBy === "none") {
+      return [{ key: "_all", label: "", projects: visibleProjects }];
+    }
+    if (groupBy === "client") {
+      const map = new Map<string, Project[]>();
+      for (const p of visibleProjects) {
+        const k = p.client?.trim() || "Sin cliente";
+        const arr = map.get(k) || [];
+        arr.push(p);
+        map.set(k, arr);
+      }
+      return Array.from(map.entries())
+        .sort(([a], [b]) => {
+          if (a === "Sin cliente") return 1;
+          if (b === "Sin cliente") return -1;
+          return a.localeCompare(b);
+        })
+        .map(([client, projects]) => ({ key: `client:${client}`, label: client, projects }));
+    }
+    // groupBy === "flag"
+    const map = new Map<string, Project[]>();
+    for (const p of visibleProjects) {
+      const k = p.flag_color || "_none";
+      const arr = map.get(k) || [];
+      arr.push(p);
+      map.set(k, arr);
+    }
+    const order = [...PROJECT_FLAG_COLORS, "_none"];
+    return order
+      .filter((k) => map.has(k))
+      .map((k) => ({
+        key: `flag:${k}`,
+        label: k === "_none" ? "Sin bandera" : PROJECT_FLAG_COLOR_META[k as ProjectFlagColor].label,
+        flag: k === "_none" ? null : (k as ProjectFlagColor),
+        projects: map.get(k)!,
+      }));
+  })();
+
   function daysRemaining(deletedAt: string): number {
     const elapsed = (Date.now() - new Date(deletedAt).getTime()) / 86_400_000;
     return Math.max(0, Math.ceil(TRASH_RETENTION_DAYS - elapsed));
@@ -108,6 +181,17 @@ export default function ProjectsPage() {
       loadProjects();
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function setFlagColor(projectId: string, color: ProjectFlagColor | null) {
+    // Optimistic update
+    setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, flag_color: color } : p)));
+    const { error } = await supabase.from("projects").update({ flag_color: color }).eq("id", projectId);
+    if (error) {
+      toast.error(`No se pudo actualizar la bandera: ${error.message}`);
+      // Revertir si falló
+      loadProjects();
     }
   }
 
@@ -572,6 +656,33 @@ export default function ProjectsPage() {
           </p>
         )}
 
+        {/* Agrupador (sólo para vista Activos) */}
+        {view === "active" && visibleProjects.length > 0 && (
+          <div className="flex items-center gap-2 mb-4 text-sm">
+            <span className="text-muted-foreground">Agrupar por:</span>
+            <div className="inline-flex rounded-md border bg-background overflow-hidden">
+              {[
+                { v: "none", label: "Ninguno" },
+                { v: "client", label: "Cliente" },
+                { v: "flag", label: "Bandera" },
+              ].map((opt, i) => (
+                <button
+                  key={opt.v}
+                  type="button"
+                  onClick={() => setGroupBy(opt.v as GroupByMode)}
+                  className={cn(
+                    "px-3 py-1.5 text-sm font-medium transition-colors",
+                    i > 0 && "border-l",
+                    groupBy === opt.v ? "bg-neutral-900 text-white" : "text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {[1, 2, 3].map((i) => (
@@ -604,24 +715,111 @@ export default function ProjectsPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {visibleProjects.map((project) => {
+          <div className="space-y-8">
+            {projectGroups.map((group) => (
+              <div key={group.key}>
+                {/* Header del grupo (sólo cuando hay agrupación activa) */}
+                {group.label && (
+                  <div className="flex items-center gap-2 mb-3">
+                    {group.flag !== undefined && group.flag !== null && (
+                      <span className={cn("inline-block w-3 h-3 rounded-full", PROJECT_FLAG_COLOR_META[group.flag].bg)} />
+                    )}
+                    {group.flag === null && (
+                      <span className="inline-block w-3 h-3 rounded-full border border-dashed border-muted-foreground/40" />
+                    )}
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                      {group.label}
+                    </h3>
+                    <span className="text-xs text-muted-foreground/70">
+                      ({group.projects.length} {group.projects.length === 1 ? "proyecto" : "proyectos"})
+                    </span>
+                  </div>
+                )}
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {group.projects.map((project) => {
               const inTrash = view === "trash";
               const days = inTrash && project.deleted_at ? daysRemaining(project.deleted_at) : null;
               return (
                 <Card
                   key={project.id}
-                  className={`relative group transition-colors ${
+                  className={cn(
+                    "relative group transition-colors border-l-4",
                     inTrash
-                      ? "border-dashed bg-muted/30"
-                      : "cursor-pointer hover:border-primary/50"
-                  }`}
+                      ? "border-dashed bg-muted/30 border-l-transparent"
+                      : "cursor-pointer hover:border-primary/50",
+                    !inTrash && project.flag_color
+                      ? FLAG_BORDER_CLASS[project.flag_color]
+                      : !inTrash && "border-l-transparent"
+                  )}
                   onClick={inTrash ? undefined : () => router.push(`/project/${project.id}/settings`)}
                 >
                   {/* Action icons (top-right) */}
-                  <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="absolute top-2 right-2 flex items-center gap-1">
                     {!inTrash && (
                       <>
+                        {/* Bandera: siempre visible si está seteada, o al hover si no */}
+                        <Popover>
+                          <PopoverTrigger
+                            render={
+                              <button
+                                type="button"
+                                className={cn(
+                                  "inline-flex items-center justify-center h-7 w-7 rounded-md transition-opacity hover:bg-muted",
+                                  project.flag_color
+                                    ? "opacity-100"
+                                    : "opacity-0 group-hover:opacity-100"
+                                )}
+                                onClick={(e) => e.stopPropagation()}
+                                title="Asignar bandera"
+                              >
+                                <Flag
+                                  className={cn(
+                                    "h-3.5 w-3.5",
+                                    project.flag_color
+                                      ? cn("fill-current", FLAG_TEXT_CLASS[project.flag_color])
+                                      : "text-muted-foreground/60"
+                                  )}
+                                />
+                              </button>
+                            }
+                          />
+                          <PopoverContent
+                            align="end"
+                            className="w-auto p-2"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center gap-1">
+                              {PROJECT_FLAG_COLORS.map((c) => (
+                                <button
+                                  key={c}
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); setFlagColor(project.id, c); }}
+                                  className={cn(
+                                    "w-6 h-6 rounded-full transition-all",
+                                    PROJECT_FLAG_COLOR_META[c].bg,
+                                    project.flag_color === c
+                                      ? "ring-2 ring-offset-2 ring-foreground scale-110"
+                                      : "hover:scale-110"
+                                  )}
+                                  title={PROJECT_FLAG_COLOR_META[c].label}
+                                />
+                              ))}
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setFlagColor(project.id, null); }}
+                                className={cn(
+                                  "w-6 h-6 rounded-full border border-dashed border-muted-foreground/60 transition-all",
+                                  project.flag_color === null && "ring-2 ring-offset-2 ring-foreground"
+                                )}
+                                title="Sin bandera"
+                              />
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      </>
+                    )}
+                    {!inTrash && (
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -640,7 +838,7 @@ export default function ProjectsPage() {
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
-                      </>
+                      </div>
                     )}
                   </div>
 
@@ -697,7 +895,10 @@ export default function ProjectsPage() {
                   </CardContent>
                 </Card>
               );
-            })}
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
