@@ -279,7 +279,7 @@ export default function ProjectsPage() {
       const projectId = await executeImport(importParsed, supabase, user.id);
       toast.success("Proyecto creado desde plantilla");
       handleDialogOpenChange(false);
-      router.push(`/project/${projectId}/settings`);
+      router.push(`/project/${projectId}/consultas`);
     } catch (err) {
       toast.error(`Error al importar: ${err instanceof Error ? err.message : "desconocido"}`);
     } finally {
@@ -368,7 +368,7 @@ export default function ProjectsPage() {
       }
       toast.success("Proyecto duplicado");
       setDuplicateSource(null);
-      router.push(`/project/${data}/settings`);
+      router.push(`/project/${data}/consultas`);
     } finally {
       setDuplicating(false);
     }
@@ -751,7 +751,7 @@ export default function ProjectsPage() {
                       ? FLAG_BORDER_CLASS[project.flag_color]
                       : !inTrash && "border-l-transparent"
                   )}
-                  onClick={inTrash ? undefined : () => router.push(`/project/${project.id}/settings`)}
+                  onClick={inTrash ? undefined : () => router.push(`/project/${project.id}/consultas`)}
                 >
                   {/* Action icons (top-right) */}
                   <div className="absolute top-2 right-2 flex items-center gap-1">

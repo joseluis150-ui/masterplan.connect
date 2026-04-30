@@ -119,6 +119,8 @@ export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
       {/* Navigation */}
       <ScrollArea className="flex-1 py-3">
         <nav className="px-2 space-y-0.5">
+          {renderNavLink({ label: "Consultas", href: "consultas", icon: BarChart3 })}
+
           {renderNavLink({ label: "Configuración", href: "settings", icon: Settings })}
 
           {/* Planificación group */}
@@ -154,8 +156,6 @@ export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
 
           {project.compras_enabled &&
             renderNavLink({ label: "Compras", href: "compras", icon: ShoppingCart })}
-
-          {renderNavLink({ label: "Consultas", href: "consultas", icon: BarChart3 })}
         </nav>
       </ScrollArea>
 
