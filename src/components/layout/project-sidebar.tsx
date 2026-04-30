@@ -18,6 +18,7 @@ import {
   ClipboardList,
   ShoppingCart,
   FileText,
+  Inbox,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Project } from "@/lib/types/database";
@@ -44,9 +45,11 @@ const PLANNING_ITEMS: NavItem[] = [
 interface ProjectSidebarProps {
   project: Project;
   projectId: string;
+  /** Cantidad de OCs en estado pending_approval del proyecto. */
+  pendingApprovals?: number;
 }
 
-export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
+export function ProjectSidebar({ project, projectId, pendingApprovals = 0 }: ProjectSidebarProps) {
   const pathname = usePathname();
 
   const isPlanningActive = PLANNING_ITEMS.some(
@@ -58,6 +61,7 @@ export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
   // Permisos por sección (gates a nivel sidebar)
   const canSeeConsultas = usePermission("consultas.read");
   const canSeeSettings = usePermission("settings.read");
+  const canSeeApprovals = usePermission("oc.approve");
   const canSeeCompras = useAnyPermission(
     "oc.read", "solicitudes.read", "recepciones.read",
     "facturacion.read", "proveedores.read", "pagos.read"
@@ -143,6 +147,14 @@ export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
           {canSeeConsultas &&
             renderNavLink({ label: "Consultas", href: "consultas", icon: BarChart3 })}
 
+          {canSeeApprovals && (
+            <ApprovalsNavLink
+              projectId={projectId}
+              pathname={pathname}
+              count={pendingApprovals}
+            />
+          )}
+
           {canSeeSettings &&
             renderNavLink({ label: "Configuración", href: "settings", icon: Settings })}
 
@@ -204,6 +216,60 @@ export function ProjectSidebar({ project, projectId }: ProjectSidebarProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Item "Aprobaciones" con badge naranja a la derecha mostrando la cantidad
+ * de pendientes (sólo si hay >0). El conteo se carga server-side en el layout
+ * y se pasa como prop.
+ */
+function ApprovalsNavLink({
+  projectId,
+  pathname,
+  count,
+}: {
+  projectId: string;
+  pathname: string;
+  count: number;
+}) {
+  const href = `/project/${projectId}/aprobaciones`;
+  const isActive = pathname === href;
+  return (
+    <Link href={href}>
+      <div
+        className={cn(
+          "group relative flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-colors",
+          isActive
+            ? "text-white bg-white/[0.05]"
+            : "text-white/70 hover:text-white hover:bg-white/[0.03]"
+        )}
+      >
+        {isActive && (
+          <span
+            aria-hidden
+            className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 rounded-r"
+            style={{ background: "#E87722" }}
+          />
+        )}
+        <Inbox
+          className={cn(
+            "h-[15px] w-[15px] shrink-0 transition-colors",
+            isActive ? "text-[#E87722]" : "text-white/55 group-hover:text-white/85"
+          )}
+        />
+        <span className="truncate flex-1">Aprobaciones</span>
+        {count > 0 && (
+          <span
+            className="inline-flex items-center justify-center min-w-[20px] h-[18px] rounded-full px-1.5 text-[10px] font-bold leading-none"
+            style={{ background: "#E87722", color: "#fff" }}
+            title={`${count} ${count === 1 ? "pendiente" : "pendientes"} de aprobación`}
+          >
+            {count > 99 ? "99+" : count}
+          </span>
+        )}
+      </div>
+    </Link>
   );
 }
 

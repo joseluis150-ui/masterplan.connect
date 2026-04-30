@@ -51,6 +51,7 @@ import type {
 } from "@/lib/types/database";
 import { InsumoPicker } from "./insumo-picker";
 import { ColumnFilter, matchesColumnFilter } from "./column-filter";
+import { usePermission } from "@/lib/permissions";
 import { SupplierPicker } from "@/components/shared/supplier-picker";
 import { cn } from "@/lib/utils";
 import { logActivity } from "@/lib/utils/activity-log";
@@ -64,6 +65,8 @@ type OCWithLines = PurchaseOrder & { lines: PurchaseOrderLine[] };
 
 export function OrdenesTab({ projectId }: Props) {
   const supabase = createClient();
+  // Permisos para flujo de aprobación (Fase 4 multi-user).
+  const canSubmitForApproval = usePermission("oc.write");
   const [orders, setOrders] = useState<OCWithLines[]>([]);
   const [categories, setCategories] = useState<EdtCategory[]>([]);
   const [subcategories, setSubcategories] = useState<EdtSubcategory[]>([]);
@@ -532,6 +535,54 @@ export function OrdenesTab({ projectId }: Props) {
     if (!sub) return "—";
     const cat = categories.find((c) => c.id === sub.category_id);
     return `${cat?.code || ""}.${sub.code?.split(".")[1] || ""} ${sub.name}`;
+  }
+
+  /**
+   * Envía la OC actual a aprobación (cambia approval_status a pending_approval).
+   * Sólo aplica si el OC está en draft o rejected.
+   */
+  async function submitForApproval(ocId: string) {
+    if (!confirm("¿Enviar esta OC a aprobación? No vas a poder editarla hasta que el aprobador firme.")) return;
+    const { error } = await supabase.rpc("submit_oc_for_approval", { p_oc_id: ocId });
+    if (error) { toast.error(error.message); return; }
+    toast.success("OC enviada a aprobación");
+    loadData();
+  }
+
+  /**
+   * Badge para el approval_status. Naranja = pendiente, verde = aprobada,
+   * rojo = rechazada, gris = borrador.
+   */
+  function getApprovalBadge(approval_status: string | null | undefined) {
+    if (!approval_status || approval_status === "draft") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-neutral-100 text-neutral-700 border">
+          Borrador
+        </span>
+      );
+    }
+    if (approval_status === "pending_approval") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium" style={{ background: "#FFF3E6", color: "#E87722", border: "1px solid #FFE0BF" }}>
+          Pendiente de aprobación
+        </span>
+      );
+    }
+    if (approval_status === "approved") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+          ✓ Aprobada
+        </span>
+      );
+    }
+    if (approval_status === "rejected") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-50 text-red-700 border border-red-200">
+          ✕ Rechazada
+        </span>
+      );
+    }
+    return null;
   }
 
   function getStatusBadge(status: PurchaseOrderStatus) {
@@ -1162,7 +1213,10 @@ export function OrdenesTab({ projectId }: Props) {
                   className={cn("grid gap-3 px-4 py-2.5 items-center text-xs border-t hover:bg-muted/20 cursor-pointer transition-colors", gridCols)}
                   onClick={() => openDetail(oc.id)}
                 >
-                  <span className="font-mono text-sm font-semibold">{oc.number}</span>
+                  <span className="font-mono text-sm font-semibold flex items-center gap-2">
+                    {oc.number}
+                    {oc.approval_status && oc.approval_status !== "approved" && getApprovalBadge(oc.approval_status)}
+                  </span>
                   <span>{getStatusBadge(oc.status)}</span>
                   <span className="truncate font-medium" title={oc.supplier}>{oc.supplier}</span>
                   <span className="text-muted-foreground">{oc.issue_date}</span>
@@ -1255,14 +1309,31 @@ export function OrdenesTab({ projectId }: Props) {
                       <FileText className="h-5 w-5" />
                       <span className="font-mono">{oc.number}</span>
                       {getStatusBadge(oc.status)}
+                      {getApprovalBadge(oc.approval_status)}
                       <span className="text-base font-medium text-muted-foreground">·</span>
                       <span className="text-base font-medium">{oc.supplier}</span>
+                      {/* Botón Enviar a aprobación: sólo si está en draft o rejected y user tiene oc.write */}
+                      {canSubmitForApproval &&
+                       (oc.approval_status === "draft" || oc.approval_status === "rejected") && (
+                        <Button
+                          size="sm"
+                          className="ml-auto bg-[#E87722] hover:bg-[#B85A0F]"
+                          onClick={() => submitForApproval(oc.id)}
+                        >
+                          Enviar a aprobación
+                        </Button>
+                      )}
                     </DialogTitle>
                   </DialogHeader>
                   <p className="text-xs text-muted-foreground mt-1">
                     Emitida el {oc.issue_date} · {oc.lines.length} línea(s) · Total{" "}
                     <span className="font-semibold text-foreground">{formatMoney(total, oc.currency)}</span>
                   </p>
+                  {oc.approval_status === "rejected" && oc.approval_note && (
+                    <div className="mt-2 text-xs bg-red-50 border border-red-200 rounded-md px-3 py-2 text-red-800">
+                      <span className="font-semibold">Motivo de rechazo:</span> {oc.approval_note}
+                    </div>
+                  )}
                 </div>
 
                 {/* Scrollable body — gray backdrop with two white panel sections */}

@@ -323,10 +323,19 @@ export interface PurchaseOrder {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  // Approval workflow
+  approval_status: OCApprovalStatus;
+  submitted_by: string | null;
+  submitted_at: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  approval_note: string | null;
   // enriched
   lines?: PurchaseOrderLine[];
   request_number?: string;
 }
+
+export type OCApprovalStatus = "draft" | "pending_approval" | "approved" | "rejected";
 
 export interface AuditEntry {
   at: string;           // ISO date
