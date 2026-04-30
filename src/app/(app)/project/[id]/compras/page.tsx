@@ -2,20 +2,22 @@
 
 import { useState, use } from "react";
 import { cn } from "@/lib/utils";
-import { FileText, ClipboardList, TrendingUp, Receipt, HandCoins, Users } from "lucide-react";
+import { FileText, ClipboardList, TrendingUp, Receipt, HandCoins, Users, Scale } from "lucide-react";
 import { ProveedoresTab } from "./_components/proveedores-tab";
 import { SolicitudesTab } from "./_components/solicitudes-tab";
+import { CotizacionesTab } from "./_components/cotizaciones-tab";
 import { OrdenesTab } from "./_components/ordenes-tab";
 import { FacturacionTab } from "./_components/facturacion-tab";
 import { AnticiposTab } from "./_components/anticipos-tab";
 import { AvanceTab } from "./_components/avance-tab";
 import { HistoryDrawer } from "./_components/history-drawer";
 
-type TabKey = "proveedores" | "solicitudes" | "ordenes" | "anticipos" | "facturacion" | "avance";
+type TabKey = "proveedores" | "solicitudes" | "cotizaciones" | "ordenes" | "anticipos" | "facturacion" | "avance";
 
 const TABS: { key: TabKey; label: string; icon: typeof FileText }[] = [
   { key: "proveedores", label: "Proveedores", icon: Users },
   { key: "solicitudes", label: "Solicitudes", icon: ClipboardList },
+  { key: "cotizaciones", label: "Cotizaciones", icon: Scale },
   { key: "ordenes", label: "Órdenes de Compra", icon: FileText },
   { key: "anticipos", label: "Anticipos dados", icon: HandCoins },
   { key: "facturacion", label: "Facturación", icon: Receipt },
@@ -66,6 +68,7 @@ export default function ComprasPage({ params }: { params: Promise<{ id: string }
       <div className="flex-1">
         {activeTab === "proveedores" && <ProveedoresTab key={`prov-${refreshKey}`} projectId={projectId} />}
         {activeTab === "solicitudes" && <SolicitudesTab key={`sol-${refreshKey}`} projectId={projectId} />}
+        {activeTab === "cotizaciones" && <CotizacionesTab key={`cot-${refreshKey}`} projectId={projectId} />}
         {activeTab === "ordenes" && <OrdenesTab key={`ord-${refreshKey}`} projectId={projectId} />}
         {activeTab === "anticipos" && <AnticiposTab key={`ant-${refreshKey}`} projectId={projectId} />}
         {activeTab === "facturacion" && <FacturacionTab key={`fac-${refreshKey}`} projectId={projectId} />}
