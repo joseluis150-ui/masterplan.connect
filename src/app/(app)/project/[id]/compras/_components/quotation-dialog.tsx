@@ -39,9 +39,8 @@ import type {
   Insumo,
   Supplier,
 } from "@/lib/types/database";
-import { usePermission } from "@/lib/permissions";
 
-interface Quotation {
+export interface Quotation {
   id: string;
   project_id: string;
   request_id: string | null;
@@ -51,11 +50,6 @@ interface Quotation {
   justification: string | null;
   created_at: string;
   updated_at: string;
-}
-
-interface PurchaseRequestRef {
-  id: string;
-  number: string;
 }
 
 interface QuotationLine {
@@ -108,7 +102,7 @@ interface Attachment {
   uploaded_at: string;
 }
 
-const STATUS_LABELS: Record<Quotation["status"], { label: string; bg: string; color: string }> = {
+export const QUOTATION_STATUS_LABELS: Record<Quotation["status"], { label: string; bg: string; color: string }> = {
   draft: { label: "Borrador", bg: "#F5F5F5", color: "#525252" },
   pending_approval: { label: "Pendiente", bg: "#FFF3E6", color: "#E87722" },
   awarded: { label: "Adjudicada", bg: "#ECFDF5", color: "#047857" },
@@ -116,129 +110,7 @@ const STATUS_LABELS: Record<Quotation["status"], { label: string; bg: string; co
   cancelled: { label: "Cancelada", bg: "#F5F5F5", color: "#737373" },
 };
 
-export function CotizacionesTab({ projectId }: { projectId: string }) {
-  const supabase = createClient();
-  const canWrite = usePermission("oc.write"); // por ahora reusamos oc.write para cotizaciones
-  const [quotations, setQuotations] = useState<Quotation[]>([]);
-  const [requestsById, setRequestsById] = useState<Map<string, PurchaseRequestRef>>(new Map());
-  const [loading, setLoading] = useState(true);
-
-  // Catálogos para los selects
-  const [subcategories, setSubcategories] = useState<EdtSubcategory[]>([]);
-  const [sectors, setSectors] = useState<Sector[]>([]);
-  const [insumos, setInsumos] = useState<Insumo[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-
-  // Editar / abrir detalle
-  const [openId, setOpenId] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [qRes, subRes, secRes, insRes, supRes, reqRes] = await Promise.all([
-      supabase.from("quotations").select("*").eq("project_id", projectId).order("created_at", { ascending: false }),
-      supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
-      supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
-      supabase.from("insumos").select("*").eq("project_id", projectId).order("code"),
-      supabase.from("suppliers").select("*").eq("project_id", projectId).order("name"),
-      supabase.from("purchase_requests").select("id, number").eq("project_id", projectId),
-    ]);
-    setQuotations((qRes.data ?? []) as Quotation[]);
-    setSubcategories((subRes.data ?? []) as EdtSubcategory[]);
-    setSectors((secRes.data ?? []) as Sector[]);
-    setInsumos((insRes.data ?? []) as Insumo[]);
-    setSuppliers((supRes.data ?? []) as Supplier[]);
-    const rmap = new Map<string, PurchaseRequestRef>();
-    for (const r of (reqRes.data ?? []) as PurchaseRequestRef[]) rmap.set(r.id, r);
-    setRequestsById(rmap);
-    setLoading(false);
-  }, [projectId, supabase]);
-
-  useEffect(() => { load(); }, [load]);
-
-  return (
-    <div className="space-y-4 py-4">
-      <div>
-        <p className="text-sm text-muted-foreground">
-          Las cotizaciones nacen siempre de una <span className="font-medium">Solicitud de Compra</span>. Para iniciar una nueva cotización, andá a la pestaña Solicitudes y usá el botón &quot;Nueva cotización&quot; en la SC correspondiente.
-        </p>
-      </div>
-
-      {loading ? (
-        <div className="text-sm text-muted-foreground py-12 text-center">Cargando…</div>
-      ) : quotations.length === 0 ? (
-        <Card className="text-center py-12">
-          <CardContent>
-            <Scale className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium mb-1">Sin cotizaciones</h3>
-            <p className="text-muted-foreground text-sm">
-              Iniciá una cotización desde la pestaña Solicitudes.
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-2">
-          {quotations.map((q) => {
-            const sl = STATUS_LABELS[q.status];
-            const sc = q.request_id ? requestsById.get(q.request_id) : null;
-            return (
-              <Card
-                key={q.id}
-                className="cursor-pointer hover:border-[#E87722]/40 transition-colors"
-                onClick={() => setOpenId(q.id)}
-              >
-                <CardContent className="pt-3 pb-3">
-                  <div className="flex items-center gap-3">
-                    <Scale className="h-5 w-5 text-muted-foreground shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                        <span className="font-mono text-sm font-semibold">{q.number}</span>
-                        <span
-                          className="text-[11px] font-medium px-2 py-0.5 rounded-full"
-                          style={{ background: sl.bg, color: sl.color }}
-                        >
-                          {sl.label}
-                        </span>
-                        {sc && (
-                          <span className="text-[11px] text-muted-foreground">
-                            ← SC <span className="font-mono">{sc.number}</span>
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-sm font-medium truncate">{q.title || "(sin título)"}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(q.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Diálogo detalle/edición */}
-      {openId && (
-        <QuotationDialog
-          quotationId={openId}
-          projectId={projectId}
-          subcategories={subcategories}
-          sectors={sectors}
-          insumos={insumos}
-          suppliers={suppliers}
-          canWrite={canWrite}
-          onClose={() => { setOpenId(null); load(); }}
-        />
-      )}
-    </div>
-  );
-}
-
-/* =====================================================================
-   Diálogo grande para editar una cotización: ítems, ofertas, adjuntos.
-   ===================================================================== */
-
-function QuotationDialog({
+export function QuotationDialog({
   quotationId,
   projectId,
   subcategories,
@@ -447,9 +319,9 @@ function QuotationDialog({
                 />
                 <span
                   className="text-xs px-2 py-0.5 rounded-full"
-                  style={{ background: STATUS_LABELS[quotation.status].bg, color: STATUS_LABELS[quotation.status].color }}
+                  style={{ background: QUOTATION_STATUS_LABELS[quotation.status].bg, color: QUOTATION_STATUS_LABELS[quotation.status].color }}
                 >
-                  {STATUS_LABELS[quotation.status].label}
+                  {QUOTATION_STATUS_LABELS[quotation.status].label}
                 </span>
               </DialogTitle>
               <DialogDescription>
@@ -457,7 +329,7 @@ function QuotationDialog({
               </DialogDescription>
             </DialogHeader>
 
-            {/* Justificación: obligatoria si una sola oferta o como contexto general */}
+            {/* Justificación */}
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 Justificación

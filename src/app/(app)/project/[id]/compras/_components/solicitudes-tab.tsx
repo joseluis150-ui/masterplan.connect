@@ -29,7 +29,9 @@ import {
   FileText,
   CheckCircle2,
   Scale,
+  Paperclip,
 } from "lucide-react";
+import { QuotationDialog, QUOTATION_STATUS_LABELS } from "./quotation-dialog";
 import { toast } from "sonner";
 import {
   SC_STATUSES,
@@ -76,8 +78,10 @@ export function SolicitudesTab({ projectId }: Props) {
   const [subcategories, setSubcategories] = useState<EdtSubcategory[]>([]);
   const [loading, setLoading] = useState(true);
   // Cotizaciones agrupadas por request_id (para mostrar en cada SC)
-  const [quotationsByRequest, setQuotationsByRequest] = useState<Map<string, { id: string; number: string; status: string }[]>>(new Map());
+  const [quotationsByRequest, setQuotationsByRequest] = useState<Map<string, { id: string; number: string; status: string; title: string | null }[]>>(new Map());
   const [creatingQuotationFor, setCreatingQuotationFor] = useState<string | null>(null);
+  // Cotización abierta en el modal grande
+  const [openQuotationId, setOpenQuotationId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Map of SC line id -> aggregated OC consumption
   const [ocConsumption, setOcConsumption] = useState<Map<string, OCLineAgg>>(new Map());
@@ -165,16 +169,16 @@ export function SolicitudesTab({ projectId }: Props) {
         .order("created_at", { ascending: false }),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.from("suppliers").select("*").eq("project_id", projectId).order("name"),
-      supabase.from("quotations").select("id, number, status, request_id").eq("project_id", projectId),
+      supabase.from("quotations").select("id, number, status, request_id, title").eq("project_id", projectId).order("created_at"),
     ]);
 
     setRequests((reqRes.data || []) as SCWithLines[]);
     // Agrupar cotizaciones por request_id
-    const qmap = new Map<string, { id: string; number: string; status: string }[]>();
-    for (const q of (quoRes.data ?? []) as { id: string; number: string; status: string; request_id: string | null }[]) {
+    const qmap = new Map<string, { id: string; number: string; status: string; title: string | null }[]>();
+    for (const q of (quoRes.data ?? []) as { id: string; number: string; status: string; request_id: string | null; title: string | null }[]) {
       if (!q.request_id) continue;
       const arr = qmap.get(q.request_id) ?? [];
-      arr.push({ id: q.id, number: q.number, status: q.status });
+      arr.push({ id: q.id, number: q.number, status: q.status, title: q.title });
       qmap.set(q.request_id, arr);
     }
     setQuotationsByRequest(qmap);
@@ -346,15 +350,15 @@ export function SolicitudesTab({ projectId }: Props) {
   // Force SC to "completed" state when buyer decides pending qty won't be ordered
   /**
    * Crea una cotización a partir de una SC. La RPC copia las líneas
-   * de la SC como ítems a cotizar. Después abre la cotización en la
-   * pestaña Cotizaciones (o redirigimos manualmente al usuario).
+   * de la SC como ítems a cotizar y devuelve el id, que usamos para
+   * abrir directamente el diálogo de edición.
    */
   async function createQuotationFromSC(sc: SCWithLines) {
     if (creatingQuotationFor) return;
     setCreatingQuotationFor(sc.id);
     try {
       const title = `Cotización SC ${sc.number}`;
-      const { error } = await supabase.rpc("create_quotation_from_request", {
+      const { data, error } = await supabase.rpc("create_quotation_from_request", {
         p_request_id: sc.id,
         p_title: title,
       });
@@ -362,8 +366,10 @@ export function SolicitudesTab({ projectId }: Props) {
         toast.error(`Error al crear cotización: ${error.message}`);
         return;
       }
-      toast.success(`Cotización creada desde SC ${sc.number}. Andá a la pestaña Cotizaciones para editarla.`);
-      loadData();
+      toast.success(`Cotización creada desde SC ${sc.number}`);
+      await loadData();
+      // Abrir el diálogo grande directamente
+      if (data) setOpenQuotationId(data as string);
     } finally {
       setCreatingQuotationFor(null);
     }
@@ -1064,12 +1070,12 @@ export function SolicitudesTab({ projectId }: Props) {
 
                 <div className="flex-1" />
 
-                {/* Cotizaciones existentes de esta SC */}
+                {/* Mini badge: cuántas cotizaciones tiene esta SC */}
                 {(() => {
                   const qList = quotationsByRequest.get(sc.id) || [];
                   if (qList.length === 0) return null;
                   return (
-                    <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <div className="flex items-center gap-1 text-[11px] text-muted-foreground" title="Expandí la SC para ver las cotizaciones">
                       <Scale className="h-3 w-3" />
                       <span>
                         {qList.length} {qList.length === 1 ? "cotización" : "cotizaciones"}
@@ -1077,20 +1083,6 @@ export function SolicitudesTab({ projectId }: Props) {
                     </div>
                   );
                 })()}
-
-                {canGenerateOC && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 text-xs"
-                    onClick={(e) => { e.stopPropagation(); createQuotationFromSC(sc); }}
-                    disabled={creatingQuotationFor === sc.id}
-                    title="Generar una nueva cotización a partir de esta SC"
-                  >
-                    <Scale className="h-3.5 w-3.5 mr-1" />
-                    {creatingQuotationFor === sc.id ? "Creando…" : "Nueva cotización"}
-                  </Button>
-                )}
 
                 {canGenerateOC && (
                   <Button
@@ -1131,10 +1123,67 @@ export function SolicitudesTab({ projectId }: Props) {
 
               {/* SC Lines (READ-ONLY) */}
               {isExpanded && (
-                <div className="p-4 space-y-2">
+                <div className="p-4 space-y-3">
                   {sc.comment !== null && sc.comment !== "" && (
                     <p className="text-xs text-muted-foreground italic mb-2">{sc.comment}</p>
                   )}
+
+                  {/* ─── COTIZACIONES DE ESTA SC ─── */}
+                  {(() => {
+                    const qList = quotationsByRequest.get(sc.id) || [];
+                    return (
+                      <div className="rounded-md border bg-amber-50/30 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                            <Scale className="h-3.5 w-3.5" />
+                            Cotizaciones {qList.length > 0 && `(${qList.length})`}
+                          </h4>
+                          {canGenerateOC && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={(e) => { e.stopPropagation(); createQuotationFromSC(sc); }}
+                              disabled={creatingQuotationFor === sc.id}
+                            >
+                              <Plus className="h-3 w-3 mr-1" />
+                              {creatingQuotationFor === sc.id ? "Creando…" : "Nueva cotización"}
+                            </Button>
+                          )}
+                        </div>
+                        {qList.length === 0 ? (
+                          <p className="text-xs italic text-muted-foreground py-1">
+                            Aún no se cargó ninguna cotización para esta solicitud.
+                          </p>
+                        ) : (
+                          <div className="space-y-1">
+                            {qList.map((q) => {
+                              const sl = QUOTATION_STATUS_LABELS[q.status as keyof typeof QUOTATION_STATUS_LABELS];
+                              return (
+                                <div
+                                  key={q.id}
+                                  className="flex items-center gap-2 px-2 py-1.5 rounded bg-background border cursor-pointer hover:border-[#E87722]/40 transition-colors"
+                                  onClick={(e) => { e.stopPropagation(); setOpenQuotationId(q.id); }}
+                                >
+                                  <Scale className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                  <span className="font-mono text-xs font-semibold">{q.number}</span>
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded-full"
+                                    style={{ background: sl.bg, color: sl.color }}
+                                  >
+                                    {sl.label}
+                                  </span>
+                                  <span className="text-xs flex-1 truncate text-muted-foreground">
+                                    {q.title || "(sin título)"}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {sc.lines.length > 0 && (
                     <>
@@ -2052,6 +2101,20 @@ export function SolicitudesTab({ projectId }: Props) {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* ─────── Quotation Dialog (cotización abierta para edición) ─────── */}
+      {openQuotationId && (
+        <QuotationDialog
+          quotationId={openQuotationId}
+          projectId={projectId}
+          subcategories={subcategories}
+          sectors={sectors}
+          insumos={insumos}
+          suppliers={projectSuppliers}
+          canWrite={true}
+          onClose={() => { setOpenQuotationId(null); loadData(); }}
+        />
+      )}
     </div>
   );
 }
