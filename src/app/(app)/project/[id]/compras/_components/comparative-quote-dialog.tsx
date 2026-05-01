@@ -131,11 +131,35 @@ export function ComparativeQuoteDialog({
         .eq("quotation.request_id", requestId),
     ]);
     if (rRes.data) setRequest(rRes.data as RequestRow);
-    setRequestLines((rlRes.data ?? []) as RequestLine[]);
+    let rlines = (rlRes.data ?? []) as RequestLine[];
+
+    // Auto-vincular: si la línea NO tiene insumo_id pero su descripción matchea
+    // (case-insensitive) con un insumo del catálogo, lo vinculamos automáticamente.
+    // Útil para SCs creadas antes de que el modelo soportara insumo_id.
+    const linesToAutoLink: { id: string; insumo_id: string; unit: string }[] = [];
+    for (const line of rlines) {
+      if (line.insumo_id) continue;
+      if (!line.description) continue;
+      const desc = line.description.trim().toLowerCase();
+      const match = insumosCatalog.find((i) => i.description.trim().toLowerCase() === desc);
+      if (match) linesToAutoLink.push({ id: line.id, insumo_id: match.id, unit: match.unit });
+    }
+    if (linesToAutoLink.length > 0) {
+      // UPDATE en lote (uno por uno; pocos casos en la práctica)
+      await Promise.all(linesToAutoLink.map((u) =>
+        supabase.from("purchase_request_lines").update({ insumo_id: u.insumo_id, unit: u.unit }).eq("id", u.id)
+      ));
+      rlines = rlines.map((l) => {
+        const u = linesToAutoLink.find((x) => x.id === l.id);
+        return u ? { ...l, insumo_id: u.insumo_id, unit: u.unit } : l;
+      });
+    }
+
+    setRequestLines(rlines);
     setQuotations((qRes.data ?? []) as Quotation[]);
     setQuotationLines((qlRes.data ?? []) as QuotationLine[]);
     setLoading(false);
-  }, [requestId, supabase]);
+  }, [requestId, supabase, insumosCatalog]);
 
   useEffect(() => { load(); }, [load]);
 

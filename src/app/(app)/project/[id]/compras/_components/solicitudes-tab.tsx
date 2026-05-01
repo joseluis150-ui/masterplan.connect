@@ -104,7 +104,7 @@ export function SolicitudesTab({ projectId }: Props) {
   // Manual SC creation dialog
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [manualComment, setManualComment] = useState("");
-  type ManualLine = { tmpId: string; subcategory_id: string | null; description: string; quantity: number; unit: string; need_date: string | null };
+  type ManualLine = { tmpId: string; subcategory_id: string | null; description: string; quantity: number; unit: string; need_date: string | null; insumo_id: string | null };
   const [manualLines, setManualLines] = useState<ManualLine[]>([]);
   const [creatingManual, setCreatingManual] = useState(false);
 
@@ -239,6 +239,7 @@ export function SolicitudesTab({ projectId }: Props) {
       quantity: 1,
       unit: "U",
       need_date: null,
+      insumo_id: null,
     }]);
     setManualDialogOpen(true);
   }
@@ -251,7 +252,18 @@ export function SolicitudesTab({ projectId }: Props) {
       quantity: 1,
       unit: "U",
       need_date: null,
+      insumo_id: null,
     }]);
+  }
+
+  /** Cuando el usuario elige un insumo del catálogo, se llenan automáticamente
+   * description, unit e insumo_id. Centraliza esa lógica. */
+  function selectManualLineInsumo(tmpId: string, ins: { id: string; description: string; unit: string }) {
+    setManualLines((prev) => prev.map((l) =>
+      l.tmpId === tmpId
+        ? { ...l, insumo_id: ins.id, description: ins.description, unit: ins.unit }
+        : l
+    ));
   }
 
   function updateManualLine(tmpId: string, field: keyof ManualLine, value: unknown) {
@@ -303,6 +315,7 @@ export function SolicitudesTab({ projectId }: Props) {
         quantity: l.quantity,
         unit: l.unit,
         need_date: l.need_date,
+        insumo_id: l.insumo_id,
       }));
 
       const { error: lErr } = await supabase.from("purchase_request_lines").insert(linesPayload);
@@ -1370,12 +1383,15 @@ export function SolicitudesTab({ projectId }: Props) {
                       </SelectContent>
                     </Select>
 
-                    <Input
-                      className="h-8 text-xs"
-                      value={line.description}
-                      placeholder="Descripción..."
-                      onChange={(e) => updateManualLine(line.tmpId, "description", e.target.value)}
-                    />
+                    <div>
+                      <InsumoPicker
+                        projectId={projectId}
+                        insumos={insumos}
+                        selectedInsumoId={line.insumo_id}
+                        onSelect={(ins) => selectManualLineInsumo(line.tmpId, ins)}
+                        onInsumoCreated={(ins) => setInsumos((prev) => [...prev, ins])}
+                      />
+                    </div>
 
                     <Input
                       className="h-8 text-xs text-right"
