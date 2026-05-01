@@ -15,6 +15,20 @@ interface PendingOC {
   submitted_at: string | null;
 }
 
+/**
+ * Cotización pendiente de adjudicar — agrupada por SC. Una sola SC suele
+ * mandar varias cotizaciones (una por proveedor), así que la entrada
+ * representa "esta SC tiene N cotizaciones esperando que el aprobador
+ * adjudique cuál(es) gana(n)".
+ */
+interface PendingQuotation {
+  request_id: string;
+  request_number: string | null;
+  quotation_count: number;
+  total_lines: number;
+  earliest_submitted: string | null;
+}
+
 export default async function AprobacionesPage({
   params,
 }: {
@@ -32,10 +46,13 @@ export default async function AprobacionesPage({
     redirect(`/project/${projectId}/consultas`);
   }
 
-  const { data: pendingRaw } = await supabase.rpc("list_pending_oc_approvals", {
-    p_project_id: projectId,
-  });
-  const pending = (pendingRaw as PendingOC[] | null) ?? [];
+  const [ocsRes, quotesRes] = await Promise.all([
+    supabase.rpc("list_pending_oc_approvals", { p_project_id: projectId }),
+    supabase.rpc("list_pending_quotation_approvals", { p_project_id: projectId }),
+  ]);
+  const pendingOcs = (ocsRes.data as PendingOC[] | null) ?? [];
+  const pendingQuotations = (quotesRes.data as PendingQuotation[] | null) ?? [];
+  const total = pendingOcs.length + pendingQuotations.length;
 
   return (
     <div className="space-y-6">
@@ -46,15 +63,19 @@ export default async function AprobacionesPage({
             Aprobaciones pendientes
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Órdenes de compra esperando tu firma
+            Cotizaciones por adjudicar y órdenes de compra esperando tu firma
           </p>
         </div>
         <div className="text-3xl font-bold" style={{ color: "#E87722" }}>
-          {pending.length}
+          {total}
         </div>
       </div>
 
-      <ApprovalQueue projectId={projectId} initialPending={pending} />
+      <ApprovalQueue
+        projectId={projectId}
+        initialPendingOcs={pendingOcs}
+        initialPendingQuotations={pendingQuotations}
+      />
     </div>
   );
 }

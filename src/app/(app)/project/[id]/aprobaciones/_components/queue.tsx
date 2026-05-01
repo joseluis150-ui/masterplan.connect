@@ -11,8 +11,12 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatNumber } from "@/lib/utils/formula";
-import { CheckCircle2, XCircle, Mail, Calendar, Loader2, FileText } from "lucide-react";
+import {
+  CheckCircle2, XCircle, Mail, Calendar, Loader2,
+  FileText, Scale, Layers,
+} from "lucide-react";
 import { toast } from "sonner";
+import { AwardQuotationDialog } from "./award-quotation-dialog";
 
 interface PendingOC {
   id: string;
@@ -26,6 +30,14 @@ interface PendingOC {
   submitted_at: string | null;
 }
 
+interface PendingQuotation {
+  request_id: string;
+  request_number: string | null;
+  quotation_count: number;
+  total_lines: number;
+  earliest_submitted: string | null;
+}
+
 interface OCLine {
   id: string;
   description: string | null;
@@ -36,44 +48,54 @@ interface OCLine {
 }
 
 export function ApprovalQueue({
-  projectId,
-  initialPending,
+  projectId: _projectId, // mantenido por API; no se usa directamente en el cliente
+  initialPendingOcs,
+  initialPendingQuotations,
 }: {
   projectId: string;
-  initialPending: PendingOC[];
+  initialPendingOcs: PendingOC[];
+  initialPendingQuotations: PendingQuotation[];
 }) {
+  void _projectId;
   const supabase = createClient();
   const router = useRouter();
-  const [pending, setPending] = useState<PendingOC[]>(initialPending);
-  const [selected, setSelected] = useState<PendingOC | null>(null);
-  const [lines, setLines] = useState<OCLine[]>([]);
-  const [loadingLines, setLoadingLines] = useState(false);
+  const [pendingOcs, setPendingOcs] = useState<PendingOC[]>(initialPendingOcs);
+  const [pendingQuotes, setPendingQuotes] =
+    useState<PendingQuotation[]>(initialPendingQuotations);
+
+  // Estado del modal de OC
+  const [selectedOc, setSelectedOc] = useState<PendingOC | null>(null);
+  const [ocLines, setOcLines] = useState<OCLine[]>([]);
+  const [loadingOcLines, setLoadingOcLines] = useState(false);
   const [decisionMode, setDecisionMode] = useState<"approve" | "reject" | null>(null);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  async function openDetail(oc: PendingOC) {
-    setSelected(oc);
+  // Estado del modal de adjudicación de cotizaciones
+  const [awardingRequestId, setAwardingRequestId] = useState<string | null>(null);
+
+  async function openOcDetail(oc: PendingOC) {
+    setSelectedOc(oc);
     setDecisionMode(null);
     setNote("");
-    setLoadingLines(true);
+    setLoadingOcLines(true);
     const { data } = await supabase
       .from("purchase_order_lines")
       .select("id, description, quantity, unit, unit_price, total")
       .eq("order_id", oc.id);
-    setLines((data ?? []) as OCLine[]);
-    setLoadingLines(false);
+    setOcLines((data ?? []) as OCLine[]);
+    setLoadingOcLines(false);
   }
 
-  async function decide(decision: "approve" | "reject") {
-    if (!selected) return;
+  async function decideOc(decision: "approve" | "reject") {
+    if (!selectedOc) return;
     if (decision === "reject" && !note.trim()) {
       toast.error("Para rechazar, ingresá un motivo en el comentario");
       return;
     }
     setSubmitting(true);
     const { error } = await supabase.rpc("decide_oc_approval", {
-      p_oc_id: selected.id,
+      p_oc_id: selectedOc.id,
       p_decision: decision,
       p_note: note.trim() || null,
     });
@@ -83,11 +105,11 @@ export function ApprovalQueue({
       return;
     }
     toast.success(decision === "approve" ? "OC aprobada" : "OC rechazada");
-    setPending((prev) => prev.filter((p) => p.id !== selected.id));
-    setSelected(null);
+    setPendingOcs((prev) => prev.filter((p) => p.id !== selectedOc.id));
+    setSelectedOc(null);
     setDecisionMode(null);
     setNote("");
-    router.refresh(); // refresca el badge del sidebar
+    router.refresh();
   }
 
   function fmtRel(when: string | null) {
@@ -102,14 +124,15 @@ export function ApprovalQueue({
     return `hace ${days} ${days === 1 ? "día" : "días"}`;
   }
 
-  if (pending.length === 0) {
+  const total = pendingOcs.length + pendingQuotes.length;
+  if (total === 0) {
     return (
       <Card className="text-center py-16">
         <CardContent>
           <CheckCircle2 className="h-12 w-12 mx-auto text-emerald-500 mb-4" />
           <h3 className="text-lg font-medium mb-1">Todo al día</h3>
           <p className="text-muted-foreground text-sm">
-            No tenés órdenes de compra pendientes de aprobar.
+            No tenés cotizaciones por adjudicar ni OCs pendientes de firmar.
           </p>
         </CardContent>
       </Card>
@@ -118,74 +141,138 @@ export function ApprovalQueue({
 
   return (
     <>
-      <div className="space-y-3">
-        {pending.map((oc) => {
-          const total = Number(oc.total ?? 0);
-          return (
-            <Card
-              key={oc.id}
-              className="cursor-pointer hover:border-[#E87722]/40 transition-colors"
-              onClick={() => openDetail(oc)}
-            >
-              <CardContent className="pt-4 pb-4">
-                <div className="flex items-center gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-1">
-                      <span className="font-mono text-sm text-muted-foreground">
-                        OC #{oc.number ?? "—"}
-                      </span>
-                      {oc.issue_date && (
-                        <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          {new Date(oc.issue_date).toLocaleDateString()}
+      {/* COTIZACIONES PENDIENTES DE ADJUDICAR */}
+      {pendingQuotes.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-xs uppercase tracking-wider font-semibold text-muted-foreground inline-flex items-center gap-2">
+            <Scale className="h-3.5 w-3.5" />
+            Cotizaciones por adjudicar ({pendingQuotes.length})
+          </h2>
+          <div className="space-y-3">
+            {pendingQuotes.map((q) => (
+              <Card
+                key={q.request_id}
+                className="cursor-pointer hover:border-[#E87722]/40 transition-colors"
+                onClick={() => setAwardingRequestId(q.request_id)}
+              >
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 mb-1">
+                        <span className="font-mono text-sm text-muted-foreground">
+                          SC #{q.request_number ?? "—"}
                         </span>
-                      )}
+                        <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#E87722]/10 text-[#E87722] font-semibold">
+                          Cotización
+                        </span>
+                      </div>
+                      <h3 className="text-lg font-semibold truncate inline-flex items-center gap-2">
+                        <Layers className="h-4 w-4 text-muted-foreground" />
+                        {q.quotation_count} {q.quotation_count === 1 ? "proveedor" : "proveedores"}
+                        <span className="text-sm text-muted-foreground font-normal">
+                          · {q.total_lines} {q.total_lines === 1 ? "ítem" : "ítems"}
+                        </span>
+                      </h3>
+                      <div className="text-xs text-muted-foreground mt-1 inline-flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        Cargada {fmtRel(q.earliest_submitted)}
+                      </div>
                     </div>
-                    <h3 className="text-lg font-semibold truncate">
-                      {oc.supplier_name ?? "(sin proveedor)"}
-                    </h3>
-                    <div className="text-xs text-muted-foreground mt-1 inline-flex items-center gap-1">
-                      <Mail className="h-3 w-3" />
-                      Enviada por {oc.submitted_by_email ?? "—"} · {fmtRel(oc.submitted_at)}
+                    <div className="text-right">
+                      <Button
+                        size="sm"
+                        className="bg-[#E87722] hover:bg-[#E87722]/90"
+                        onClick={(e) => { e.stopPropagation(); setAwardingRequestId(q.request_id); }}
+                      >
+                        <Scale className="h-4 w-4 mr-2" />
+                        Adjudicar
+                      </Button>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-bold">
-                      {formatNumber(total, 0)}
-                    </div>
-                    <div className="text-xs text-muted-foreground uppercase">
-                      {oc.currency ?? ""}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
-      <Dialog open={!!selected} onOpenChange={(o) => { if (!o) { setSelected(null); setDecisionMode(null); } }}>
+      {/* OCs PENDIENTES DE APROBAR */}
+      {pendingOcs.length > 0 && (
+        <div className="space-y-2 mt-6">
+          <h2 className="text-xs uppercase tracking-wider font-semibold text-muted-foreground inline-flex items-center gap-2">
+            <FileText className="h-3.5 w-3.5" />
+            Órdenes de compra por aprobar ({pendingOcs.length})
+          </h2>
+          <div className="space-y-3">
+            {pendingOcs.map((oc) => {
+              const total = Number(oc.total ?? 0);
+              return (
+                <Card
+                  key={oc.id}
+                  className="cursor-pointer hover:border-[#E87722]/40 transition-colors"
+                  onClick={() => openOcDetail(oc)}
+                >
+                  <CardContent className="pt-4 pb-4">
+                    <div className="flex items-center gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3 mb-1">
+                          <span className="font-mono text-sm text-muted-foreground">
+                            OC #{oc.number ?? "—"}
+                          </span>
+                          {oc.issue_date && (
+                            <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              {new Date(oc.issue_date).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="text-lg font-semibold truncate">
+                          {oc.supplier_name ?? "(sin proveedor)"}
+                        </h3>
+                        <div className="text-xs text-muted-foreground mt-1 inline-flex items-center gap-1">
+                          <Mail className="h-3 w-3" />
+                          Enviada por {oc.submitted_by_email ?? "—"} · {fmtRel(oc.submitted_at)}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold">
+                          {formatNumber(total, 0)}
+                        </div>
+                        <div className="text-xs text-muted-foreground uppercase">
+                          {oc.currency ?? ""}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL — DETALLE DE OC */}
+      <Dialog open={!!selectedOc} onOpenChange={(o) => { if (!o) { setSelectedOc(null); setDecisionMode(null); } }}>
         <DialogContent className="sm:max-w-2xl">
-          {selected && (
+          {selectedOc && (
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <FileText className="h-5 w-5 text-[#E87722]" />
-                  OC #{selected.number ?? "—"} · {selected.supplier_name ?? ""}
+                  OC #{selectedOc.number ?? "—"} · {selectedOc.supplier_name ?? ""}
                 </DialogTitle>
                 <DialogDescription>
-                  Enviada por {selected.submitted_by_email ?? "—"} · {fmtRel(selected.submitted_at)}
+                  Enviada por {selectedOc.submitted_by_email ?? "—"} · {fmtRel(selectedOc.submitted_at)}
                 </DialogDescription>
               </DialogHeader>
 
-              {/* Líneas de la OC */}
               <div className="space-y-2">
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Detalle ({lines.length} ítems)
+                  Detalle ({ocLines.length} ítems)
                 </h4>
-                {loadingLines ? (
+                {loadingOcLines ? (
                   <p className="text-sm text-muted-foreground py-3">Cargando…</p>
-                ) : lines.length === 0 ? (
+                ) : ocLines.length === 0 ? (
                   <p className="text-sm italic text-muted-foreground py-2">
                     La OC no tiene líneas cargadas.
                   </p>
@@ -202,7 +289,7 @@ export function ApprovalQueue({
                         </tr>
                       </thead>
                       <tbody>
-                        {lines.map((l) => (
+                        {ocLines.map((l) => (
                           <tr key={l.id} className="border-t">
                             <td className="px-3 py-1.5">{l.description ?? ""}</td>
                             <td className="px-3 py-1.5 text-right font-mono">{formatNumber(Number(l.quantity ?? 0))}</td>
@@ -214,7 +301,7 @@ export function ApprovalQueue({
                         <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
                           <td colSpan={4} className="px-3 py-2 text-right text-xs uppercase tracking-wider text-white">Total</td>
                           <td className="px-3 py-2 text-right font-mono" style={{ color: "#E87722" }}>
-                            {formatNumber(Number(selected.total ?? 0), 0)} {selected.currency}
+                            {formatNumber(Number(selectedOc.total ?? 0), 0)} {selectedOc.currency}
                           </td>
                         </tr>
                       </tbody>
@@ -223,7 +310,6 @@ export function ApprovalQueue({
                 )}
               </div>
 
-              {/* Comentario y botones */}
               {decisionMode ? (
                 <div className="space-y-3 pt-2">
                   <div className="space-y-2">
@@ -246,7 +332,7 @@ export function ApprovalQueue({
                       Cancelar
                     </Button>
                     <Button
-                      onClick={() => decide(decisionMode)}
+                      onClick={() => decideOc(decisionMode)}
                       disabled={submitting}
                       className={decisionMode === "approve" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}
                     >
@@ -283,6 +369,18 @@ export function ApprovalQueue({
           )}
         </DialogContent>
       </Dialog>
+
+      {/* MODAL — ADJUDICACIÓN DE COTIZACIONES */}
+      {awardingRequestId && (
+        <AwardQuotationDialog
+          requestId={awardingRequestId}
+          onClose={() => setAwardingRequestId(null)}
+          onAwarded={() => {
+            setPendingQuotes((prev) => prev.filter((q) => q.request_id !== awardingRequestId));
+            router.refresh();
+          }}
+        />
+      )}
     </>
   );
 }

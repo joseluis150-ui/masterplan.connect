@@ -26,15 +26,19 @@ export default async function ProjectLayout({
     notFound();
   }
 
-  // En paralelo: rol del usuario en este proyecto + lista de permisos + conteo de aprobaciones pendientes.
-  const [roleRes, permsRes, pendingRes] = await Promise.all([
+  // En paralelo: rol del usuario en este proyecto + lista de permisos + conteos de aprobaciones pendientes.
+  // El badge suma OCs pendientes + cotizaciones pendientes (ambos van a la misma bandeja del aprobador).
+  const [roleRes, permsRes, pendingOcRes, pendingQuoteRes] = await Promise.all([
     supabase.rpc("user_role_in_project", { p_project_id: id }),
     supabase.rpc("user_permissions_in_project", { p_project_id: id }),
     supabase.rpc("count_pending_oc_approvals", { p_project_id: id }),
+    supabase.rpc("count_pending_quotation_approvals", { p_project_id: id }),
   ]);
   const role = (roleRes.data as RoleSlug | null) ?? null;
   const permissions = ((permsRes.data as PermissionId[] | null) ?? []) as PermissionId[];
-  const pendingApprovals = (pendingRes.data as number | null) ?? 0;
+  const pendingApprovals =
+    ((pendingOcRes.data as number | null) ?? 0) +
+    ((pendingQuoteRes.data as number | null) ?? 0);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
