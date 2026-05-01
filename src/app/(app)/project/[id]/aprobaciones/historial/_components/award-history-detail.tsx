@@ -9,10 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Scale, Paperclip, Download, Loader2, Building, FileText,
-  CheckCircle2, XCircle,
+  CheckCircle2, XCircle, Clock,
 } from "lucide-react";
 import { formatNumber } from "@/lib/utils/formula";
 import { toast } from "sonner";
+import { ApprovalTimeline } from "./approval-timeline";
 
 interface RequestLineRow {
   id: string;
@@ -436,6 +437,15 @@ export function AwardHistoryDetail({
                   })}
                 </div>
               )}
+            </div>
+
+            {/* Timeline del proceso de adjudicación */}
+            <div className="space-y-2 pt-2 border-t">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                Línea de tiempo del proceso
+              </h4>
+              <ApprovalTimeline type="award" refId={requestId} />
             </div>
           </>
         )}

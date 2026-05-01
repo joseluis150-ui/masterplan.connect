@@ -8,8 +8,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   FileText, CheckCircle2, XCircle, Paperclip, Download, Loader2, Building,
+  Clock,
 } from "lucide-react";
 import { formatNumber } from "@/lib/utils/formula";
+import { ApprovalTimeline } from "./approval-timeline";
 
 interface OcRow {
   id: string;
@@ -238,6 +240,15 @@ export function OcHistoryDetail({
                   ))}
                 </ul>
               )}
+            </div>
+
+            {/* Timeline del proceso */}
+            <div className="space-y-2 pt-2 border-t">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                Línea de tiempo del proceso
+              </h4>
+              <ApprovalTimeline type="oc" refId={oc.id} />
             </div>
           </>
         )}
