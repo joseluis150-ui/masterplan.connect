@@ -118,6 +118,8 @@ export function ComparativeQuoteDialog({
   const [quotationLines, setQuotationLines] = useState<QuotationLine[]>([]);
   // Cantidad ya ordenada por request_line_id (suma de OC lines en OCs no canceladas)
   const [orderedQty, setOrderedQty] = useState<Map<string, number>>(new Map());
+  // Historial de compras por insumo_id (de TODAS las OCs del proyecto, sirve para tooltip)
+  const [historyByInsumo, setHistoryByInsumo] = useState<Map<string, { oc_number: string; supplier: string; unit_price: number; currency: string; date: string | null }[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -154,6 +156,40 @@ export function ComparativeQuoteDialog({
     }
     setOrderedQty(ordered);
 
+    // Historial de compras del proyecto entero, agrupado por insumo_id.
+    // Trae todas las OC lines no canceladas con su OC y supplier para mostrar
+    // como sugerencia al cargar precios.
+    const { data: histRaw } = await supabase
+      .from("purchase_order_lines")
+      .select(`
+        insumo_id, unit_price,
+        order:purchase_orders!inner(number, supplier, currency, issue_date, status, project_id)
+      `)
+      .eq("order.project_id", projectId)
+      .not("insumo_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(500);
+    type HistRow = { insumo_id: string; unit_price: number; order: { number: string; supplier: string; currency: string; issue_date: string | null; status: string } | { number: string; supplier: string; currency: string; issue_date: string | null; status: string }[] | null };
+    const histMap = new Map<string, { oc_number: string; supplier: string; unit_price: number; currency: string; date: string | null }[]>();
+    for (const h of (histRaw ?? []) as unknown as HistRow[]) {
+      if (!h.insumo_id) continue;
+      const ord = Array.isArray(h.order) ? h.order[0] : h.order;
+      if (!ord || ord.status === "cancelled") continue;
+      const arr = histMap.get(h.insumo_id) ?? [];
+      // Limito a 5 por insumo (tooltip se vuelve ilegible con más)
+      if (arr.length < 5) {
+        arr.push({
+          oc_number: ord.number,
+          supplier: ord.supplier,
+          unit_price: Number(h.unit_price || 0),
+          currency: ord.currency,
+          date: ord.issue_date,
+        });
+      }
+      histMap.set(h.insumo_id, arr);
+    }
+    setHistoryByInsumo(histMap);
+
     // Auto-vincular: si la línea NO tiene insumo_id pero su descripción matchea
     // (case-insensitive) con un insumo del catálogo, lo vinculamos automáticamente.
     // Útil para SCs creadas antes de que el modelo soportara insumo_id.
@@ -180,7 +216,7 @@ export function ComparativeQuoteDialog({
     setQuotations((qRes.data ?? []) as Quotation[]);
     setQuotationLines((qlRes.data ?? []) as QuotationLine[]);
     setLoading(false);
-  }, [requestId, supabase, insumosCatalog]);
+  }, [requestId, supabase, insumosCatalog, projectId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -286,6 +322,37 @@ export function ComparativeQuoteDialog({
     return ql?.unit_price ?? null;
   }
 
+  /**
+   * Construye un texto tipo tooltip con: precio presupuestado del insumo +
+   * histórico de compras de ese insumo (hasta 5 OCs).
+   * Se pasa como atributo `title` al input de precio para que el browser lo
+   * muestre al hover.
+   */
+  function buildPriceTooltip(insumoId: string | null): string {
+    if (!insumoId) return "Pasá el cursor con el ítem vinculado a un insumo del catálogo para ver el precio sugerido y el histórico.";
+    const insumo = insumosCatalog.find((i) => i.id === insumoId);
+    const lines: string[] = [];
+    if (insumo) {
+      const pu = Number(insumo.pu_usd || 0);
+      const puLocal = Number(insumo.pu_local || 0);
+      lines.push(`📦 ${insumo.code ? `[${insumo.code}] ` : ""}${insumo.description}`);
+      lines.push(`💰 Presupuestado: ${formatNumber(pu, 2)} USD${puLocal > 0 ? ` · ${formatNumber(puLocal, 0)} ${insumo.currency_input || "LOCAL"}` : ""}`);
+    }
+    const hist = historyByInsumo.get(insumoId) ?? [];
+    if (hist.length > 0) {
+      lines.push("");
+      lines.push(`📊 Histórico (${hist.length} compra${hist.length === 1 ? "" : "s"}):`);
+      for (const h of hist) {
+        const dateStr = h.date ? new Date(h.date).toLocaleDateString() : "—";
+        lines.push(`  • OC ${h.oc_number} · ${h.supplier} · ${formatNumber(h.unit_price, 2)} ${h.currency} · ${dateStr}`);
+      }
+    } else if (insumo) {
+      lines.push("");
+      lines.push("📊 Sin compras anteriores en este proyecto.");
+    }
+    return lines.join("\n");
+  }
+
   function quotationTotal(quotationId: string): number {
     let sum = 0;
     for (const line of requestLines) {
@@ -354,7 +421,7 @@ export function ComparativeQuoteDialog({
               <table className="w-full text-xs">
                 <thead className="bg-neutral-100">
                   <tr>
-                    <th className="text-left px-2 py-2 font-semibold sticky left-0 bg-neutral-100 z-10 min-w-[280px]">Ítem</th>
+                    <th className="text-left px-2 py-2 font-semibold sticky left-0 bg-neutral-100 z-20 min-w-[280px]">Ítem</th>
                     <th className="text-left px-2 py-2 font-semibold w-[150px]">Centro de costo *</th>
                     <th className="text-left px-2 py-2 font-semibold w-[110px]">Sector *</th>
                     <th className="text-right px-2 py-2 font-semibold w-[80px]">Cantidad</th>
@@ -394,6 +461,15 @@ export function ComparativeQuoteDialog({
                     const remaining = Math.max(0, Number(line.quantity || 0) - already);
                     const fullyOrdered = already > 0 && remaining <= 0;
                     const partiallyOrdered = already > 0 && remaining > 0;
+                    // Background opaco explícito para que la columna sticky tape el contenido de las celdas detrás.
+                    // bg-inherit no es confiable cuando hay opacity en el bg de la fila.
+                    const stickyBg = fullyOrdered
+                      ? "bg-neutral-100"
+                      : partiallyOrdered
+                        ? "bg-blue-50"
+                        : missingCC
+                          ? "bg-amber-50"
+                          : "bg-white";
                     const rowClass = fullyOrdered
                       ? "border-t bg-neutral-100/60 opacity-50"
                       : partiallyOrdered
@@ -403,7 +479,7 @@ export function ComparativeQuoteDialog({
                           : "border-t";
                     return (
                       <tr key={line.id} className={rowClass} title={fullyOrdered ? "Ya ordenado en otra OC — no requiere cotizar" : undefined}>
-                        <td className="px-2 py-1 align-top sticky left-0 bg-inherit">
+                        <td className={`px-2 py-1 align-top sticky left-0 z-10 ${stickyBg}`}>
                           <div className={fullyOrdered ? "line-through" : ""}>
                             <InsumoPicker
                               projectId={projectId}
@@ -488,6 +564,7 @@ export function ComparativeQuoteDialog({
                         {quotations.map((q) => {
                           const p = priceFor(q.id, line.id);
                           const subtotal = (p ?? 0) * Number(line.quantity || 0);
+                          const tooltip = buildPriceTooltip(line.insumo_id);
                           return (
                             <td key={q.id} className="px-2 py-1 border-l-2 border-neutral-200">
                               <Input
@@ -505,6 +582,7 @@ export function ComparativeQuoteDialog({
                                 placeholder="—"
                                 className="h-6 text-xs text-right"
                                 disabled={q.status !== "draft" && q.status !== "rejected"}
+                                title={tooltip}
                               />
                               {p != null && (
                                 <p className="text-[10px] text-muted-foreground text-right mt-0.5 font-mono">
@@ -544,7 +622,7 @@ export function ComparativeQuoteDialog({
                   </tr>
                   {/* Fila TOTAL */}
                   <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
-                    <td colSpan={5} className="px-2 py-2 text-right text-xs uppercase tracking-wider text-white sticky left-0 bg-neutral-900">
+                    <td colSpan={5} className="px-2 py-2 text-right text-xs uppercase tracking-wider text-white sticky left-0 bg-neutral-900 z-10">
                       Total
                     </td>
                     {quotations.map((q) => (

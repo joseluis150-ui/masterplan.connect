@@ -104,7 +104,7 @@ export function SolicitudesTab({ projectId }: Props) {
   // Manual SC creation dialog
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [manualComment, setManualComment] = useState("");
-  type ManualLine = { tmpId: string; subcategory_id: string | null; description: string; quantity: number; unit: string; need_date: string | null; insumo_id: string | null };
+  type ManualLine = { tmpId: string; subcategory_id: string | null; sector_id: string | null; description: string; quantity: number; unit: string; need_date: string | null; insumo_id: string | null };
   const [manualLines, setManualLines] = useState<ManualLine[]>([]);
   const [creatingManual, setCreatingManual] = useState(false);
 
@@ -235,6 +235,7 @@ export function SolicitudesTab({ projectId }: Props) {
     setManualLines([{
       tmpId: crypto.randomUUID(),
       subcategory_id: subcategories[0]?.id || null,
+      sector_id: null,
       description: "",
       quantity: 1,
       unit: "U",
@@ -248,6 +249,7 @@ export function SolicitudesTab({ projectId }: Props) {
     setManualLines((prev) => [...prev, {
       tmpId: crypto.randomUUID(),
       subcategory_id: subcategories[0]?.id || null,
+      sector_id: null,
       description: "",
       quantity: 1,
       unit: "U",
@@ -311,6 +313,7 @@ export function SolicitudesTab({ projectId }: Props) {
       const linesPayload = validLines.map((l) => ({
         request_id: sc.id,
         subcategory_id: l.subcategory_id,
+        sector_id: l.sector_id,
         description: l.description,
         quantity: l.quantity,
         unit: l.unit,
@@ -1346,8 +1349,10 @@ export function SolicitudesTab({ projectId }: Props) {
               </div>
 
               <div className="space-y-2 mt-2">
-                {manualLines.map((line) => (
-                  <div key={line.tmpId} className="grid grid-cols-[1fr_2fr_90px_70px_120px_40px] gap-2 items-center">
+                {manualLines.map((line) => {
+                  const lineSector = sectors.find((s) => s.id === line.sector_id);
+                  return (
+                  <div key={line.tmpId} className="grid grid-cols-[1fr_110px_2fr_90px_70px_120px_40px] gap-2 items-center">
                     <Select
                       value={line.subcategory_id || ""}
                       onValueChange={(v) => updateManualLine(line.tmpId, "subcategory_id", v)}
@@ -1367,6 +1372,22 @@ export function SolicitudesTab({ projectId }: Props) {
                               </SelectItem>
                             ))
                         )}
+                      </SelectContent>
+                    </Select>
+
+                    <Select
+                      value={line.sector_id || ""}
+                      onValueChange={(v) => v && updateManualLine(line.tmpId, "sector_id", v)}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <span className="truncate text-left">
+                          {lineSector?.name || "Sector..."}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sectors.map((s) => (
+                          <SelectItem key={s.id} value={s.id} className="text-xs">{s.name}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
 
@@ -1418,7 +1439,8 @@ export function SolicitudesTab({ projectId }: Props) {
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
