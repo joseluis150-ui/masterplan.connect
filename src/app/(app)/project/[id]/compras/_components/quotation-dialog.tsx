@@ -19,6 +19,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { CURRENCIES } from "@/lib/constants/units";
+import { InsumoPicker } from "./insumo-picker";
 import {
   Plus,
   Trash2,
@@ -425,12 +426,11 @@ export function QuotationDialog({
                   <table className="w-full text-xs">
                     <thead className="bg-neutral-100">
                       <tr>
-                        <th className="text-left px-2 py-2 font-semibold">Descripción</th>
-                        <th className="text-left px-2 py-2 font-semibold w-[140px]">Centro de costo *</th>
-                        <th className="text-left px-2 py-2 font-semibold w-[110px]">Sector *</th>
-                        <th className="text-left px-2 py-2 font-semibold w-[130px]">Insumo</th>
-                        <th className="text-right px-2 py-2 font-semibold w-[70px]">Cantidad</th>
-                        <th className="text-center px-2 py-2 font-semibold w-[55px]">Unidad</th>
+                        <th className="text-left px-2 py-2 font-semibold">Ítem</th>
+                        <th className="text-left px-2 py-2 font-semibold w-[150px]">Centro de costo *</th>
+                        <th className="text-left px-2 py-2 font-semibold w-[120px]">Sector *</th>
+                        <th className="text-right px-2 py-2 font-semibold w-[80px]">Cantidad</th>
+                        <th className="text-center px-2 py-2 font-semibold w-[60px]">Unidad</th>
                         <th className="text-right px-2 py-2 font-semibold w-[100px]">P. unit.</th>
                         <th className="text-right px-2 py-2 font-semibold w-[110px]">Subtotal</th>
                         <th className="w-[36px]"></th>
@@ -440,19 +440,29 @@ export function QuotationDialog({
                       {lines.map((line) => {
                         const subItem = subcategories.find((s) => s.id === line.subcategory_id);
                         const sectorItem = sectors.find((s) => s.id === line.sector_id);
-                        const insumoItem = insumos.find((i) => i.id === line.insumo_id);
                         const subtotal = Number(line.quantity || 0) * Number(line.unit_price || 0);
                         const missingCC = !line.subcategory_id || !line.sector_id;
                         return (
                           <tr key={line.id} className={`border-t ${missingCC ? "bg-amber-50/50" : ""}`}>
-                            <td className="px-2 py-1">
-                              <Input
-                                value={line.description}
-                                onChange={(e) => setLines((p) => p.map((l) => l.id === line.id ? { ...l, description: e.target.value } : l))}
-                                onBlur={() => updateLine(line.id, { description: line.description })}
-                                className="h-7 text-xs"
-                                disabled={!!isLocked}
+                            <td className="px-2 py-1 align-top">
+                              {/* Selector de insumo: la descripción ES el insumo del catálogo.
+                                  Si la línea heredó texto libre desde la SC, lo mostramos como
+                                  referencia debajo hasta que se vincule un insumo concreto. */}
+                              <InsumoPicker
+                                projectId={projectId}
+                                insumos={insumos}
+                                selectedInsumoId={line.insumo_id}
+                                onSelect={(ins) => updateLine(line.id, {
+                                  insumo_id: ins.id,
+                                  description: ins.description,
+                                  unit: ins.unit,
+                                })}
                               />
+                              {!line.insumo_id && line.description && (
+                                <p className="text-[10px] text-amber-700 mt-0.5 truncate" title={line.description}>
+                                  De la SC: <span className="italic">{line.description}</span>
+                                </p>
+                              )}
                             </td>
                             <td className="px-2 py-1">
                               <Select
@@ -490,26 +500,6 @@ export function QuotationDialog({
                                 <SelectContent>
                                   {sectors.map((s) => (
                                     <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </td>
-                            <td className="px-2 py-1">
-                              <Select
-                                value={line.insumo_id || ""}
-                                onValueChange={(v) => v && updateLine(line.id, { insumo_id: v })}
-                                disabled={!!isLocked}
-                              >
-                                <SelectTrigger className="h-7 text-xs">
-                                  {insumoItem ? (
-                                    <span className="truncate">{insumoItem.code} · {insumoItem.description.slice(0, 30)}</span>
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {insumos.map((i) => (
-                                    <SelectItem key={i.id} value={i.id}>{i.code} · {i.description.slice(0, 50)}</SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
@@ -561,7 +551,7 @@ export function QuotationDialog({
                         );
                       })}
                       <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
-                        <td colSpan={7} className="px-2 py-2 text-right text-xs uppercase tracking-wider text-white">
+                        <td colSpan={6} className="px-2 py-2 text-right text-xs uppercase tracking-wider text-white">
                           Total cotización ({quotation.currency})
                         </td>
                         <td className="px-2 py-2 text-right font-mono" style={{ color: "#E87722" }}>
