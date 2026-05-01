@@ -146,6 +146,43 @@ export function ComparativeQuoteDialog({
     if (error) toast.error(error.message);
   }
 
+  /** Agregar una línea nueva a la SC. Se ofrece a todas las cotizaciones existentes
+   * (la matriz crece automáticamente al agregarse en quotation_lines vacíos). */
+  async function addRequestLine() {
+    const { data: newLine, error } = await supabase
+      .from("purchase_request_lines")
+      .insert({
+        request_id: requestId,
+        description: "Nuevo ítem",
+        quantity: 1,
+        unit: "u",
+      })
+      .select()
+      .single();
+    if (error || !newLine) { toast.error(error?.message || "Error al agregar línea"); return; }
+    setRequestLines((prev) => [...prev, newLine as RequestLine]);
+
+    // Crear quotation_lines vacíos en cada cotización existente para que la
+    // matriz quede consistente (la nueva línea aparece en todas las columnas).
+    if (quotations.length > 0) {
+      const inserts = quotations.map((q) => ({
+        quotation_id: q.id,
+        request_line_id: (newLine as RequestLine).id,
+        unit_price: null,
+      }));
+      const { data: newQls } = await supabase.from("quotation_lines").insert(inserts).select();
+      if (newQls) setQuotationLines((prev) => [...prev, ...(newQls as QuotationLine[])]);
+    }
+  }
+
+  async function removeRequestLine(id: string) {
+    if (!confirm("¿Eliminar este ítem de la cotización? Se borra también de la SC.")) return;
+    const { error } = await supabase.from("purchase_request_lines").delete().eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    setRequestLines((prev) => prev.filter((l) => l.id !== id));
+    setQuotationLines((prev) => prev.filter((ql) => ql.request_line_id !== id));
+  }
+
   /* ----------------------- COTIZACIONES (PROVEEDORES) ---------------------- */
   async function addQuotation() {
     const { data, error } = await supabase.rpc("create_quotation_from_request", {
@@ -398,10 +435,34 @@ export function ComparativeQuoteDialog({
                             </td>
                           );
                         })}
-                        <td />
+                        <td className="px-1 py-1 text-center">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeRequestLine(line.id)}
+                            className="h-6 w-6"
+                            title="Quitar este ítem de la cotización"
+                          >
+                            <Trash2 className="h-3 w-3 text-destructive" />
+                          </Button>
+                        </td>
                       </tr>
                     );
                   })}
+                  {/* Fila para agregar línea extra */}
+                  <tr className="border-t bg-muted/20">
+                    <td colSpan={5 + quotations.length + 1} className="px-2 py-1.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={addRequestLine}
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" />
+                        Agregar ítem extra (que no estaba en la SC)
+                      </Button>
+                    </td>
+                  </tr>
                   {/* Fila TOTAL */}
                   <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
                     <td colSpan={5} className="px-2 py-2 text-right text-xs uppercase tracking-wider text-white sticky left-0 bg-neutral-900">
