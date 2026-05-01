@@ -116,12 +116,14 @@ export function ComparativeQuoteDialog({
   const [requestLines, setRequestLines] = useState<RequestLine[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [quotationLines, setQuotationLines] = useState<QuotationLine[]>([]);
+  // Cantidad ya ordenada por request_line_id (suma de OC lines en OCs no canceladas)
+  const [orderedQty, setOrderedQty] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [rRes, rlRes, qRes, qlRes] = await Promise.all([
+    const [rRes, rlRes, qRes, qlRes, ocLinesRes] = await Promise.all([
       supabase.from("purchase_requests").select("*").eq("id", requestId).single(),
       supabase.from("purchase_request_lines").select("*").eq("request_id", requestId).order("created_at"),
       supabase.from("quotations").select("*").eq("request_id", requestId).order("created_at"),
@@ -129,9 +131,28 @@ export function ComparativeQuoteDialog({
         .from("quotation_lines")
         .select("*, quotation:quotations!inner(request_id)")
         .eq("quotation.request_id", requestId),
+      // Líneas de OCs no canceladas que apuntan a las líneas de ESTA SC.
+      // El status 'cancelled' lo excluyo (esas no consumen).
+      supabase
+        .from("purchase_order_lines")
+        .select("request_line_id, quantity, order:purchase_orders!inner(status, request_id)")
+        .eq("order.request_id", requestId),
     ]);
     if (rRes.data) setRequest(rRes.data as RequestRow);
     let rlines = (rlRes.data ?? []) as RequestLine[];
+
+    // Sumar cantidad ya ordenada por request_line_id.
+    // Supabase puede devolver `order` como objeto o como array de un elemento
+    // según la inferencia del esquema; lo manejamos con cast a unknown.
+    type OCL = { request_line_id: string | null; quantity: number; order: { status: string } | { status: string }[] | null };
+    const ordered = new Map<string, number>();
+    for (const ol of (ocLinesRes.data ?? []) as unknown as OCL[]) {
+      if (!ol.request_line_id) continue;
+      const ord = Array.isArray(ol.order) ? ol.order[0] : ol.order;
+      if (ord?.status === "cancelled") continue;
+      ordered.set(ol.request_line_id, (ordered.get(ol.request_line_id) || 0) + Number(ol.quantity || 0));
+    }
+    setOrderedQty(ordered);
 
     // Auto-vincular: si la línea NO tiene insumo_id pero su descripción matchea
     // (case-insensitive) con un insumo del catálogo, lo vinculamos automáticamente.
@@ -369,22 +390,49 @@ export function ComparativeQuoteDialog({
                     const subItem = subcategories.find((s) => s.id === line.subcategory_id);
                     const sectorItem = sectors.find((s) => s.id === line.sector_id);
                     const missingCC = !line.subcategory_id || !line.sector_id;
+                    const already = orderedQty.get(line.id) || 0;
+                    const remaining = Math.max(0, Number(line.quantity || 0) - already);
+                    const fullyOrdered = already > 0 && remaining <= 0;
+                    const partiallyOrdered = already > 0 && remaining > 0;
+                    const rowClass = fullyOrdered
+                      ? "border-t bg-neutral-100/60 opacity-50"
+                      : partiallyOrdered
+                        ? "border-t bg-blue-50/40"
+                        : missingCC
+                          ? "border-t bg-amber-50/50"
+                          : "border-t";
                     return (
-                      <tr key={line.id} className={`border-t ${missingCC ? "bg-amber-50/50" : ""}`}>
+                      <tr key={line.id} className={rowClass} title={fullyOrdered ? "Ya ordenado en otra OC — no requiere cotizar" : undefined}>
                         <td className="px-2 py-1 align-top sticky left-0 bg-inherit">
-                          <InsumoPicker
-                            projectId={projectId}
-                            insumos={insumosCatalog}
-                            selectedInsumoId={line.insumo_id}
-                            onSelect={(ins) => updateRequestLine(line.id, {
-                              insumo_id: ins.id,
-                              description: ins.description,
-                              unit: ins.unit,
-                            })}
-                          />
+                          <div className={fullyOrdered ? "line-through" : ""}>
+                            <InsumoPicker
+                              projectId={projectId}
+                              insumos={insumosCatalog}
+                              selectedInsumoId={line.insumo_id}
+                              onSelect={(ins) => updateRequestLine(line.id, {
+                                insumo_id: ins.id,
+                                description: ins.description,
+                                unit: ins.unit,
+                              })}
+                            />
+                          </div>
                           {!line.insumo_id && line.description && (
                             <p className="text-[10px] text-amber-700 mt-0.5 truncate" title={line.description}>
                               SC: <span className="italic">{line.description}</span>
+                            </p>
+                          )}
+                          {fullyOrdered && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5 inline-flex items-center gap-1">
+                              <span className="px-1.5 py-0.5 rounded-full bg-neutral-200 text-neutral-700 font-medium">
+                                ✓ Ya ordenado
+                              </span>
+                            </p>
+                          )}
+                          {partiallyOrdered && (
+                            <p className="text-[10px] text-blue-700 mt-0.5 inline-flex items-center gap-1">
+                              <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-medium">
+                                Parcial · {formatNumber(already)} ordenado · {formatNumber(remaining)} pendiente
+                              </span>
                             </p>
                           )}
                         </td>
@@ -427,7 +475,14 @@ export function ComparativeQuoteDialog({
                           </Select>
                         </td>
                         <td className="px-2 py-1 text-right font-mono">
-                          {formatNumber(line.quantity)}
+                          <div className={fullyOrdered ? "line-through text-muted-foreground" : ""}>
+                            {formatNumber(line.quantity)}
+                          </div>
+                          {partiallyOrdered && (
+                            <div className="text-[10px] text-blue-700 font-medium">
+                              ({formatNumber(remaining)} pend.)
+                            </div>
+                          )}
                         </td>
                         <td className="px-2 py-1 text-center text-muted-foreground">{line.unit}</td>
                         {quotations.map((q) => {
