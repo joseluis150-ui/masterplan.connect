@@ -28,6 +28,7 @@ import {
   Lock,
   FileText,
   CheckCircle2,
+  Scale,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -74,6 +75,9 @@ export function SolicitudesTab({ projectId }: Props) {
   const [categories, setCategories] = useState<EdtCategory[]>([]);
   const [subcategories, setSubcategories] = useState<EdtSubcategory[]>([]);
   const [loading, setLoading] = useState(true);
+  // Cotizaciones agrupadas por request_id (para mostrar en cada SC)
+  const [quotationsByRequest, setQuotationsByRequest] = useState<Map<string, { id: string; number: string; status: string }[]>>(new Map());
+  const [creatingQuotationFor, setCreatingQuotationFor] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Map of SC line id -> aggregated OC consumption
   const [ocConsumption, setOcConsumption] = useState<Map<string, OCLineAgg>>(new Map());
@@ -141,7 +145,7 @@ export function SolicitudesTab({ projectId }: Props) {
   const [generatingOC, setGeneratingOC] = useState(false);
 
   const loadData = useCallback(async () => {
-    const [reqRes, catsRes, subsRes, ordersRes, insumosRes, projectRes, allOcLinesRes, sectorsRes, supsRes] = await Promise.all([
+    const [reqRes, catsRes, subsRes, ordersRes, insumosRes, projectRes, allOcLinesRes, sectorsRes, supsRes, quoRes] = await Promise.all([
       supabase
         .from("purchase_requests")
         .select("*, lines:purchase_request_lines(*)")
@@ -161,9 +165,19 @@ export function SolicitudesTab({ projectId }: Props) {
         .order("created_at", { ascending: false }),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.from("suppliers").select("*").eq("project_id", projectId).order("name"),
+      supabase.from("quotations").select("id, number, status, request_id").eq("project_id", projectId),
     ]);
 
     setRequests((reqRes.data || []) as SCWithLines[]);
+    // Agrupar cotizaciones por request_id
+    const qmap = new Map<string, { id: string; number: string; status: string }[]>();
+    for (const q of (quoRes.data ?? []) as { id: string; number: string; status: string; request_id: string | null }[]) {
+      if (!q.request_id) continue;
+      const arr = qmap.get(q.request_id) ?? [];
+      arr.push({ id: q.id, number: q.number, status: q.status });
+      qmap.set(q.request_id, arr);
+    }
+    setQuotationsByRequest(qmap);
     setCategories(catsRes.data || []);
     setSubcategories(subsRes.data || []);
     setInsumos((insumosRes.data || []) as Insumo[]);
@@ -330,6 +344,31 @@ export function SolicitudesTab({ projectId }: Props) {
   }
 
   // Force SC to "completed" state when buyer decides pending qty won't be ordered
+  /**
+   * Crea una cotización a partir de una SC. La RPC copia las líneas
+   * de la SC como ítems a cotizar. Después abre la cotización en la
+   * pestaña Cotizaciones (o redirigimos manualmente al usuario).
+   */
+  async function createQuotationFromSC(sc: SCWithLines) {
+    if (creatingQuotationFor) return;
+    setCreatingQuotationFor(sc.id);
+    try {
+      const title = `Cotización SC ${sc.number}`;
+      const { error } = await supabase.rpc("create_quotation_from_request", {
+        p_request_id: sc.id,
+        p_title: title,
+      });
+      if (error) {
+        toast.error(`Error al crear cotización: ${error.message}`);
+        return;
+      }
+      toast.success(`Cotización creada desde SC ${sc.number}. Andá a la pestaña Cotizaciones para editarla.`);
+      loadData();
+    } finally {
+      setCreatingQuotationFor(null);
+    }
+  }
+
   async function markSCCompleted(sc: SCWithLines) {
     const totalPending = sc.lines.reduce(
       (s, l) => s + getRemainingQty(l),
@@ -1024,6 +1063,34 @@ export function SolicitudesTab({ projectId }: Props) {
                 )}
 
                 <div className="flex-1" />
+
+                {/* Cotizaciones existentes de esta SC */}
+                {(() => {
+                  const qList = quotationsByRequest.get(sc.id) || [];
+                  if (qList.length === 0) return null;
+                  return (
+                    <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <Scale className="h-3 w-3" />
+                      <span>
+                        {qList.length} {qList.length === 1 ? "cotización" : "cotizaciones"}
+                      </span>
+                    </div>
+                  );
+                })()}
+
+                {canGenerateOC && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs"
+                    onClick={(e) => { e.stopPropagation(); createQuotationFromSC(sc); }}
+                    disabled={creatingQuotationFor === sc.id}
+                    title="Generar una nueva cotización a partir de esta SC"
+                  >
+                    <Scale className="h-3.5 w-3.5 mr-1" />
+                    {creatingQuotationFor === sc.id ? "Creando…" : "Nueva cotización"}
+                  </Button>
+                )}
 
                 {canGenerateOC && (
                   <Button

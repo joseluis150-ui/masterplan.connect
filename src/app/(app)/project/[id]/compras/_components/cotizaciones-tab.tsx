@@ -48,8 +48,14 @@ interface Quotation {
   number: string;
   title: string | null;
   status: "draft" | "pending_approval" | "awarded" | "rejected" | "cancelled";
+  justification: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface PurchaseRequestRef {
+  id: string;
+  number: string;
 }
 
 interface QuotationLine {
@@ -114,6 +120,7 @@ export function CotizacionesTab({ projectId }: { projectId: string }) {
   const supabase = createClient();
   const canWrite = usePermission("oc.write"); // por ahora reusamos oc.write para cotizaciones
   const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [requestsById, setRequestsById] = useState<Map<string, PurchaseRequestRef>>(new Map());
   const [loading, setLoading] = useState(true);
 
   // Catálogos para los selects
@@ -122,79 +129,38 @@ export function CotizacionesTab({ projectId }: { projectId: string }) {
   const [insumos, setInsumos] = useState<Insumo[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
-  // Crear nueva
-  const [createOpen, setCreateOpen] = useState(false);
-  const [newTitle, setNewTitle] = useState("");
-  const [creating, setCreating] = useState(false);
-
   // Editar / abrir detalle
   const [openId, setOpenId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [qRes, subRes, secRes, insRes, supRes] = await Promise.all([
+    const [qRes, subRes, secRes, insRes, supRes, reqRes] = await Promise.all([
       supabase.from("quotations").select("*").eq("project_id", projectId).order("created_at", { ascending: false }),
       supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.from("insumos").select("*").eq("project_id", projectId).order("code"),
       supabase.from("suppliers").select("*").eq("project_id", projectId).order("name"),
+      supabase.from("purchase_requests").select("id, number").eq("project_id", projectId),
     ]);
     setQuotations((qRes.data ?? []) as Quotation[]);
     setSubcategories((subRes.data ?? []) as EdtSubcategory[]);
     setSectors((secRes.data ?? []) as Sector[]);
     setInsumos((insRes.data ?? []) as Insumo[]);
     setSuppliers((supRes.data ?? []) as Supplier[]);
+    const rmap = new Map<string, PurchaseRequestRef>();
+    for (const r of (reqRes.data ?? []) as PurchaseRequestRef[]) rmap.set(r.id, r);
+    setRequestsById(rmap);
     setLoading(false);
   }, [projectId, supabase]);
 
   useEffect(() => { load(); }, [load]);
 
-  async function createQuotation() {
-    if (!newTitle.trim()) { toast.error("Ingresá un título"); return; }
-    setCreating(true);
-    try {
-      // Pedir el siguiente número
-      const { data: numData } = await supabase.rpc("next_quotation_number", { p_project_id: projectId });
-      const number = (numData as string) || "COT-0001";
-
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data, error } = await supabase
-        .from("quotations")
-        .insert({
-          project_id: projectId,
-          number,
-          title: newTitle.trim(),
-          status: "draft",
-          created_by: user?.id,
-        })
-        .select()
-        .single();
-      if (error) { toast.error(error.message); return; }
-
-      toast.success(`Cotización ${number} creada`);
-      setCreateOpen(false);
-      setNewTitle("");
-      await load();
-      setOpenId((data as Quotation).id);
-    } finally {
-      setCreating(false);
-    }
-  }
-
   return (
     <div className="space-y-4 py-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            Cotizaciones del proyecto. Una cotización es un proceso donde se reciben varias ofertas de proveedores y se elige al ganador (puede haber split por ítem).
-          </p>
-        </div>
-        {canWrite && (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Nueva cotización
-          </Button>
-        )}
+      <div>
+        <p className="text-sm text-muted-foreground">
+          Las cotizaciones nacen siempre de una <span className="font-medium">Solicitud de Compra</span>. Para iniciar una nueva cotización, andá a la pestaña Solicitudes y usá el botón &quot;Nueva cotización&quot; en la SC correspondiente.
+        </p>
       </div>
 
       {loading ? (
@@ -204,21 +170,16 @@ export function CotizacionesTab({ projectId }: { projectId: string }) {
           <CardContent>
             <Scale className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium mb-1">Sin cotizaciones</h3>
-            <p className="text-muted-foreground text-sm mb-4">
-              Creá una cotización para comparar ofertas de varios proveedores antes de generar la OC.
+            <p className="text-muted-foreground text-sm">
+              Iniciá una cotización desde la pestaña Solicitudes.
             </p>
-            {canWrite && (
-              <Button onClick={() => setCreateOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                Nueva cotización
-              </Button>
-            )}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-2">
           {quotations.map((q) => {
             const sl = STATUS_LABELS[q.status];
+            const sc = q.request_id ? requestsById.get(q.request_id) : null;
             return (
               <Card
                 key={q.id}
@@ -229,7 +190,7 @@ export function CotizacionesTab({ projectId }: { projectId: string }) {
                   <div className="flex items-center gap-3">
                     <Scale className="h-5 w-5 text-muted-foreground shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
+                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                         <span className="font-mono text-sm font-semibold">{q.number}</span>
                         <span
                           className="text-[11px] font-medium px-2 py-0.5 rounded-full"
@@ -237,6 +198,11 @@ export function CotizacionesTab({ projectId }: { projectId: string }) {
                         >
                           {sl.label}
                         </span>
+                        {sc && (
+                          <span className="text-[11px] text-muted-foreground">
+                            ← SC <span className="font-mono">{sc.number}</span>
+                          </span>
+                        )}
                       </div>
                       <p className="text-sm font-medium truncate">{q.title || "(sin título)"}</p>
                       <p className="text-xs text-muted-foreground">
@@ -250,30 +216,6 @@ export function CotizacionesTab({ projectId }: { projectId: string }) {
           })}
         </div>
       )}
-
-      {/* Diálogo crear cotización */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Nueva cotización</DialogTitle>
-            <DialogDescription>
-              Ingresá un título descriptivo. Después vas a poder agregar los ítems a cotizar y las ofertas de cada proveedor.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label>Título</Label>
-            <Input
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="Ej: Cotización de cementos · marzo"
-              autoFocus
-            />
-          </div>
-          <Button onClick={createQuotation} disabled={creating || !newTitle.trim()} className="w-full">
-            {creating ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Creando…</> : "Crear"}
-          </Button>
-        </DialogContent>
-      </Dialog>
 
       {/* Diálogo detalle/edición */}
       {openId && (
@@ -514,6 +456,31 @@ function QuotationDialog({
                 Cargá los ítems a cotizar, después agregá ofertas de cada proveedor con sus precios y subí los adjuntos del legajo.
               </DialogDescription>
             </DialogHeader>
+
+            {/* Justificación: obligatoria si una sola oferta o como contexto general */}
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                Justificación
+                {offers.length === 1 && (
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                    Obligatoria · oferta única
+                  </span>
+                )}
+              </Label>
+              <textarea
+                value={quotation.justification || ""}
+                onChange={(e) => setQuotation({ ...quotation, justification: e.target.value })}
+                onBlur={() => supabase.from("quotations").update({ justification: quotation.justification }).eq("id", quotation.id)}
+                placeholder={
+                  offers.length === 1
+                    ? "Explicá por qué se cotizó con un solo proveedor (ej. único oferente disponible, urgencia, exclusividad, etc.)"
+                    : "Notas, criterios de selección, observaciones del proceso de cotización…"
+                }
+                rows={2}
+                disabled={!!isLocked}
+                className="w-full text-sm rounded-md border border-input bg-transparent px-3 py-2 placeholder:text-muted-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </div>
 
             {/* Sección 1: ÍTEMS A COTIZAR */}
             <section>
