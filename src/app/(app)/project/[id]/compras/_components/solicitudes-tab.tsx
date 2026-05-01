@@ -1069,25 +1069,12 @@ export function SolicitudesTab({ projectId }: Props) {
                 {canGenerateOC && (
                   <Button
                     size="sm"
-                    variant="outline"
                     className="h-8 text-xs"
                     onClick={(e) => { e.stopPropagation(); setOpenComparativeFor(sc.id); }}
-                    title="Cotizar con varios proveedores y enviar a aprobación"
+                    title="Cotizar con uno o varios proveedores y enviar a aprobación"
                   >
                     <Scale className="h-3.5 w-3.5 mr-1" />
                     Cotizar
-                  </Button>
-                )}
-
-                {canGenerateOC && (
-                  <Button
-                    size="sm"
-                    className="h-8 text-xs"
-                    onClick={(e) => { e.stopPropagation(); openGenerateOC(sc); }}
-                    title="Crear una OC directa sin pasar por cotización"
-                  >
-                    <ShoppingCart className="h-3.5 w-3.5 mr-1" />
-                    OC directa
                   </Button>
                 )}
 
