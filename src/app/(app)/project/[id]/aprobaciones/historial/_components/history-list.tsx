@@ -8,7 +8,7 @@ import {
   CheckCircle2, XCircle, FileText, Scale,
   Search, Loader2, ArrowUp, ArrowDown, ArrowUpDown,
   History as HistoryIcon, Eye, Building, Link2,
-  TrendingUp,
+  TrendingUp, Shield, User,
 } from "lucide-react";
 import { formatNumber } from "@/lib/utils/formula";
 import { OcHistoryDetail } from "./oc-history-detail";
@@ -33,6 +33,8 @@ interface OcDecision {
   local_currency: string;
   exchange_rate: number | string;
   decided_at: string | null;
+  /** Sólo presente en list_all_oc_decisions (admin view). */
+  decided_by_email?: string | null;
 }
 
 interface AwardDecision {
@@ -43,6 +45,8 @@ interface AwardDecision {
   awarded_count: number;
   rejected_count: number;
   total_quotations: number;
+  /** Sólo presente en list_all_award_decisions. */
+  decided_by_email?: string | null;
 }
 
 /** Una fila de la tabla representa una decisión específica:
@@ -53,6 +57,7 @@ type Row =
       kind: "oc";
       id: string;
       decided_at: string;
+      decided_by_email: string;  // sólo poblado en vista admin
       origin: string;          // 'OC directa' | 'Adj. SC-XXXX'
       origin_request_id: string | null; // si viene de adjudicación, la SC origen
       doc_number: string;       // 'OC-XXXX'
@@ -70,6 +75,7 @@ type Row =
       kind: "rejected_award";
       id: string;
       decided_at: string;
+      decided_by_email: string;
       origin: string;          // 'Adj. SC-XXXX'
       origin_request_id: string;
       doc_number: string;       // 'SC-XXXX'
@@ -86,24 +92,36 @@ type Row =
 
 type SortKey =
   | "decided_at" | "origin" | "doc_number" | "supplier"
-  | "status_label" | "total_usd" | "total_local";
+  | "status_label" | "total_usd" | "total_local"
+  | "decided_by_email";
 type SortDir = "asc" | "desc";
+
+type ViewMode = "mine" | "all";
 
 /* ─────────────────────────── componente ─────────────────────────── */
 
-export function ApprovalHistoryList({ projectId }: { projectId: string }) {
+export function ApprovalHistoryList({
+  projectId,
+  isAppAdmin = false,
+}: {
+  projectId: string;
+  isAppAdmin?: boolean;
+}) {
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
   const [localCurrency, setLocalCurrency] = useState<string>("LOCAL");
+  /** mine | all (sólo admin puede ver "all") */
+  const [viewMode, setViewMode] = useState<ViewMode>("mine");
 
   // Filtros
   const [search, setSearch] = useState("");
   const [originFilter, setOriginFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   const [supplierFilter, setSupplierFilter] = useState<Set<string>>(new Set());
+  const [approverFilter, setApproverFilter] = useState<Set<string>>(new Set());
 
-  // Sort
+  // Sort — en vista admin, ordenamos por aprobador por defecto
   const [sortKey, setSortKey] = useState<SortKey>("decided_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -113,9 +131,11 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
 
   const load = useCallback(async () => {
     setLoading(true);
+    const ocRpc  = viewMode === "all" ? "list_all_oc_decisions"    : "list_my_oc_decisions";
+    const awRpc  = viewMode === "all" ? "list_all_award_decisions" : "list_my_award_decisions";
     const [ocRes, awardRes] = await Promise.all([
-      supabase.rpc("list_my_oc_decisions", { p_project_id: projectId }),
-      supabase.rpc("list_my_award_decisions", { p_project_id: projectId }),
+      supabase.rpc(ocRpc, { p_project_id: projectId }),
+      supabase.rpc(awRpc, { p_project_id: projectId }),
     ]);
 
     const ocs = (ocRes.data as OcDecision[] | null) ?? [];
@@ -128,6 +148,7 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
       kind: "oc",
       id: `oc-${oc.id}`,
       decided_at: oc.decided_at ?? "",
+      decided_by_email: oc.decided_by_email ?? "",
       origin: oc.request_number ? `Adj. SC-${oc.request_number}` : "OC directa",
       origin_request_id: oc.request_id,
       doc_number: oc.number ?? "—",
@@ -151,6 +172,7 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
         kind: "rejected_award",
         id: `award-${a.request_id}`,
         decided_at: a.decided_at,
+        decided_by_email: a.decided_by_email ?? "",
         origin: `Adj. SC-${a.request_number ?? "—"}`,
         origin_request_id: a.request_id,
         doc_number: `SC-${a.request_number ?? "—"}`,
@@ -167,9 +189,21 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
 
     setRows([...ocRows, ...rejectedAwardRows]);
     setLoading(false);
-  }, [projectId, supabase]);
+  }, [projectId, supabase, viewMode]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Cuando cambia el modo de vista, ajustamos el sort por defecto.
+  // Admin "all" → ordenar por aprobador (alfabético) primero. "mine" → fecha desc.
+  useEffect(() => {
+    if (viewMode === "all") {
+      setSortKey("decided_by_email");
+      setSortDir("asc");
+    } else {
+      setSortKey("decided_at");
+      setSortDir("desc");
+    }
+  }, [viewMode]);
 
   /* Totales aprobados (excluyendo rechazados) */
   const totals = useMemo(() => {
@@ -187,6 +221,10 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
   const originValues = useMemo(() => Array.from(new Set(rows.map((r) => r.origin))), [rows]);
   const statusValues = useMemo(() => Array.from(new Set(rows.map((r) => r.status_label))), [rows]);
   const supplierValues = useMemo(() => Array.from(new Set(rows.map((r) => r.supplier))), [rows]);
+  const approverValues = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.decided_by_email).filter(Boolean))),
+    [rows]
+  );
 
   /* Filtrado + sort */
   const visible = useMemo(() => {
@@ -195,23 +233,36 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
       if (!matchesColumnFilter(originFilter, r.origin)) return false;
       if (!matchesColumnFilter(statusFilter, r.status_label)) return false;
       if (!matchesColumnFilter(supplierFilter, r.supplier)) return false;
+      if (viewMode === "all" && !matchesColumnFilter(approverFilter, r.decided_by_email)) return false;
       if (q) {
-        const hay = `${r.doc_number} ${r.supplier} ${r.note} ${r.origin}`.toLowerCase();
+        const hay = `${r.doc_number} ${r.supplier} ${r.note} ${r.origin} ${r.decided_by_email}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
 
     const dir = sortDir === "asc" ? 1 : -1;
+    // En vista admin con sort por aprobador, hacemos sort secundario por fecha desc
+    // para que dentro de cada aprobador queden las más recientes arriba.
     return filtered.sort((a, b) => {
       const av = a[sortKey];
       const bv = b[sortKey];
+      if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
-      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
-      return String(av).localeCompare(String(bv), "es") * dir;
+      let cmp = 0;
+      if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+      else cmp = String(av).localeCompare(String(bv), "es");
+      cmp *= dir;
+      // Tie-breaker: por fecha desc dentro del mismo grupo (útil cuando ordenamos por aprobador)
+      if (cmp === 0 && sortKey !== "decided_at") {
+        const ad = a.decided_at || "";
+        const bd = b.decided_at || "";
+        return ad < bd ? 1 : ad > bd ? -1 : 0;
+      }
+      return cmp;
     });
-  }, [rows, search, originFilter, statusFilter, supplierFilter, sortKey, sortDir]);
+  }, [rows, search, originFilter, statusFilter, supplierFilter, approverFilter, viewMode, sortKey, sortDir]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -273,7 +324,8 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
   }
 
   const hasActiveFilter =
-    originFilter.size > 0 || statusFilter.size > 0 || supplierFilter.size > 0 || search.trim().length > 0;
+    originFilter.size > 0 || statusFilter.size > 0 || supplierFilter.size > 0 ||
+    approverFilter.size > 0 || search.trim().length > 0;
   const filteredTotals = visible.reduce(
     (acc, r) => {
       if (r.status_value === "approved") {
@@ -333,12 +385,42 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
         </Card>
       </div>
 
+      {/* Toggle admin (sólo si is_app_admin) */}
+      {isAppAdmin && (
+        <div className="inline-flex gap-1 border rounded-md p-0.5 bg-neutral-50 self-start">
+          <button
+            onClick={() => setViewMode("mine")}
+            className={`text-xs px-3 py-1.5 rounded inline-flex items-center gap-1.5 transition-colors ${
+              viewMode === "mine"
+                ? "bg-white shadow-sm font-semibold"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <User className="h-3 w-3" />
+            Mis decisiones
+          </button>
+          <button
+            onClick={() => setViewMode("all")}
+            className={`text-xs px-3 py-1.5 rounded inline-flex items-center gap-1.5 transition-colors ${
+              viewMode === "all"
+                ? "bg-white shadow-sm font-semibold"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Shield className="h-3 w-3" />
+            Todas (super admin)
+          </button>
+        </div>
+      )}
+
       {/* Búsqueda + status global */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[280px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
-            placeholder="Buscar por número, proveedor, comentario…"
+            placeholder={viewMode === "all"
+              ? "Buscar por número, proveedor, aprobador, comentario…"
+              : "Buscar por número, proveedor, comentario…"}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-8 h-8 text-xs"
@@ -356,6 +438,7 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
               setOriginFilter(new Set());
               setStatusFilter(new Set());
               setSupplierFilter(new Set());
+              setApproverFilter(new Set());
             }}
           >
             Limpiar filtros
@@ -368,6 +451,16 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
         <table className="w-full text-xs">
           <thead className="bg-neutral-100 border-b">
             <tr className="text-left">
+              {viewMode === "all" && (
+                <th className="px-3 py-2 font-semibold w-[200px] sticky left-0 bg-neutral-100 z-10">
+                  <div className="inline-flex items-center gap-1">
+                    <button className="inline-flex items-center gap-1 hover:text-[#E87722]" onClick={() => toggleSort("decided_by_email")}>
+                      Aprobado por {sortIndicator("decided_by_email")}
+                    </button>
+                    <ColumnFilter label="" values={approverValues} selected={approverFilter} onChange={setApproverFilter} />
+                  </div>
+                </th>
+              )}
               <th className="px-3 py-2 font-semibold w-[150px]">
                 <button className="inline-flex items-center gap-1 hover:text-[#E87722]" onClick={() => toggleSort("decided_at")}>
                   Fecha {sortIndicator("decided_at")}
@@ -418,7 +511,7 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
           <tbody>
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground italic">
+                <td colSpan={viewMode === "all" ? 9 : 8} className="px-3 py-8 text-center text-muted-foreground italic">
                   Sin resultados con los filtros actuales.
                 </td>
               </tr>
@@ -433,6 +526,16 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
                   className="border-t hover:bg-[#E87722]/5 cursor-pointer"
                   onClick={() => openRow(r)}
                 >
+                  {viewMode === "all" && (
+                    <td className="px-3 py-2 sticky left-0 bg-white z-10 group-hover:bg-[#E87722]/5">
+                      <span className="inline-flex items-center gap-1.5 truncate max-w-[200px]">
+                        <User className="h-3 w-3 text-muted-foreground shrink-0" />
+                        <span className="font-medium truncate" title={r.decided_by_email || ""}>
+                          {r.decided_by_email || <span className="italic text-muted-foreground">—</span>}
+                        </span>
+                      </span>
+                    </td>
+                  )}
                   <td className="px-3 py-2 font-mono text-muted-foreground whitespace-nowrap">
                     {fmt(r.decided_at)}
                   </td>
@@ -501,7 +604,7 @@ export function ApprovalHistoryList({ projectId }: { projectId: string }) {
             {/* Footer con totales filtrados */}
             {visible.length > 0 && (
               <tr className="border-t-2 border-neutral-900 bg-neutral-50 font-bold">
-                <td colSpan={5} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-muted-foreground">
+                <td colSpan={viewMode === "all" ? 6 : 5} className="px-3 py-2 text-right text-[10px] uppercase tracking-wider text-muted-foreground">
                   Total aprobado {hasActiveFilter ? "(filtrado)" : ""}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-emerald-800">

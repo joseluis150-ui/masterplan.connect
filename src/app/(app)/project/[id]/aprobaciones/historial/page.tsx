@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { History, ArrowLeft } from "lucide-react";
+import { History, ArrowLeft, Shield } from "lucide-react";
 import { ApprovalHistoryList } from "./_components/history-list";
 
 /**
@@ -18,17 +18,18 @@ export default async function HistorialAprobacionesPage({
   const supabase = await createClient();
 
   // Sólo aprobadores pueden entrar — mismo gate que /aprobaciones.
-  const { data: perms } = await supabase.rpc("user_permissions_in_project", {
-    p_project_id: projectId,
-  });
-  const permList = (perms as string[] | null) ?? [];
+  // En paralelo chequeamos si el user es app admin para habilitar la vista
+  // global de TODAS las decisiones del proyecto, ordenadas por aprobador.
+  const [permsRes, adminRes] = await Promise.all([
+    supabase.rpc("user_permissions_in_project", { p_project_id: projectId }),
+    supabase.rpc("is_app_admin"),
+  ]);
+  const permList = (permsRes.data as string[] | null) ?? [];
   if (!permList.includes("oc.approve")) {
     redirect(`/project/${projectId}/consultas`);
   }
+  const isAppAdmin = (adminRes.data as boolean | null) ?? false;
 
-  // El client component se encarga del fetch — todo es read-only y se filtra
-  // server-side via RLS + decided_by = auth.uid() para mostrar sólo lo del
-  // usuario actual.
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -43,15 +44,22 @@ export default async function HistorialAprobacionesPage({
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <History className="h-6 w-6 text-[#E87722]" />
             Historial de aprobaciones
+            {isAppAdmin && (
+              <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#E87722]/10 text-[#E87722] font-semibold">
+                <Shield className="h-3 w-3" />
+                Super admin
+              </span>
+            )}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Tus decisiones pasadas en este proyecto. Acá podés revisar cualquier
-            adjudicación o aprobación de OC y abrir los archivos adjuntos.
+            {isAppAdmin
+              ? "Como super admin podés ver tus decisiones o el listado completo del proyecto agrupado por aprobador."
+              : "Tus decisiones pasadas en este proyecto. Acá podés revisar cualquier adjudicación o aprobación de OC y abrir los archivos adjuntos."}
           </p>
         </div>
       </div>
 
-      <ApprovalHistoryList projectId={projectId} />
+      <ApprovalHistoryList projectId={projectId} isAppAdmin={isAppAdmin} />
     </div>
   );
 }
