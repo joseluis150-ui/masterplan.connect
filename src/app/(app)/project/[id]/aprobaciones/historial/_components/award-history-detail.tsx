@@ -9,11 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Scale, Paperclip, Download, Loader2, Building, FileText,
-  CheckCircle2, XCircle, Clock,
+  CheckCircle2, XCircle, Clock, PiggyBank,
 } from "lucide-react";
 import { formatNumber } from "@/lib/utils/formula";
 import { toast } from "sonner";
 import { ApprovalTimeline } from "./approval-timeline";
+import { BudgetSnapshotPanel } from "./budget-snapshot-panel";
 
 interface RequestLineRow {
   id: string;
@@ -384,6 +385,15 @@ export function AwardHistoryDetail({
                 </div>
               </div>
             )}
+
+            {/* Snapshot del presupuesto al momento de la decisión */}
+            <div className="space-y-2 pt-2 border-t">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1">
+                <PiggyBank className="h-3 w-3" />
+                Presupuesto al momento de la adjudicación
+              </h4>
+              <BudgetSnapshotPanel decisionType="award" refId={requestId} />
+            </div>
 
             {/* Adjuntos por cotización */}
             <div className="space-y-2">

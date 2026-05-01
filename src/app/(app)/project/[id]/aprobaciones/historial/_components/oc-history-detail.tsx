@@ -8,10 +8,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   FileText, CheckCircle2, XCircle, Paperclip, Download, Loader2, Building,
-  Clock,
+  Clock, PiggyBank,
 } from "lucide-react";
 import { formatNumber } from "@/lib/utils/formula";
 import { ApprovalTimeline } from "./approval-timeline";
+import { BudgetSnapshotPanel } from "./budget-snapshot-panel";
 
 interface OcRow {
   id: string;
@@ -202,6 +203,15 @@ export function OcHistoryDetail({
                   </table>
                 </div>
               )}
+            </div>
+
+            {/* Snapshot del presupuesto al momento de la decisión */}
+            <div className="space-y-2 pt-2 border-t">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1">
+                <PiggyBank className="h-3 w-3" />
+                Presupuesto al momento de la decisión
+              </h4>
+              <BudgetSnapshotPanel decisionType="oc" refId={oc.id} />
             </div>
 
             {/* Adjuntos */}
