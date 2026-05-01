@@ -110,9 +110,13 @@ export function ApprovalHistoryList({
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [localCurrency, setLocalCurrency] = useState<string>("LOCAL");
-  /** mine | all (sólo admin puede ver "all") */
-  const [viewMode, setViewMode] = useState<ViewMode>("mine");
+  /** mine | all (sólo admin puede ver "all").
+   *  Para super admins, arrancamos en "all" porque ese es el caso de uso
+   *  típico — supervisar todo el proyecto. Si quieren ver sólo las propias,
+   *  hacen click en el toggle. */
+  const [viewMode, setViewMode] = useState<ViewMode>(isAppAdmin ? "all" : "mine");
 
   // Filtros
   const [search, setSearch] = useState("");
@@ -137,6 +141,15 @@ export function ApprovalHistoryList({
       supabase.rpc(ocRpc, { p_project_id: projectId }),
       supabase.rpc(awRpc, { p_project_id: projectId }),
     ]);
+    if (ocRes.error) console.error(`[historial] ${ocRpc} error:`, ocRes.error);
+    if (awardRes.error) console.error(`[historial] ${awRpc} error:`, awardRes.error);
+    if (ocRes.error || awardRes.error) {
+      setLoadError(
+        `No se pudo cargar el historial: ${ocRes.error?.message || awardRes.error?.message || "error desconocido"}`
+      );
+    } else {
+      setLoadError(null);
+    }
 
     const ocs = (ocRes.data as OcDecision[] | null) ?? [];
     const awards = (awardRes.data as AwardDecision[] | null) ?? [];
@@ -309,17 +322,61 @@ export function ApprovalHistoryList({
     );
   }
 
-  if (rows.length === 0) {
+  if (loadError) {
     return (
-      <Card className="text-center py-16">
-        <CardContent>
-          <HistoryIcon className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
-          <h3 className="text-lg font-medium mb-1">Sin decisiones aún</h3>
-          <p className="text-muted-foreground text-sm">
-            Cuando apruebes OCs o adjudiques cotizaciones, aparecerán acá.
+      <Card className="border-red-200 bg-red-50/50">
+        <CardContent className="py-6">
+          <h3 className="text-sm font-semibold text-red-800 mb-1">No se pudo cargar el historial</h3>
+          <p className="text-xs text-red-700 font-mono">{loadError}</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            Si esto persiste, revisá la consola del navegador para más detalle (F12 → Console).
           </p>
         </CardContent>
       </Card>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <>
+        {/* Mostramos el toggle también en estado vacío para que el admin pueda
+            cambiar a "Mis decisiones" si la vista global no tiene nada y vice versa */}
+        {isAppAdmin && (
+          <div className="inline-flex gap-1 border rounded-md p-0.5 bg-neutral-50 self-start mb-3">
+            <button
+              onClick={() => setViewMode("mine")}
+              className={`text-xs px-3 py-1.5 rounded inline-flex items-center gap-1.5 transition-colors ${
+                viewMode === "mine" ? "bg-white shadow-sm font-semibold" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <User className="h-3 w-3" />
+              Mis decisiones
+            </button>
+            <button
+              onClick={() => setViewMode("all")}
+              className={`text-xs px-3 py-1.5 rounded inline-flex items-center gap-1.5 transition-colors ${
+                viewMode === "all" ? "bg-white shadow-sm font-semibold" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Shield className="h-3 w-3" />
+              Todas (super admin)
+            </button>
+          </div>
+        )}
+        <Card className="text-center py-16">
+          <CardContent>
+            <HistoryIcon className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+            <h3 className="text-lg font-medium mb-1">
+              {viewMode === "all" ? "Sin decisiones en el proyecto" : "Sin decisiones aún"}
+            </h3>
+            <p className="text-muted-foreground text-sm">
+              {viewMode === "all"
+                ? "Todavía no hay aprobaciones registradas en este proyecto por ningún aprobador."
+                : "Cuando apruebes OCs o adjudiques cotizaciones, aparecerán acá."}
+            </p>
+          </CardContent>
+        </Card>
+      </>
     );
   }
 
