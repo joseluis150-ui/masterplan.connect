@@ -8,11 +8,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   FileText, CheckCircle2, XCircle, Paperclip, Download, Loader2, Building,
-  Clock, PiggyBank,
+  Clock, PiggyBank, Eye,
 } from "lucide-react";
 import { formatNumber } from "@/lib/utils/formula";
 import { ApprovalTimeline } from "./approval-timeline";
 import { BudgetSnapshotPanel } from "./budget-snapshot-panel";
+import { AttachmentPreviewDialog } from "./attachment-preview-dialog";
 
 interface OcRow {
   id: string;
@@ -62,6 +63,7 @@ export function OcHistoryDetail({
   const [lines, setLines] = useState<OcLineRow[]>([]);
   const [attachments, setAttachments] = useState<OcAttachment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [previewing, setPreviewing] = useState<OcAttachment | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -236,15 +238,22 @@ export function OcHistoryDetail({
                           {a.uploaded_at && ` · subido ${new Date(a.uploaded_at).toLocaleDateString()}`}
                         </p>
                       </div>
+                      <button
+                        onClick={() => setPreviewing(a)}
+                        className="h-7 px-2 inline-flex items-center text-xs font-medium rounded hover:bg-neutral-100 transition-colors"
+                        title="Vista previa en modal"
+                      >
+                        <Eye className="h-3.5 w-3.5 mr-1" />
+                        Vista previa
+                      </button>
                       <a
                         href={a.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
                         download={a.file_name}
                         className="h-7 px-2 inline-flex items-center text-xs font-medium rounded hover:bg-neutral-100 transition-colors"
+                        title="Descargar archivo"
                       >
                         <Download className="h-3.5 w-3.5 mr-1" />
-                        Abrir
+                        Descargar
                       </a>
                     </li>
                   ))}
@@ -263,6 +272,16 @@ export function OcHistoryDetail({
           </>
         )}
       </DialogContent>
+      {previewing && (
+        <AttachmentPreviewDialog
+          fileName={previewing.file_name}
+          previewUrl={previewing.url}
+          mimeType={previewing.file_type}
+          onClose={() => setPreviewing(null)}
+          // purchase_attachments tiene URL pública directa — descarga directa con <a download>
+          directDownloadHref={previewing.url}
+        />
+      )}
     </Dialog>
   );
 }

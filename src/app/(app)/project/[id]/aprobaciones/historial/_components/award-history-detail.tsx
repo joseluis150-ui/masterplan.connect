@@ -9,12 +9,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Scale, Paperclip, Download, Loader2, Building, FileText,
-  CheckCircle2, XCircle, Clock, PiggyBank,
+  CheckCircle2, XCircle, Clock, PiggyBank, Eye,
 } from "lucide-react";
 import { formatNumber } from "@/lib/utils/formula";
 import { toast } from "sonner";
 import { ApprovalTimeline } from "./approval-timeline";
 import { BudgetSnapshotPanel } from "./budget-snapshot-panel";
+import { AttachmentPreviewDialog } from "./attachment-preview-dialog";
 
 interface RequestLineRow {
   id: string;
@@ -86,6 +87,9 @@ export function AwardHistoryDetail({
   const [localCurrency, setLocalCurrency] = useState<string>("LOCAL");
   const [loading, setLoading] = useState(true);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  /** Attachment + signed URL recién generado para el preview. */
+  const [previewing, setPreviewing] = useState<{ att: QuotationAttachment; signedUrl: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -158,7 +162,27 @@ export function AwardHistoryDetail({
 
   useEffect(() => { load(); }, [load]);
 
-  /** Bucket privado → necesitamos signed URL para abrir. Generamos al click.
+  /** Vista previa: bucket privado → generamos signed URL inline (sin flag de
+   *  download) y lo guardamos en el state previewing para que el modal de
+   *  preview lo use como src de iframe / img. */
+  async function openPreview(att: QuotationAttachment) {
+    setPreviewingId(att.id);
+    const { data, error } = await supabase
+      .storage
+      .from("quotation-attachments")
+      .createSignedUrl(att.storage_path, 600); // 10 min — espacio para abrir y leer
+    setPreviewingId(null);
+    if (error || !data?.signedUrl) {
+      console.error("[preview] createSignedUrl error", error, "for path", att.storage_path);
+      toast.error(error?.message || "No se pudo cargar el archivo");
+      return;
+    }
+    setPreviewing({ att, signedUrl: data.signedUrl });
+  }
+
+  /** Descarga: signed URL CON flag download:true → fuerza Content-Disposition:
+   *  attachment así el browser lo guarda en lugar de abrirlo inline.
+   *
    *  Truco anti popup-blocker: abrimos la pestaña INMEDIATAMENTE (mientras
    *  el "trusted gesture" del click sigue activo) con about:blank y después
    *  la navegamos al signed URL. Si la abrieras post-await, Chrome la mata. */
@@ -168,7 +192,7 @@ export function AwardHistoryDetail({
     const { data, error } = await supabase
       .storage
       .from("quotation-attachments")
-      .createSignedUrl(att.storage_path, 300); // 5 min — espacio para descargas grandes
+      .createSignedUrl(att.storage_path, 300, { download: att.file_name });
     setDownloadingId(null);
     if (error || !data?.signedUrl) {
       console.error("createSignedUrl error", error, "for path", att.storage_path);
@@ -179,9 +203,26 @@ export function AwardHistoryDetail({
     if (newWin) {
       newWin.location.href = data.signedUrl;
     } else {
-      // Popup bloqueado pese al pre-open; fallback duro
       window.location.href = data.signedUrl;
     }
+  }
+
+  /** Botón "Descargar" dentro del modal de preview: re-genera signed URL con
+   *  download flag (la del preview es inline, no fuerza descarga). */
+  async function downloadFromPreview() {
+    if (!previewing) return;
+    const newWin = window.open("about:blank", "_blank", "noopener,noreferrer");
+    const { data, error } = await supabase
+      .storage
+      .from("quotation-attachments")
+      .createSignedUrl(previewing.att.storage_path, 300, { download: previewing.att.file_name });
+    if (error || !data?.signedUrl) {
+      newWin?.close();
+      toast.error(error?.message || "No se pudo generar el link de descarga");
+      return;
+    }
+    if (newWin) newWin.location.href = data.signedUrl;
+    else window.location.href = data.signedUrl;
   }
 
   function priceFor(quotationId: string, requestLineId: string): number | null {
@@ -516,13 +557,28 @@ export function AwardHistoryDetail({
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 px-2"
+                                onClick={() => openPreview(a)}
+                                disabled={previewingId === a.id}
+                                title="Vista previa en modal"
+                              >
+                                {previewingId === a.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <><Eye className="h-3.5 w-3.5 mr-1" /> Vista previa</>
+                                )}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2"
                                 onClick={() => downloadAttachment(a)}
                                 disabled={downloadingId === a.id}
+                                title="Descargar archivo"
                               >
                                 {downloadingId === a.id ? (
                                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                 ) : (
-                                  <><Download className="h-3.5 w-3.5 mr-1" /> Abrir</>
+                                  <><Download className="h-3.5 w-3.5 mr-1" /> Descargar</>
                                 )}
                               </Button>
                             </li>
@@ -546,6 +602,15 @@ export function AwardHistoryDetail({
           </>
         )}
       </DialogContent>
+      {previewing && (
+        <AttachmentPreviewDialog
+          fileName={previewing.att.file_name}
+          previewUrl={previewing.signedUrl}
+          mimeType={previewing.att.mime_type}
+          onClose={() => setPreviewing(null)}
+          onDownload={downloadFromPreview}
+        />
+      )}
     </Dialog>
   );
 }
