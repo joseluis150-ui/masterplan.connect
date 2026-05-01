@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatNumber } from "@/lib/utils/formula";
 import {
   CheckCircle2, XCircle, Mail, Calendar, Loader2,
-  FileText, Scale, Layers,
+  FileText, Scale, Layers, AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AwardQuotationDialog } from "./award-quotation-dialog";
@@ -45,10 +45,20 @@ interface OCLine {
   unit: string | null;
   unit_price: number | null;
   total: number | null;
+  subcategory_id: string | null;
+}
+
+interface BudgetHealth {
+  subcategory_id: string;
+  subcategory_code: string;
+  subcategory_name: string;
+  budgeted_usd: number;
+  ordered_usd: number;
+  available_usd: number;
 }
 
 export function ApprovalQueue({
-  projectId: _projectId, // mantenido por API; no se usa directamente en el cliente
+  projectId,
   initialPendingOcs,
   initialPendingQuotations,
 }: {
@@ -56,17 +66,21 @@ export function ApprovalQueue({
   initialPendingOcs: PendingOC[];
   initialPendingQuotations: PendingQuotation[];
 }) {
-  void _projectId;
   const supabase = createClient();
   const router = useRouter();
   const [pendingOcs, setPendingOcs] = useState<PendingOC[]>(initialPendingOcs);
   const [pendingQuotes, setPendingQuotes] =
     useState<PendingQuotation[]>(initialPendingQuotations);
+  /** TC del proyecto, cacheado al primer detalle abierto. Lo usamos para
+   *  convertir totales de OC en moneda local a USD para comparar contra
+   *  el presupuesto (que está en USD). */
+  const [projectFx, setProjectFx] = useState<number | null>(null);
 
   // Estado del modal de OC
   const [selectedOc, setSelectedOc] = useState<PendingOC | null>(null);
   const [ocLines, setOcLines] = useState<OCLine[]>([]);
   const [loadingOcLines, setLoadingOcLines] = useState(false);
+  const [budgetByOcSubcat, setBudgetByOcSubcat] = useState<Map<string, BudgetHealth>>(new Map());
   const [decisionMode, setDecisionMode] = useState<"approve" | "reject" | null>(null);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -79,12 +93,42 @@ export function ApprovalQueue({
     setDecisionMode(null);
     setNote("");
     setLoadingOcLines(true);
+    setBudgetByOcSubcat(new Map());
     const { data } = await supabase
       .from("purchase_order_lines")
-      .select("id, description, quantity, unit, unit_price, total")
+      .select("id, description, quantity, unit, unit_price, total, subcategory_id")
       .eq("order_id", oc.id);
-    setOcLines((data ?? []) as OCLine[]);
+    const lines = (data ?? []) as OCLine[];
+    setOcLines(lines);
     setLoadingOcLines(false);
+
+    // Cargar TC del proyecto si aún no está
+    let fx = projectFx;
+    if (fx == null) {
+      const { data: proj } = await supabase
+        .from("projects")
+        .select("exchange_rate")
+        .eq("id", projectId)
+        .single();
+      fx = Number((proj as { exchange_rate: number } | null)?.exchange_rate || 1);
+      setProjectFx(fx);
+    }
+
+    // Salud presupuestal de las subcategorías de esta OC
+    const subcatIds = Array.from(
+      new Set(lines.map((l) => l.subcategory_id).filter(Boolean) as string[])
+    );
+    if (subcatIds.length > 0) {
+      const { data: bh } = await supabase.rpc("get_subcategory_budget_health", {
+        p_project_id: projectId,
+        p_subcategory_ids: subcatIds,
+      });
+      const map = new Map<string, BudgetHealth>();
+      for (const row of (bh ?? []) as BudgetHealth[]) {
+        map.set(row.subcategory_id, row);
+      }
+      setBudgetByOcSubcat(map);
+    }
   }
 
   async function decideOc(decision: "approve" | "reject") {
@@ -266,6 +310,14 @@ export function ApprovalQueue({
                 </DialogDescription>
               </DialogHeader>
 
+              {/* Salud presupuestal de las subcategorías afectadas por esta OC */}
+              <OcBudgetPanel
+                ocLines={ocLines}
+                ocCurrency={selectedOc.currency ?? "USD"}
+                fx={projectFx ?? 1}
+                budgetMap={budgetByOcSubcat}
+              />
+
               <div className="space-y-2">
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Detalle ({ocLines.length} ítems)
@@ -382,5 +434,151 @@ export function ApprovalQueue({
         />
       )}
     </>
+  );
+}
+
+/**
+ * Panel compacto que muestra la salud presupuestal de las subcategorías
+ * afectadas por una OC pendiente. Lo que aporta esta OC se calcula
+ * client-side (las líneas tienen total + subcategoría) y se convierte a
+ * USD si la OC está en moneda local.
+ *
+ * Como la RPC `get_subcategory_budget_health` ya excluye OCs en estado
+ * `pending_approval`, el `ordered_usd` que devuelve NO incluye esta OC,
+ * y por eso podemos sumar el aporte propio limpio sin doble-conteo.
+ */
+function OcBudgetPanel({
+  ocLines,
+  ocCurrency,
+  fx,
+  budgetMap,
+}: {
+  ocLines: OCLine[];
+  ocCurrency: string;
+  fx: number;
+  budgetMap: Map<string, BudgetHealth>;
+}) {
+  if (budgetMap.size === 0) return null;
+
+  function lineUsd(total: number) {
+    if (ocCurrency.toUpperCase() === "USD") return total;
+    return fx > 0 ? total / fx : total;
+  }
+
+  const subcatIds = Array.from(budgetMap.keys());
+  const contribByCat = new Map<string, number>();
+  for (const l of ocLines) {
+    if (!l.subcategory_id) continue;
+    const usd = lineUsd(Number(l.total ?? 0));
+    contribByCat.set(l.subcategory_id, (contribByCat.get(l.subcategory_id) || 0) + usd);
+  }
+
+  const willOverspend = subcatIds.some((sid) => {
+    const bh = budgetMap.get(sid);
+    if (!bh || Number(bh.budgeted_usd) <= 0) return false;
+    const adding = contribByCat.get(sid) || 0;
+    return Number(bh.available_usd) - adding < 0;
+  });
+
+  return (
+    <div className="space-y-2">
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        💰 Presupuesto disponible · subcategorías afectadas
+      </h4>
+      <div className="space-y-1.5">
+        {subcatIds.map((sid) => {
+          const bh = budgetMap.get(sid)!;
+          const budgeted = Number(bh.budgeted_usd || 0);
+          const ordered = Number(bh.ordered_usd || 0);
+          const available = Number(bh.available_usd || 0);
+          const adding = contribByCat.get(sid) || 0;
+          const after = available - adding;
+          const noBudget = budgeted <= 0;
+          const status: "ok" | "warn" | "over" | "none" =
+            noBudget ? "none"
+            : after < 0 ? "over"
+            : after < budgeted * 0.3 ? "warn"
+            : "ok";
+          const statusBg =
+            status === "over" ? "bg-red-50 border-red-200"
+            : status === "warn" ? "bg-amber-50 border-amber-200"
+            : status === "ok" ? "bg-emerald-50 border-emerald-200"
+            : "bg-neutral-50";
+          const statusText =
+            status === "over" ? "text-red-800"
+            : status === "warn" ? "text-amber-800"
+            : status === "ok" ? "text-emerald-800"
+            : "text-muted-foreground";
+          const orderedPct = budgeted > 0 ? Math.min(100, (ordered / budgeted) * 100) : 0;
+          const addingPct = budgeted > 0 ? Math.min(100 - orderedPct, (adding / budgeted) * 100) : 0;
+          return (
+            <div key={sid} className={`border rounded-md p-2.5 text-xs ${statusBg}`}>
+              <div className="flex items-center justify-between">
+                <p className="font-semibold leading-snug">
+                  <span className="font-mono text-muted-foreground">{bh.subcategory_code}</span>
+                  {" · "}
+                  {bh.subcategory_name}
+                </p>
+                <span className={`text-[10px] uppercase tracking-wider font-bold ${statusText}`}>
+                  {status === "over"
+                    ? "⚠ sobre presupuesto"
+                    : status === "warn"
+                      ? "Margen ajustado"
+                      : status === "ok"
+                        ? "OK"
+                        : "Sin presupuesto"}
+                </span>
+              </div>
+              {noBudget ? (
+                <p className="text-muted-foreground italic mt-1">
+                  Sin cuantificación cargada — no hay presupuesto contra el cual comparar.
+                </p>
+              ) : (
+                <>
+                  <div className="mt-1.5 h-2 w-full rounded-full bg-neutral-200 overflow-hidden flex">
+                    <div className="bg-neutral-700 h-full" style={{ width: `${orderedPct}%` }} />
+                    <div
+                      className={`h-full ${status === "over" ? "bg-red-600" : "bg-[#E87722]"}`}
+                      style={{ width: `${addingPct}%` }}
+                    />
+                  </div>
+                  <div className="mt-1.5 grid grid-cols-4 gap-1 text-[10px]">
+                    <div>
+                      <p className="text-muted-foreground uppercase tracking-wider">Presup.</p>
+                      <p className="font-mono font-semibold">{formatNumber(budgeted, 0)} USD</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground uppercase tracking-wider">Comprometido</p>
+                      <p className="font-mono">{formatNumber(ordered, 0)} USD</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground uppercase tracking-wider">Esta OC</p>
+                      <p className="font-mono font-semibold text-[#E87722]">
+                        +{formatNumber(adding, 0)} USD
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground uppercase tracking-wider">Tras aprobar</p>
+                      <p className={`font-mono font-bold ${statusText}`}>
+                        {formatNumber(after, 0)} USD
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+        {willOverspend && (
+          <div className="flex items-start gap-2 text-xs px-3 py-2 rounded-md border border-red-300 bg-red-50 text-red-900">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>
+              <strong>Atención:</strong> aprobar esta OC dejaría al menos una subcategoría
+              sobre presupuesto.
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

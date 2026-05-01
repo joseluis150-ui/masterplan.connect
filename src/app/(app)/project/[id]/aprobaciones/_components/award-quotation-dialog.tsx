@@ -35,6 +35,22 @@ interface RequestLine {
   description: string;
   quantity: number;
   unit: string;
+  subcategory_id: string | null;
+}
+
+interface BudgetHealth {
+  subcategory_id: string;
+  subcategory_code: string;
+  subcategory_name: string;
+  budgeted_usd: number;
+  ordered_usd: number;
+  available_usd: number;
+}
+
+interface ProjectFx {
+  id: string;
+  local_currency: string;
+  exchange_rate: number;
 }
 
 interface QuotationRow {
@@ -98,11 +114,22 @@ export function AwardQuotationDialog({
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [project, setProject] = useState<ProjectFx | null>(null);
+  /** Salud presupuestal de cada subcategoría que aparece en las líneas de la SC. */
+  const [budgetBySubcat, setBudgetBySubcat] = useState<Map<string, BudgetHealth>>(new Map());
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [rRes, rlRes, qRes, qlRes] = await Promise.all([
-      supabase.from("purchase_requests").select("id, number").eq("id", requestId).single(),
+    // Para resolver TC del proyecto → necesitamos primero obtener el project_id
+    // de la SC. Lo hacemos en el primer round-trip.
+    const reqMeta = await supabase
+      .from("purchase_requests")
+      .select("id, number, project_id")
+      .eq("id", requestId)
+      .single();
+    const projectId = (reqMeta.data as { project_id: string } | null)?.project_id;
+    const [rRes, rlRes, qRes, qlRes, projRes] = await Promise.all([
+      Promise.resolve(reqMeta),
       supabase.from("purchase_request_lines").select("*").eq("request_id", requestId).order("created_at"),
       // Sólo las cotizaciones pending_approval — las draft del comprador no entran a la bandeja.
       supabase
@@ -122,9 +149,32 @@ export function AwardQuotationDialog({
         .select("*, quotation:quotations!inner(request_id, status)")
         .eq("quotation.request_id", requestId)
         .eq("quotation.status", "pending_approval"),
+      projectId
+        ? supabase.from("projects").select("id, local_currency, exchange_rate").eq("id", projectId).single()
+        : Promise.resolve({ data: null, error: null }),
     ]);
     if (rRes.data) setRequest(rRes.data as RequestRow);
-    setRequestLines((rlRes.data ?? []) as RequestLine[]);
+    if (projRes.data) setProject(projRes.data as ProjectFx);
+    const lines = (rlRes.data ?? []) as RequestLine[];
+    setRequestLines(lines);
+
+    // Salud presupuestal de las subcategorías que aparecen en estas líneas.
+    if (projectId) {
+      const subcatIds = Array.from(
+        new Set(lines.map((l) => l.subcategory_id).filter(Boolean) as string[])
+      );
+      if (subcatIds.length > 0) {
+        const { data: bh } = await supabase.rpc("get_subcategory_budget_health", {
+          p_project_id: projectId,
+          p_subcategory_ids: subcatIds,
+        });
+        const map = new Map<string, BudgetHealth>();
+        for (const row of (bh ?? []) as BudgetHealth[]) {
+          map.set(row.subcategory_id, row);
+        }
+        setBudgetBySubcat(map);
+      }
+    }
 
     type QRaw = QuotationRow & {
       supplier?: { name: string } | { name: string }[] | null;
@@ -143,7 +193,6 @@ export function AwardQuotationDialog({
     // Pre-selección: por defecto, la cotización MÁS BARATA por línea.
     // El aprobador puede cambiarla manualmente. No adjudica nada todavía.
     const auto = new Map<string, string>();
-    const lines = (rlRes.data ?? []) as RequestLine[];
     const qlines = (qlRes.data ?? []) as QuotationLineRow[];
     for (const line of lines) {
       let bestId: string | null = null;
@@ -266,9 +315,53 @@ export function AwardQuotationDialog({
     onClose();
   }
 
+  /**
+   * Convierte un monto en la moneda de la cotización a USD usando el TC del
+   * proyecto. Si la cotización está en USD lo devuelve tal cual.
+   */
+  function toUsd(amount: number, currency: string): number {
+    if (!project) return amount;
+    if (currency.toUpperCase() === "USD") return amount;
+    const fx = Number(project.exchange_rate || 1);
+    return fx > 0 ? amount / fx : amount;
+  }
+
+  /**
+   * Lo que esta adjudicación va a sumar al "comprometido" de cada
+   * subcategoría (en USD), basado en los radios actualmente elegidos.
+   */
+  function awardingBySubcat(): Map<string, number> {
+    const m = new Map<string, number>();
+    for (const line of requestLines) {
+      const qid = awards.get(line.id);
+      if (!qid) continue;
+      const subId = line.subcategory_id;
+      if (!subId) continue;
+      const q = quotations.find((x) => x.id === qid);
+      if (!q) continue;
+      const p = priceFor(qid, line.id) ?? 0;
+      const lineTotal = p * Number(line.quantity || 0);
+      const usd = toUsd(lineTotal, q.currency);
+      m.set(subId, (m.get(subId) || 0) + usd);
+    }
+    return m;
+  }
+
   /* ------------------------------- RENDER ------------------------------- */
   const winners = winningQuotationIds();
   const linesWithoutAward = requestLines.filter((l) => !awards.has(l.id)).length;
+  const awardingByCat = awardingBySubcat();
+  // Subcategorías afectadas por esta SC, en orden de aparición.
+  const affectedSubcatIds = Array.from(
+    new Set(requestLines.map((l) => l.subcategory_id).filter(Boolean) as string[])
+  );
+  // Hay alguna subcategoría que se quedaría con disponible negativo después de esta adjudicación?
+  const willOverspend = affectedSubcatIds.some((sid) => {
+    const bh = budgetBySubcat.get(sid);
+    if (!bh) return false;
+    const adding = awardingByCat.get(sid) || 0;
+    return Number(bh.available_usd) - adding < 0;
+  });
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -298,6 +391,126 @@ export function AwardQuotationDialog({
                 )}
               </DialogDescription>
             </DialogHeader>
+
+            {/* Salud presupuestal por subcategoría EDT — el aprobador necesita
+                saber cuánto le queda disponible antes de firmar. */}
+            {affectedSubcatIds.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground inline-flex items-center gap-2">
+                  💰 Presupuesto disponible · subcategorías afectadas
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {affectedSubcatIds.map((subId) => {
+                    const bh = budgetBySubcat.get(subId);
+                    const adding = awardingByCat.get(subId) || 0;
+                    if (!bh) {
+                      return (
+                        <div key={subId} className="border rounded-md p-2.5 text-xs bg-neutral-50">
+                          <p className="text-muted-foreground italic">
+                            Sin presupuesto cargado para esta subcategoría.
+                          </p>
+                        </div>
+                      );
+                    }
+                    const budgeted = Number(bh.budgeted_usd || 0);
+                    const ordered = Number(bh.ordered_usd || 0);
+                    const available = Number(bh.available_usd || 0);
+                    const afterAward = available - adding;
+                    // Sin cuantificación cargada: el "presupuestado" es 0 y no hay info contra qué comparar.
+                    const noBudget = budgeted <= 0;
+                    // Semáforo:
+                    //   verde   → after >= 30% del presupuestado, sin estrés
+                    //   amarillo → after entre 0 y 30%, ojo, te queda poco
+                    //   rojo    → after < 0, estás sobrepasando
+                    const status: "ok" | "warn" | "over" | "none" =
+                      noBudget ? "none"
+                      : afterAward < 0 ? "over"
+                      : afterAward < budgeted * 0.3 ? "warn"
+                      : "ok";
+                    const orderedPct = budgeted > 0 ? Math.min(100, (ordered / budgeted) * 100) : 0;
+                    const addingPct = budgeted > 0 ? Math.min(100 - orderedPct, (adding / budgeted) * 100) : 0;
+                    const statusBg =
+                      status === "over" ? "bg-red-50 border-red-200"
+                      : status === "warn" ? "bg-amber-50 border-amber-200"
+                      : status === "ok" ? "bg-emerald-50 border-emerald-200"
+                      : "bg-neutral-50";
+                    const statusText =
+                      status === "over" ? "text-red-800"
+                      : status === "warn" ? "text-amber-800"
+                      : status === "ok" ? "text-emerald-800"
+                      : "text-muted-foreground";
+                    return (
+                      <div key={subId} className={`border rounded-md p-2.5 text-xs ${statusBg}`}>
+                        <p className="font-semibold leading-snug">
+                          <span className="font-mono text-muted-foreground">{bh.subcategory_code}</span>
+                          {" · "}
+                          {bh.subcategory_name}
+                        </p>
+                        {noBudget ? (
+                          <p className="text-muted-foreground italic mt-1">
+                            Sin cuantificación cargada — no hay presupuesto contra el cual comparar.
+                          </p>
+                        ) : (
+                          <>
+                            {/* Barra de progreso: ordenado (oscuro) + esta adjudicación (amarillo/rojo) */}
+                            <div className="mt-1.5 h-2 w-full rounded-full bg-neutral-200 overflow-hidden flex">
+                              <div
+                                className="bg-neutral-700 h-full"
+                                style={{ width: `${orderedPct}%` }}
+                                title={`Ya comprometido: ${formatNumber(ordered, 0)} USD`}
+                              />
+                              <div
+                                className={`h-full ${status === "over" ? "bg-red-600" : "bg-[#E87722]"}`}
+                                style={{ width: `${addingPct}%` }}
+                                title={`Esta adjudicación: ${formatNumber(adding, 0)} USD`}
+                              />
+                            </div>
+                            <div className="mt-1.5 grid grid-cols-3 gap-1 text-[10px]">
+                              <div>
+                                <p className="text-muted-foreground uppercase tracking-wider">Presupuesto</p>
+                                <p className="font-mono font-semibold">{formatNumber(budgeted, 0)} USD</p>
+                              </div>
+                              <div>
+                                <p className="text-muted-foreground uppercase tracking-wider">Ya comprometido</p>
+                                <p className="font-mono">{formatNumber(ordered, 0)} USD</p>
+                              </div>
+                              <div>
+                                <p className="text-muted-foreground uppercase tracking-wider">Esta adj.</p>
+                                <p className={`font-mono font-semibold ${adding > 0 ? "text-[#E87722]" : ""}`}>
+                                  {adding > 0 ? "+" : ""}{formatNumber(adding, 0)} USD
+                                </p>
+                              </div>
+                            </div>
+                            <div className={`mt-1 pt-1 border-t flex items-center justify-between ${statusText}`}>
+                              <span className="text-[10px] uppercase tracking-wider font-semibold">
+                                {status === "over"
+                                  ? "⚠ Sobrepasa presupuesto"
+                                  : status === "warn"
+                                    ? "Margen ajustado"
+                                    : "Disponible tras adjudicar"}
+                              </span>
+                              <span className="font-mono font-bold">
+                                {formatNumber(afterAward, 0)} USD
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {willOverspend && (
+                  <div className="flex items-start gap-2 text-xs px-3 py-2 rounded-md border border-red-300 bg-red-50 text-red-900">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Atención:</strong> esta adjudicación deja al menos una subcategoría
+                      sobre presupuesto. Podés continuar, pero queda registrado que firmaste
+                      sabiendo del exceso.
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Cuadro comparativo — read-only con radios para elegir ganador */}
             <div className="border rounded-lg overflow-x-auto">
