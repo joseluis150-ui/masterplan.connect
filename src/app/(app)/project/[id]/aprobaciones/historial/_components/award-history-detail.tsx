@@ -138,20 +138,30 @@ export function AwardHistoryDetail({
 
   useEffect(() => { load(); }, [load]);
 
-  /** Bucket privado → necesitamos signed URL para abrir. Generamos al click. */
+  /** Bucket privado → necesitamos signed URL para abrir. Generamos al click.
+   *  Truco anti popup-blocker: abrimos la pestaña INMEDIATAMENTE (mientras
+   *  el "trusted gesture" del click sigue activo) con about:blank y después
+   *  la navegamos al signed URL. Si la abrieras post-await, Chrome la mata. */
   async function downloadAttachment(att: QuotationAttachment) {
+    const newWin = window.open("about:blank", "_blank", "noopener,noreferrer");
     setDownloadingId(att.id);
     const { data, error } = await supabase
       .storage
       .from("quotation-attachments")
-      .createSignedUrl(att.storage_path, 60); // 60s para abrir / descargar
+      .createSignedUrl(att.storage_path, 300); // 5 min — espacio para descargas grandes
     setDownloadingId(null);
     if (error || !data?.signedUrl) {
-      toast.error(error?.message || "No se pudo generar el link");
+      console.error("createSignedUrl error", error, "for path", att.storage_path);
+      newWin?.close();
+      toast.error(error?.message || "No se pudo generar el link de descarga");
       return;
     }
-    // Abrimos en nueva pestaña — el browser maneja preview/download según mime
-    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    if (newWin) {
+      newWin.location.href = data.signedUrl;
+    } else {
+      // Popup bloqueado pese al pre-open; fallback duro
+      window.location.href = data.signedUrl;
+    }
   }
 
   function priceFor(quotationId: string, requestLineId: string): number | null {
