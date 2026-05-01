@@ -40,6 +40,7 @@ import type {
   Supplier,
 } from "@/lib/types/database";
 import { InsumoPicker } from "./insumo-picker";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 
 interface RequestRow {
   id: string;
@@ -323,34 +324,64 @@ export function ComparativeQuoteDialog({
   }
 
   /**
-   * Construye un texto tipo tooltip con: precio presupuestado del insumo +
-   * histórico de compras de ese insumo (hasta 5 OCs).
-   * Se pasa como atributo `title` al input de precio para que el browser lo
-   * muestre al hover.
+   * Construye el contenido del tooltip de precio para una línea: precio
+   * presupuestado del insumo + histórico de compras (hasta 5 OCs).
    */
-  function buildPriceTooltip(insumoId: string | null): string {
-    if (!insumoId) return "Pasá el cursor con el ítem vinculado a un insumo del catálogo para ver el precio sugerido y el histórico.";
+  function renderPriceTooltip(insumoId: string | null) {
+    if (!insumoId) {
+      return (
+        <div className="space-y-1">
+          <p className="text-[11px] text-amber-300">
+            ⚠ Vinculá esta línea con un insumo del catálogo para ver el precio sugerido y el histórico.
+          </p>
+        </div>
+      );
+    }
     const insumo = insumosCatalog.find((i) => i.id === insumoId);
-    const lines: string[] = [];
-    if (insumo) {
-      const pu = Number(insumo.pu_usd || 0);
-      const puLocal = Number(insumo.pu_local || 0);
-      lines.push(`📦 ${insumo.code ? `[${insumo.code}] ` : ""}${insumo.description}`);
-      lines.push(`💰 Presupuestado: ${formatNumber(pu, 2)} USD${puLocal > 0 ? ` · ${formatNumber(puLocal, 0)} ${insumo.currency_input || "LOCAL"}` : ""}`);
-    }
     const hist = historyByInsumo.get(insumoId) ?? [];
-    if (hist.length > 0) {
-      lines.push("");
-      lines.push(`📊 Histórico (${hist.length} compra${hist.length === 1 ? "" : "s"}):`);
-      for (const h of hist) {
-        const dateStr = h.date ? new Date(h.date).toLocaleDateString() : "—";
-        lines.push(`  • OC ${h.oc_number} · ${h.supplier} · ${formatNumber(h.unit_price, 2)} ${h.currency} · ${dateStr}`);
-      }
-    } else if (insumo) {
-      lines.push("");
-      lines.push("📊 Sin compras anteriores en este proyecto.");
-    }
-    return lines.join("\n");
+    return (
+      <div className="space-y-1.5 min-w-[260px]">
+        {insumo && (
+          <>
+            <p className="font-medium text-[11px] leading-tight">
+              {insumo.code ? <span className="text-neutral-400">[{insumo.code}] </span> : null}
+              {insumo.description}
+            </p>
+            <div className="text-[11px] text-emerald-300">
+              💰 Presupuestado: {formatNumber(Number(insumo.pu_usd || 0), 2)} USD
+              {Number(insumo.pu_local || 0) > 0 && (
+                <> · {formatNumber(Number(insumo.pu_local || 0), 0)} {insumo.currency_input || "LOCAL"}</>
+              )}
+            </div>
+          </>
+        )}
+        {hist.length > 0 ? (
+          <div className="pt-1 border-t border-neutral-700">
+            <p className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1">
+              📊 Histórico ({hist.length})
+            </p>
+            <ul className="space-y-0.5 text-[10px]">
+              {hist.map((h, i) => (
+                <li key={i} className="font-mono">
+                  <span className="text-neutral-300">{h.oc_number}</span>
+                  {" · "}
+                  <span className="text-neutral-400">{h.supplier}</span>
+                  {" · "}
+                  <span className="font-bold">{formatNumber(h.unit_price, 2)} {h.currency}</span>
+                  {h.date && <span className="text-neutral-500"> · {new Date(h.date).toLocaleDateString()}</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          insumo && (
+            <p className="text-[10px] text-neutral-400 italic pt-1 border-t border-neutral-700">
+              Sin compras anteriores en este proyecto.
+            </p>
+          )
+        )}
+      </div>
+    );
   }
 
   function quotationTotal(quotationId: string): number {
@@ -392,6 +423,7 @@ export function ComparativeQuoteDialog({
   const allLocked = quotations.every((q) => q.status !== "draft" && q.status !== "rejected");
 
   return (
+    <TooltipProvider delay={150}>
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="sm:max-w-[1400px] max-h-[92vh] overflow-y-auto">
         {loading || !request ? (
@@ -564,26 +596,33 @@ export function ComparativeQuoteDialog({
                         {quotations.map((q) => {
                           const p = priceFor(q.id, line.id);
                           const subtotal = (p ?? 0) * Number(line.quantity || 0);
-                          const tooltip = buildPriceTooltip(line.insumo_id);
                           return (
                             <td key={q.id} className="px-2 py-1 border-l-2 border-neutral-200">
-                              <Input
-                                type="number"
-                                value={p ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value === "" ? null : Number(e.target.value);
-                                  setQuotationLines((prev) => {
-                                    const ex = prev.find((ql) => ql.quotation_id === q.id && ql.request_line_id === line.id);
-                                    if (ex) return prev.map((ql) => ql.id === ex.id ? { ...ql, unit_price: v } : ql);
-                                    return [...prev, { id: `tmp_${Math.random()}`, quotation_id: q.id, request_line_id: line.id, unit_price: v, lead_time_days: null, awarded: false }];
-                                  });
-                                }}
-                                onBlur={() => setPrice(q.id, line.id, p)}
-                                placeholder="—"
-                                className="h-6 text-xs text-right"
-                                disabled={q.status !== "draft" && q.status !== "rejected"}
-                                title={tooltip}
-                              />
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Input
+                                      type="number"
+                                      value={p ?? ""}
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? null : Number(e.target.value);
+                                        setQuotationLines((prev) => {
+                                          const ex = prev.find((ql) => ql.quotation_id === q.id && ql.request_line_id === line.id);
+                                          if (ex) return prev.map((ql) => ql.id === ex.id ? { ...ql, unit_price: v } : ql);
+                                          return [...prev, { id: `tmp_${Math.random()}`, quotation_id: q.id, request_line_id: line.id, unit_price: v, lead_time_days: null, awarded: false }];
+                                        });
+                                      }}
+                                      onBlur={() => setPrice(q.id, line.id, p)}
+                                      placeholder="—"
+                                      className="h-6 text-xs text-right"
+                                      disabled={q.status !== "draft" && q.status !== "rejected"}
+                                    />
+                                  }
+                                />
+                                <TooltipContent side="top" className="max-w-md">
+                                  {renderPriceTooltip(line.insumo_id)}
+                                </TooltipContent>
+                              </Tooltip>
                               {p != null && (
                                 <p className="text-[10px] text-muted-foreground text-right mt-0.5 font-mono">
                                   = {formatNumber(subtotal, 0)}
@@ -695,6 +734,7 @@ export function ComparativeQuoteDialog({
         )}
       </DialogContent>
     </Dialog>
+    </TooltipProvider>
   );
 }
 
