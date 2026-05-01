@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { Inbox } from "lucide-react";
+import { Inbox, History } from "lucide-react";
 import { ApprovalQueue } from "./_components/queue";
 
 interface PendingOC {
@@ -66,8 +67,17 @@ export default async function AprobacionesPage({
             Cotizaciones por adjudicar y órdenes de compra esperando tu firma
           </p>
         </div>
-        <div className="text-3xl font-bold" style={{ color: "#E87722" }}>
-          {total}
+        <div className="flex items-center gap-4">
+          <Link
+            href={`/project/${projectId}/aprobaciones/historial`}
+            className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 border rounded-md px-3 py-1.5 hover:border-[#E87722]/40 transition-colors"
+          >
+            <History className="h-3.5 w-3.5" />
+            Ver historial
+          </Link>
+          <div className="text-3xl font-bold" style={{ color: "#E87722" }}>
+            {total}
+          </div>
         </div>
       </div>
 
