@@ -654,6 +654,50 @@ export function AwardQuotationDialog({
               </table>
             </div>
 
+            {/* Total general de la autorización */}
+            {(() => {
+              if (winners.size === 0) return null;
+              const fx = Number(project?.exchange_rate || 0);
+              const localCur = project?.local_currency || "LOCAL";
+              let totalUsd = 0;
+              for (const qid of winners) {
+                const q = quotations.find((x) => x.id === qid);
+                if (!q) continue;
+                const t = awardedTotalFor(qid);
+                if (q.currency.toUpperCase() === "USD") totalUsd += t;
+                else totalUsd += fx > 0 ? t / fx : t;
+              }
+              const totalLocal = totalUsd * (fx > 0 ? fx : 1);
+              const multiCurrency = Array.from(winners).some((qid) => {
+                const q = quotations.find((x) => x.id === qid);
+                return q && q.currency.toUpperCase() !== "USD";
+              });
+              return (
+                <div className="rounded-md border-2 border-emerald-300 bg-emerald-50 p-4 flex items-center justify-between gap-4 flex-wrap mt-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold">
+                      Total a autorizar
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Suma de las {winners.size} {winners.size === 1 ? "cotización ganadora" : "cotizaciones ganadoras"}
+                      {multiCurrency && fx > 0 && (
+                        <> · convertido al TC del proyecto (1 USD = {formatNumber(fx, 0)} {localCur})</>
+                      )}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-emerald-900 font-mono leading-tight">
+                      {formatNumber(totalUsd, 0)}
+                      <span className="text-sm text-emerald-700 ml-1 font-normal">USD</span>
+                    </p>
+                    <p className="text-sm text-emerald-800 font-mono">
+                      {formatNumber(totalLocal, 0)} <span className="text-xs font-normal">{localCur}</span>
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Resumen condiciones de cotizaciones ganadoras */}
             {winners.size > 0 && (
               <div className="space-y-2 mt-3">

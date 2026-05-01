@@ -82,12 +82,22 @@ export function AwardHistoryDetail({
   const [quotations, setQuotations] = useState<QuotationRow[]>([]);
   const [quotationLines, setQuotationLines] = useState<QuotationLineRow[]>([]);
   const [attachments, setAttachments] = useState<QuotationAttachment[]>([]);
+  const [projectFx, setProjectFx] = useState<number>(1);
+  const [localCurrency, setLocalCurrency] = useState<string>("LOCAL");
   const [loading, setLoading] = useState(true);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [rlRes, qRes, qlRes] = await Promise.all([
+    // Para resolver TC del proyecto necesitamos el project_id de la SC.
+    // Lo traemos antes para luego pasarlo en paralelo a la query del proyecto.
+    const reqMeta = await supabase
+      .from("purchase_requests")
+      .select("project_id")
+      .eq("id", requestId)
+      .single();
+    const projectId = (reqMeta.data as { project_id: string } | null)?.project_id;
+    const [rlRes, qRes, qlRes, projRes] = await Promise.all([
       supabase.from("purchase_request_lines").select("id, description, quantity, unit").eq("request_id", requestId).order("created_at"),
       supabase
         .from("quotations")
@@ -106,7 +116,16 @@ export function AwardHistoryDetail({
         .select("*, quotation:quotations!inner(request_id, status)")
         .eq("quotation.request_id", requestId)
         .in("quotation.status", ["awarded", "rejected"]),
+      projectId
+        ? supabase.from("projects").select("exchange_rate, local_currency").eq("id", projectId).single()
+        : Promise.resolve({ data: null, error: null }),
     ]);
+
+    if (projRes.data) {
+      const p = projRes.data as { exchange_rate: number; local_currency: string };
+      setProjectFx(Number(p.exchange_rate) || 1);
+      setLocalCurrency(p.local_currency || "LOCAL");
+    }
 
     setRequestLines((rlRes.data ?? []) as RequestLineRow[]);
 
@@ -330,9 +349,66 @@ export function AwardHistoryDetail({
                       })}
                     </tr>
                   ))}
+                  {/* Footer: total adjudicado por proveedor en su moneda original */}
+                  <tr className="border-t-2 border-neutral-900 bg-neutral-50 font-bold">
+                    <td className="px-2 py-2 sticky left-0 bg-neutral-50 text-[10px] uppercase tracking-wider text-muted-foreground z-20">
+                      Total adjudicado
+                    </td>
+                    <td colSpan={2}></td>
+                    {quotations.map((q) => {
+                      const t = awardedTotalFor(q.id);
+                      const isWinner = q.status === "awarded";
+                      return (
+                        <td
+                          key={q.id}
+                          className={`px-2 py-2 text-right font-mono border-l-2 border-neutral-200 ${
+                            isWinner ? "text-emerald-800" : "text-muted-foreground"
+                          }`}
+                        >
+                          {t > 0 ? <>{formatNumber(t, 0)} {q.currency}</> : <span className="text-muted-foreground">—</span>}
+                        </td>
+                      );
+                    })}
+                  </tr>
                 </tbody>
               </table>
             </div>
+
+            {/* Total general de la autorización (suma multi-moneda → USD + local) */}
+            {(() => {
+              let totalUsd = 0;
+              for (const q of winners) {
+                const t = awardedTotalFor(q.id);
+                if (t <= 0) continue;
+                if (q.currency.toUpperCase() === "USD") totalUsd += t;
+                else totalUsd += projectFx > 0 ? t / projectFx : t;
+              }
+              const totalLocal = totalUsd * (projectFx > 0 ? projectFx : 1);
+              return winners.length > 0 ? (
+                <div className="rounded-md border-2 border-emerald-300 bg-emerald-50 p-4 flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold">
+                      Total de la autorización
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Suma de las {winners.length} {winners.length === 1 ? "cotización adjudicada" : "cotizaciones adjudicadas"}
+                      {winners.some((q) => q.currency.toUpperCase() !== "USD") && projectFx > 0 && (
+                        <> · convertido al TC del proyecto (1 USD = {formatNumber(projectFx, 0)} {localCurrency})</>
+                      )}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-emerald-900 font-mono leading-tight">
+                      {formatNumber(totalUsd, 0)}
+                      <span className="text-sm text-emerald-700 ml-1 font-normal">USD</span>
+                    </p>
+                    <p className="text-sm text-emerald-800 font-mono">
+                      {formatNumber(totalLocal, 0)} <span className="text-xs font-normal">{localCurrency}</span>
+                    </p>
+                  </div>
+                </div>
+              ) : null;
+            })()}
 
             {/* Condiciones de las adjudicadas */}
             {winners.length > 0 && (
