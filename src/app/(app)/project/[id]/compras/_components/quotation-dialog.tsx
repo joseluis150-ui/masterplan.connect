@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +17,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import { CURRENCIES } from "@/lib/constants/units";
 import {
@@ -30,6 +28,7 @@ import {
   FileText as FileIcon,
   Loader2,
   Building,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatNumber } from "@/lib/utils/formula";
@@ -48,6 +47,16 @@ export interface Quotation {
   title: string | null;
   status: "draft" | "pending_approval" | "awarded" | "rejected" | "cancelled";
   justification: string | null;
+  // Proveedor + condiciones (ahora directo en la cotización)
+  supplier_id: string | null;
+  supplier_name_legacy: string | null;
+  currency: string;
+  valid_until: string | null;
+  has_advance: boolean;
+  advance_amount: number | null;
+  advance_type: string | null;
+  retention_pct: number | null;
+  payment_notes: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -55,46 +64,23 @@ export interface Quotation {
 interface QuotationLine {
   id: string;
   quotation_id: string;
+  request_line_id: string | null;
   subcategory_id: string | null;
   sector_id: string | null;
   insumo_id: string | null;
   description: string;
   quantity: number;
   unit: string;
-  awarded_offer_id: string | null;
-  line_order: number;
-  comment: string | null;
-}
-
-interface QuotationOffer {
-  id: string;
-  quotation_id: string;
-  supplier_id: string | null;
-  supplier_name_legacy: string | null;
-  currency: string;
-  payment_terms_type: string | null;
-  credit_days: number | null;
-  has_advance: boolean;
-  advance_amount: number | null;
-  advance_type: string | null;
-  retention_pct: number | null;
-  comment: string | null;
-  valid_until: string | null;
-}
-
-interface QuotationOfferLine {
-  id: string;
-  offer_id: string;
-  quotation_line_id: string;
   unit_price: number | null;
   lead_time_days: number | null;
+  awarded: boolean;
+  line_order: number;
   comment: string | null;
 }
 
 interface Attachment {
   id: string;
   quotation_id: string;
-  offer_id: string | null;
   file_name: string;
   storage_path: string;
   mime_type: string | null;
@@ -132,8 +118,6 @@ export function QuotationDialog({
   const supabase = createClient();
   const [quotation, setQuotation] = useState<Quotation | null>(null);
   const [lines, setLines] = useState<QuotationLine[]>([]);
-  const [offers, setOffers] = useState<QuotationOffer[]>([]);
-  const [offerLines, setOfferLines] = useState<QuotationOfferLine[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loading, setLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -141,17 +125,13 @@ export function QuotationDialog({
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [qRes, lRes, oRes, olRes, aRes] = await Promise.all([
+    const [qRes, lRes, aRes] = await Promise.all([
       supabase.from("quotations").select("*").eq("id", quotationId).single(),
       supabase.from("quotation_lines").select("*").eq("quotation_id", quotationId).order("line_order"),
-      supabase.from("quotation_offers").select("*").eq("quotation_id", quotationId).order("created_at"),
-      supabase.from("quotation_offer_lines").select("*, offer:quotation_offers!inner(quotation_id)").eq("offer.quotation_id", quotationId),
       supabase.from("quotation_attachments").select("*").eq("quotation_id", quotationId).order("uploaded_at", { ascending: false }),
     ]);
     if (qRes.data) setQuotation(qRes.data as Quotation);
     setLines((lRes.data ?? []) as QuotationLine[]);
-    setOffers((oRes.data ?? []) as QuotationOffer[]);
-    setOfferLines((olRes.data ?? []) as QuotationOfferLine[]);
     setAttachments((aRes.data ?? []) as Attachment[]);
     setLoading(false);
   }, [quotationId, supabase]);
@@ -159,6 +139,14 @@ export function QuotationDialog({
   useEffect(() => { load(); }, [load]);
 
   const isLocked = !canWrite || (quotation && quotation.status !== "draft" && quotation.status !== "rejected");
+
+  /* --------------------------- META DE COTIZACIÓN --------------------------- */
+  async function updateQuotation(patch: Partial<Quotation>) {
+    if (!quotation) return;
+    setQuotation({ ...quotation, ...patch });
+    const { error } = await supabase.from("quotations").update(patch).eq("id", quotation.id);
+    if (error) toast.error(error.message);
+  }
 
   /* ------------------------------- LÍNEAS ------------------------------- */
   async function addLine() {
@@ -184,72 +172,10 @@ export function QuotationDialog({
   }
 
   async function removeLine(id: string) {
-    if (!confirm("¿Borrar este ítem?")) return;
+    if (!confirm("¿Borrar este ítem de la cotización? (No afecta a la SC original.)")) return;
     const { error } = await supabase.from("quotation_lines").delete().eq("id", id);
     if (error) { toast.error(error.message); return; }
     setLines((prev) => prev.filter((l) => l.id !== id));
-    setOfferLines((prev) => prev.filter((ol) => ol.quotation_line_id !== id));
-  }
-
-  /* ------------------------------- OFERTAS ------------------------------ */
-  async function addOffer() {
-    const { data, error } = await supabase
-      .from("quotation_offers")
-      .insert({
-        quotation_id: quotationId,
-        supplier_name_legacy: "Nuevo proveedor",
-        currency: "USD",
-      })
-      .select()
-      .single();
-    if (error) { toast.error(error.message); return; }
-    setOffers((prev) => [...prev, data as QuotationOffer]);
-  }
-
-  async function updateOffer(id: string, patch: Partial<QuotationOffer>) {
-    setOffers((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
-    const { error } = await supabase.from("quotation_offers").update(patch).eq("id", id);
-    if (error) toast.error(error.message);
-  }
-
-  async function removeOffer(id: string) {
-    if (!confirm("¿Borrar esta oferta y todos sus precios?")) return;
-    const { error } = await supabase.from("quotation_offers").delete().eq("id", id);
-    if (error) { toast.error(error.message); return; }
-    setOffers((prev) => prev.filter((o) => o.id !== id));
-    setOfferLines((prev) => prev.filter((ol) => ol.offer_id !== id));
-  }
-
-  /* ----------------------- PRECIO POR (OFERTA × LÍNEA) ----------------------- */
-  async function setPrice(offerId: string, lineId: string, unit_price: number | null) {
-    const existing = offerLines.find((ol) => ol.offer_id === offerId && ol.quotation_line_id === lineId);
-    if (existing) {
-      setOfferLines((prev) => prev.map((ol) => (ol.id === existing.id ? { ...ol, unit_price } : ol)));
-      const { error } = await supabase.from("quotation_offer_lines").update({ unit_price }).eq("id", existing.id);
-      if (error) toast.error(error.message);
-    } else {
-      const { data, error } = await supabase
-        .from("quotation_offer_lines")
-        .insert({ offer_id: offerId, quotation_line_id: lineId, unit_price })
-        .select()
-        .single();
-      if (error) { toast.error(error.message); return; }
-      setOfferLines((prev) => [...prev, data as QuotationOfferLine]);
-    }
-  }
-
-  function priceFor(offerId: string, lineId: string): number | null {
-    const ol = offerLines.find((x) => x.offer_id === offerId && x.quotation_line_id === lineId);
-    return ol?.unit_price ?? null;
-  }
-
-  function offerTotal(offerId: string): number {
-    let sum = 0;
-    for (const line of lines) {
-      const p = priceFor(offerId, line.id);
-      if (p != null) sum += p * Number(line.quantity || 0);
-    }
-    return sum;
   }
 
   /* ------------------------------ ADJUNTOS ------------------------------ */
@@ -295,6 +221,13 @@ export function QuotationDialog({
     setAttachments((prev) => prev.filter((a) => a.id !== att.id));
   }
 
+  /* --------------------------- COMPUTADOS --------------------------- */
+  const supplierItem = quotation?.supplier_id ? suppliers.find((s) => s.id === quotation.supplier_id) : null;
+  const total = lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_price || 0), 0);
+  // Validación: cada línea debe tener subcategoría + sector definidos (centro de costo)
+  const linesMissingCC = lines.filter((l) => !l.subcategory_id || !l.sector_id).length;
+  const supplierMissing = !quotation?.supplier_id && !quotation?.supplier_name_legacy?.trim();
+
   /* ------------------------------ RENDER ------------------------------ */
   if (!quotation && !loading) return null;
 
@@ -312,7 +245,7 @@ export function QuotationDialog({
                 <Input
                   value={quotation.title || ""}
                   onChange={(e) => setQuotation({ ...quotation, title: e.target.value })}
-                  onBlur={() => supabase.from("quotations").update({ title: quotation.title }).eq("id", quotation.id)}
+                  onBlur={() => updateQuotation({ title: quotation.title })}
                   className="flex-1 h-8"
                   disabled={!!isLocked}
                   placeholder="Título"
@@ -325,40 +258,147 @@ export function QuotationDialog({
                 </span>
               </DialogTitle>
               <DialogDescription>
-                Cargá los ítems a cotizar, después agregá ofertas de cada proveedor con sus precios y subí los adjuntos del legajo.
+                Esta cotización corresponde a <strong>un solo proveedor</strong>. Si querés comparar con otro proveedor, creá una segunda cotización desde la misma SC.
               </DialogDescription>
             </DialogHeader>
+
+            {/* PROVEEDOR + condiciones */}
+            <section className="border rounded-md p-3 space-y-3 bg-muted/20">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                <Building className="h-4 w-4" /> Proveedor cotizante
+              </h3>
+
+              <div className="grid grid-cols-12 gap-3">
+                <div className="col-span-5 space-y-1">
+                  <Label className="text-xs">Proveedor</Label>
+                  <Select
+                    value={quotation.supplier_id || "_legacy"}
+                    onValueChange={(v) => v && updateQuotation({
+                      supplier_id: v === "_legacy" ? null : v,
+                      supplier_name_legacy: v === "_legacy" ? quotation.supplier_name_legacy : null,
+                    })}
+                    disabled={!!isLocked}
+                  >
+                    <SelectTrigger className="h-8 text-sm w-full">
+                      {quotation.supplier_id ? (
+                        <span className="truncate">{supplierItem?.name ?? "(proveedor)"}</span>
+                      ) : (
+                        <span className="text-muted-foreground">(Manual / nuevo)</span>
+                      )}
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_legacy">(Manual / nuevo)</SelectItem>
+                      {suppliers.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!quotation.supplier_id && (
+                    <Input
+                      value={quotation.supplier_name_legacy || ""}
+                      onChange={(e) => setQuotation({ ...quotation, supplier_name_legacy: e.target.value })}
+                      onBlur={() => updateQuotation({ supplier_name_legacy: quotation.supplier_name_legacy })}
+                      placeholder="Nombre del proveedor (manual)"
+                      className="h-7 text-sm mt-1"
+                      disabled={!!isLocked}
+                    />
+                  )}
+                </div>
+
+                <div className="col-span-2 space-y-1">
+                  <Label className="text-xs">Moneda</Label>
+                  <Select
+                    value={quotation.currency}
+                    onValueChange={(v) => v && updateQuotation({ currency: v })}
+                    disabled={!!isLocked}
+                  >
+                    <SelectTrigger className="h-8 text-sm w-full">
+                      <span>{quotation.currency}</span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CURRENCIES.map((c) => (
+                        <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="col-span-2 space-y-1">
+                  <Label className="text-xs">Vence</Label>
+                  <Input
+                    type="date"
+                    value={quotation.valid_until || ""}
+                    onChange={(e) => setQuotation({ ...quotation, valid_until: e.target.value || null })}
+                    onBlur={() => updateQuotation({ valid_until: quotation.valid_until })}
+                    className="h-8 text-sm"
+                    disabled={!!isLocked}
+                  />
+                </div>
+
+                <div className="col-span-1 space-y-1">
+                  <Label className="text-xs flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={quotation.has_advance}
+                      onChange={(e) => updateQuotation({ has_advance: e.target.checked })}
+                      disabled={!!isLocked}
+                    />
+                    Anticipo
+                  </Label>
+                </div>
+
+                {quotation.has_advance && (
+                  <>
+                    <div className="col-span-1 space-y-1">
+                      <Label className="text-xs">Anticipo %</Label>
+                      <Input
+                        type="number"
+                        value={quotation.advance_amount ?? ""}
+                        onChange={(e) => setQuotation({ ...quotation, advance_amount: e.target.value === "" ? null : Number(e.target.value) })}
+                        onBlur={() => updateQuotation({ advance_amount: quotation.advance_amount, advance_type: "percentage" })}
+                        className="h-8 text-sm"
+                        disabled={!!isLocked}
+                        placeholder="%"
+                      />
+                    </div>
+                    <div className="col-span-1 space-y-1">
+                      <Label className="text-xs">Retención %</Label>
+                      <Input
+                        type="number"
+                        value={quotation.retention_pct ?? ""}
+                        onChange={(e) => setQuotation({ ...quotation, retention_pct: e.target.value === "" ? null : Number(e.target.value) })}
+                        onBlur={() => updateQuotation({ retention_pct: quotation.retention_pct })}
+                        className="h-8 text-sm"
+                        disabled={!!isLocked}
+                        placeholder="%"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
 
             {/* Justificación */}
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 Justificación
-                {offers.length === 1 && (
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
-                    Obligatoria · oferta única
-                  </span>
-                )}
               </Label>
               <textarea
                 value={quotation.justification || ""}
                 onChange={(e) => setQuotation({ ...quotation, justification: e.target.value })}
-                onBlur={() => supabase.from("quotations").update({ justification: quotation.justification }).eq("id", quotation.id)}
-                placeholder={
-                  offers.length === 1
-                    ? "Explicá por qué se cotizó con un solo proveedor (ej. único oferente disponible, urgencia, exclusividad, etc.)"
-                    : "Notas, criterios de selección, observaciones del proceso de cotización…"
-                }
+                onBlur={() => updateQuotation({ justification: quotation.justification })}
+                placeholder="Notas sobre el proceso de cotización: criterios elegidos, contexto, observaciones."
                 rows={2}
                 disabled={!!isLocked}
                 className="w-full text-sm rounded-md border border-input bg-transparent px-3 py-2 placeholder:text-muted-foreground disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
 
-            {/* Sección 1: ÍTEMS A COTIZAR */}
+            {/* ÍTEMS A COTIZAR — con precio */}
             <section>
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                  Ítems a cotizar ({lines.length})
+                  Ítems cotizados ({lines.length})
                 </h3>
                 {!isLocked && (
                   <Button size="sm" variant="outline" onClick={addLine}>
@@ -367,9 +407,18 @@ export function QuotationDialog({
                   </Button>
                 )}
               </div>
+
+              {/* Aviso: líneas sin centro de costo o sector */}
+              {linesMissingCC > 0 && (
+                <div className="mb-2 flex items-center gap-2 text-xs px-3 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-amber-900">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Hay {linesMissingCC} {linesMissingCC === 1 ? "línea" : "líneas"} sin centro de costo (subcategoría) o sector definido. Completalos antes de enviar a aprobación.
+                </div>
+              )}
+
               {lines.length === 0 ? (
                 <p className="text-xs italic text-muted-foreground py-3 text-center border rounded-md">
-                  Agregá los ítems que querés cotizar.
+                  Agregá los ítems cotizados.
                 </p>
               ) : (
                 <div className="border rounded-md overflow-hidden">
@@ -377,12 +426,14 @@ export function QuotationDialog({
                     <thead className="bg-neutral-100">
                       <tr>
                         <th className="text-left px-2 py-2 font-semibold">Descripción</th>
-                        <th className="text-left px-2 py-2 font-semibold w-[160px]">Subcategoría</th>
-                        <th className="text-left px-2 py-2 font-semibold w-[120px]">Sector</th>
-                        <th className="text-left px-2 py-2 font-semibold w-[140px]">Insumo</th>
-                        <th className="text-right px-2 py-2 font-semibold w-[80px]">Cantidad</th>
-                        <th className="text-center px-2 py-2 font-semibold w-[60px]">Unidad</th>
-                        <th className="w-[40px]"></th>
+                        <th className="text-left px-2 py-2 font-semibold w-[140px]">Centro de costo *</th>
+                        <th className="text-left px-2 py-2 font-semibold w-[110px]">Sector *</th>
+                        <th className="text-left px-2 py-2 font-semibold w-[130px]">Insumo</th>
+                        <th className="text-right px-2 py-2 font-semibold w-[70px]">Cantidad</th>
+                        <th className="text-center px-2 py-2 font-semibold w-[55px]">Unidad</th>
+                        <th className="text-right px-2 py-2 font-semibold w-[100px]">P. unit.</th>
+                        <th className="text-right px-2 py-2 font-semibold w-[110px]">Subtotal</th>
+                        <th className="w-[36px]"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -390,270 +441,148 @@ export function QuotationDialog({
                         const subItem = subcategories.find((s) => s.id === line.subcategory_id);
                         const sectorItem = sectors.find((s) => s.id === line.sector_id);
                         const insumoItem = insumos.find((i) => i.id === line.insumo_id);
+                        const subtotal = Number(line.quantity || 0) * Number(line.unit_price || 0);
+                        const missingCC = !line.subcategory_id || !line.sector_id;
                         return (
-                        <tr key={line.id} className="border-t">
-                          <td className="px-2 py-1">
-                            <Input
-                              value={line.description}
-                              onChange={(e) => setLines((p) => p.map((l) => l.id === line.id ? { ...l, description: e.target.value } : l))}
-                              onBlur={() => updateLine(line.id, { description: line.description })}
-                              className="h-7 text-xs"
-                              disabled={!!isLocked}
-                            />
-                          </td>
-                          <td className="px-2 py-1">
-                            <Select
-                              value={line.subcategory_id || ""}
-                              onValueChange={(v) => v && updateLine(line.id, { subcategory_id: v })}
-                              disabled={!!isLocked}
-                            >
-                              <SelectTrigger className="h-7 text-xs">
-                                {subItem ? (
-                                  <span className="truncate">{subItem.code} · {subItem.name}</span>
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </SelectTrigger>
-                              <SelectContent>
-                                {subcategories.map((s) => (
-                                  <SelectItem key={s.id} value={s.id}>
-                                    {s.code} · {s.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                          <td className="px-2 py-1">
-                            <Select
-                              value={line.sector_id || ""}
-                              onValueChange={(v) => v && updateLine(line.id, { sector_id: v })}
-                              disabled={!!isLocked}
-                            >
-                              <SelectTrigger className="h-7 text-xs">
-                                {sectorItem ? (
-                                  <span className="truncate">{sectorItem.name}</span>
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </SelectTrigger>
-                              <SelectContent>
-                                {sectors.map((s) => (
-                                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                          <td className="px-2 py-1">
-                            <Select
-                              value={line.insumo_id || ""}
-                              onValueChange={(v) => v && updateLine(line.id, { insumo_id: v })}
-                              disabled={!!isLocked}
-                            >
-                              <SelectTrigger className="h-7 text-xs">
-                                {insumoItem ? (
-                                  <span className="truncate">{insumoItem.code} · {insumoItem.description.slice(0, 40)}</span>
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </SelectTrigger>
-                              <SelectContent>
-                                {insumos.map((i) => (
-                                  <SelectItem key={i.id} value={i.id}>{i.code} · {i.description.slice(0, 50)}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                          <td className="px-2 py-1">
-                            <Input
-                              type="number"
-                              value={line.quantity}
-                              onChange={(e) => setLines((p) => p.map((l) => l.id === line.id ? { ...l, quantity: Number(e.target.value) } : l))}
-                              onBlur={() => updateLine(line.id, { quantity: line.quantity })}
-                              className="h-7 text-xs text-right"
-                              disabled={!!isLocked}
-                            />
-                          </td>
-                          <td className="px-2 py-1">
-                            <Input
-                              value={line.unit}
-                              onChange={(e) => setLines((p) => p.map((l) => l.id === line.id ? { ...l, unit: e.target.value } : l))}
-                              onBlur={() => updateLine(line.id, { unit: line.unit })}
-                              className="h-7 text-xs text-center"
-                              disabled={!!isLocked}
-                            />
-                          </td>
-                          <td className="px-1 py-1 text-center">
-                            {!isLocked && (
-                              <Button variant="ghost" size="icon" onClick={() => removeLine(line.id)} className="h-6 w-6">
-                                <Trash2 className="h-3 w-3 text-destructive" />
-                              </Button>
-                            )}
-                          </td>
-                        </tr>
+                          <tr key={line.id} className={`border-t ${missingCC ? "bg-amber-50/50" : ""}`}>
+                            <td className="px-2 py-1">
+                              <Input
+                                value={line.description}
+                                onChange={(e) => setLines((p) => p.map((l) => l.id === line.id ? { ...l, description: e.target.value } : l))}
+                                onBlur={() => updateLine(line.id, { description: line.description })}
+                                className="h-7 text-xs"
+                                disabled={!!isLocked}
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <Select
+                                value={line.subcategory_id || ""}
+                                onValueChange={(v) => v && updateLine(line.id, { subcategory_id: v })}
+                                disabled={!!isLocked}
+                              >
+                                <SelectTrigger className={`h-7 text-xs ${!line.subcategory_id ? "border-amber-400" : ""}`}>
+                                  {subItem ? (
+                                    <span className="truncate">{subItem.code} · {subItem.name}</span>
+                                  ) : (
+                                    <span className="text-amber-700">— elegir</span>
+                                  )}
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {subcategories.map((s) => (
+                                    <SelectItem key={s.id} value={s.id}>{s.code} · {s.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="px-2 py-1">
+                              <Select
+                                value={line.sector_id || ""}
+                                onValueChange={(v) => v && updateLine(line.id, { sector_id: v })}
+                                disabled={!!isLocked}
+                              >
+                                <SelectTrigger className={`h-7 text-xs ${!line.sector_id ? "border-amber-400" : ""}`}>
+                                  {sectorItem ? (
+                                    <span className="truncate">{sectorItem.name}</span>
+                                  ) : (
+                                    <span className="text-amber-700">— elegir</span>
+                                  )}
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {sectors.map((s) => (
+                                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="px-2 py-1">
+                              <Select
+                                value={line.insumo_id || ""}
+                                onValueChange={(v) => v && updateLine(line.id, { insumo_id: v })}
+                                disabled={!!isLocked}
+                              >
+                                <SelectTrigger className="h-7 text-xs">
+                                  {insumoItem ? (
+                                    <span className="truncate">{insumoItem.code} · {insumoItem.description.slice(0, 30)}</span>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {insumos.map((i) => (
+                                    <SelectItem key={i.id} value={i.id}>{i.code} · {i.description.slice(0, 50)}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="px-2 py-1">
+                              <Input
+                                type="number"
+                                value={line.quantity}
+                                onChange={(e) => setLines((p) => p.map((l) => l.id === line.id ? { ...l, quantity: Number(e.target.value) } : l))}
+                                onBlur={() => updateLine(line.id, { quantity: line.quantity })}
+                                className="h-7 text-xs text-right"
+                                disabled={!!isLocked}
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <Input
+                                value={line.unit}
+                                onChange={(e) => setLines((p) => p.map((l) => l.id === line.id ? { ...l, unit: e.target.value } : l))}
+                                onBlur={() => updateLine(line.id, { unit: line.unit })}
+                                className="h-7 text-xs text-center"
+                                disabled={!!isLocked}
+                              />
+                            </td>
+                            <td className="px-2 py-1">
+                              <Input
+                                type="number"
+                                value={line.unit_price ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value === "" ? null : Number(e.target.value);
+                                  setLines((p) => p.map((l) => l.id === line.id ? { ...l, unit_price: v } : l));
+                                }}
+                                onBlur={() => updateLine(line.id, { unit_price: line.unit_price })}
+                                className="h-7 text-xs text-right"
+                                disabled={!!isLocked}
+                                placeholder="—"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right font-mono">
+                              {line.unit_price != null ? formatNumber(subtotal, 0) : <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="px-1 py-1 text-center">
+                              {!isLocked && (
+                                <Button variant="ghost" size="icon" onClick={() => removeLine(line.id)} className="h-6 w-6">
+                                  <Trash2 className="h-3 w-3 text-destructive" />
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
                         );
                       })}
+                      <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
+                        <td colSpan={7} className="px-2 py-2 text-right text-xs uppercase tracking-wider text-white">
+                          Total cotización ({quotation.currency})
+                        </td>
+                        <td className="px-2 py-2 text-right font-mono" style={{ color: "#E87722" }}>
+                          {formatNumber(total, 0)}
+                        </td>
+                        <td />
+                      </tr>
                     </tbody>
                   </table>
                 </div>
               )}
-            </section>
 
-            {/* Sección 2: OFERTAS DE PROVEEDORES */}
-            <section className="mt-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                  Ofertas ({offers.length})
-                </h3>
-                {!isLocked && (
-                  <Button size="sm" variant="outline" onClick={addOffer} disabled={lines.length === 0}>
-                    <Plus className="h-3.5 w-3.5 mr-1" />
-                    Agregar oferta
-                  </Button>
-                )}
-              </div>
-              {offers.length === 0 ? (
-                <p className="text-xs italic text-muted-foreground py-3 text-center border rounded-md">
-                  {lines.length === 0
-                    ? "Primero cargá los ítems a cotizar."
-                    : "Agregá ofertas de proveedores para comparar precios."}
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {offers.map((offer) => {
-                    const supplierItem = offer.supplier_id ? suppliers.find((s) => s.id === offer.supplier_id) : null;
-                    return (
-                    <Card key={offer.id} className="overflow-hidden">
-                      <CardContent className="p-3 space-y-2">
-                        {/* Header oferta */}
-                        <div className="flex items-center gap-2">
-                          <Building className="h-4 w-4 text-muted-foreground shrink-0" />
-                          <Select
-                            value={offer.supplier_id || "_legacy"}
-                            onValueChange={(v) => v && updateOffer(offer.id, {
-                              supplier_id: v === "_legacy" ? null : v,
-                              supplier_name_legacy: v === "_legacy" ? offer.supplier_name_legacy : null,
-                            })}
-                            disabled={!!isLocked}
-                          >
-                            <SelectTrigger className="h-7 text-xs w-[200px]">
-                              {offer.supplier_id ? (
-                                <span className="truncate">{supplierItem?.name ?? "(proveedor)"}</span>
-                              ) : (
-                                <span className="text-muted-foreground">(Manual / nuevo)</span>
-                              )}
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="_legacy">(Manual / nuevo)</SelectItem>
-                              {suppliers.map((s) => (
-                                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {!offer.supplier_id && (
-                            <Input
-                              value={offer.supplier_name_legacy || ""}
-                              onChange={(e) => setOffers((p) => p.map((o) => o.id === offer.id ? { ...o, supplier_name_legacy: e.target.value } : o))}
-                              onBlur={() => updateOffer(offer.id, { supplier_name_legacy: offer.supplier_name_legacy })}
-                              placeholder="Nombre del proveedor"
-                              className="h-7 text-xs flex-1"
-                              disabled={!!isLocked}
-                            />
-                          )}
-                          <Select
-                            value={offer.currency}
-                            onValueChange={(v) => v && updateOffer(offer.id, { currency: v })}
-                            disabled={!!isLocked}
-                          >
-                            <SelectTrigger className="h-7 text-xs w-[80px]">
-                              <span>{offer.currency}</span>
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CURRENCIES.map((c) => (
-                                <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <span className="text-xs text-muted-foreground">Vence:</span>
-                          <Input
-                            type="date"
-                            value={offer.valid_until || ""}
-                            onChange={(e) => setOffers((p) => p.map((o) => o.id === offer.id ? { ...o, valid_until: e.target.value || null } : o))}
-                            onBlur={() => updateOffer(offer.id, { valid_until: offer.valid_until })}
-                            className="h-7 text-xs w-[140px]"
-                            disabled={!!isLocked}
-                          />
-                          <div className="flex-1" />
-                          <span className="text-sm font-bold" style={{ color: "#E87722" }}>
-                            {formatNumber(offerTotal(offer.id), 0)} {offer.currency}
-                          </span>
-                          {!isLocked && (
-                            <Button variant="ghost" size="icon" onClick={() => removeOffer(offer.id)} className="h-7 w-7">
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          )}
-                        </div>
-
-                        {/* Tabla de precios por línea */}
-                        {lines.length > 0 && (
-                          <div className="border rounded-md overflow-hidden">
-                            <table className="w-full text-xs">
-                              <thead className="bg-neutral-50">
-                                <tr>
-                                  <th className="text-left px-2 py-1 font-medium text-muted-foreground">Ítem</th>
-                                  <th className="text-right px-2 py-1 font-medium text-muted-foreground w-[80px]">Cantidad</th>
-                                  <th className="text-right px-2 py-1 font-medium text-muted-foreground w-[120px]">Precio unit.</th>
-                                  <th className="text-right px-2 py-1 font-medium text-muted-foreground w-[120px]">Subtotal</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {lines.map((line) => {
-                                  const p = priceFor(offer.id, line.id);
-                                  const subtotal = (p ?? 0) * Number(line.quantity || 0);
-                                  return (
-                                    <tr key={line.id} className="border-t">
-                                      <td className="px-2 py-1 truncate max-w-[300px]" title={line.description}>
-                                        {line.description}
-                                      </td>
-                                      <td className="px-2 py-1 text-right font-mono text-muted-foreground">
-                                        {formatNumber(line.quantity)} {line.unit}
-                                      </td>
-                                      <td className="px-2 py-1">
-                                        <Input
-                                          type="number"
-                                          value={p ?? ""}
-                                          onChange={(e) => {
-                                            const v = e.target.value === "" ? null : Number(e.target.value);
-                                            setOfferLines((prev) => {
-                                              const ex = prev.find((ol) => ol.offer_id === offer.id && ol.quotation_line_id === line.id);
-                                              if (ex) return prev.map((ol) => ol.id === ex.id ? { ...ol, unit_price: v } : ol);
-                                              return [...prev, { id: `tmp_${Math.random()}`, offer_id: offer.id, quotation_line_id: line.id, unit_price: v, lead_time_days: null, comment: null }];
-                                            });
-                                          }}
-                                          onBlur={() => setPrice(offer.id, line.id, p)}
-                                          placeholder="—"
-                                          className="h-6 text-xs text-right"
-                                          disabled={!!isLocked}
-                                        />
-                                      </td>
-                                      <td className="px-2 py-1 text-right font-mono">
-                                        {p != null ? formatNumber(subtotal, 0) : <span className="text-muted-foreground">—</span>}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                    );
-                  })}
+              {supplierMissing && (
+                <div className="mt-2 flex items-center gap-2 text-xs px-3 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-amber-900">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Falta indicar el proveedor de la cotización.
                 </div>
               )}
             </section>
 
-            {/* Sección 3: ADJUNTOS */}
+            {/* ADJUNTOS */}
             <section className="mt-4">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
@@ -684,7 +613,7 @@ export function QuotationDialog({
               </div>
               {attachments.length === 0 ? (
                 <p className="text-xs italic text-muted-foreground py-3 text-center border rounded-md">
-                  Subí PDFs / Excel con las cotizaciones del proveedor, formularios o planillas para conformar el legajo.
+                  Subí PDF/Excel con la cotización formal del proveedor.
                 </p>
               ) : (
                 <div className="space-y-1">
