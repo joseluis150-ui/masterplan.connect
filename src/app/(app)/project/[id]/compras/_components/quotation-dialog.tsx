@@ -386,7 +386,11 @@ export function QuotationDialog({
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.map((line) => (
+                      {lines.map((line) => {
+                        const subItem = subcategories.find((s) => s.id === line.subcategory_id);
+                        const sectorItem = sectors.find((s) => s.id === line.sector_id);
+                        const insumoItem = insumos.find((i) => i.id === line.insumo_id);
+                        return (
                         <tr key={line.id} className="border-t">
                           <td className="px-2 py-1">
                             <Input
@@ -403,7 +407,13 @@ export function QuotationDialog({
                               onValueChange={(v) => v && updateLine(line.id, { subcategory_id: v })}
                               disabled={!!isLocked}
                             >
-                              <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="—" /></SelectTrigger>
+                              <SelectTrigger className="h-7 text-xs">
+                                {subItem ? (
+                                  <span className="truncate">{subItem.code} · {subItem.name}</span>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </SelectTrigger>
                               <SelectContent>
                                 {subcategories.map((s) => (
                                   <SelectItem key={s.id} value={s.id}>
@@ -419,7 +429,13 @@ export function QuotationDialog({
                               onValueChange={(v) => v && updateLine(line.id, { sector_id: v })}
                               disabled={!!isLocked}
                             >
-                              <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="—" /></SelectTrigger>
+                              <SelectTrigger className="h-7 text-xs">
+                                {sectorItem ? (
+                                  <span className="truncate">{sectorItem.name}</span>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </SelectTrigger>
                               <SelectContent>
                                 {sectors.map((s) => (
                                   <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
@@ -433,7 +449,13 @@ export function QuotationDialog({
                               onValueChange={(v) => v && updateLine(line.id, { insumo_id: v })}
                               disabled={!!isLocked}
                             >
-                              <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="—" /></SelectTrigger>
+                              <SelectTrigger className="h-7 text-xs">
+                                {insumoItem ? (
+                                  <span className="truncate">{insumoItem.code} · {insumoItem.description.slice(0, 40)}</span>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </SelectTrigger>
                               <SelectContent>
                                 {insumos.map((i) => (
                                   <SelectItem key={i.id} value={i.id}>{i.code} · {i.description.slice(0, 50)}</SelectItem>
@@ -468,7 +490,8 @@ export function QuotationDialog({
                             )}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -496,7 +519,9 @@ export function QuotationDialog({
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {offers.map((offer) => (
+                  {offers.map((offer) => {
+                    const supplierItem = offer.supplier_id ? suppliers.find((s) => s.id === offer.supplier_id) : null;
+                    return (
                     <Card key={offer.id} className="overflow-hidden">
                       <CardContent className="p-3 space-y-2">
                         {/* Header oferta */}
@@ -510,7 +535,13 @@ export function QuotationDialog({
                             })}
                             disabled={!!isLocked}
                           >
-                            <SelectTrigger className="h-7 text-xs w-[200px]"><SelectValue /></SelectTrigger>
+                            <SelectTrigger className="h-7 text-xs w-[200px]">
+                              {offer.supplier_id ? (
+                                <span className="truncate">{supplierItem?.name ?? "(proveedor)"}</span>
+                              ) : (
+                                <span className="text-muted-foreground">(Manual / nuevo)</span>
+                              )}
+                            </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="_legacy">(Manual / nuevo)</SelectItem>
                               {suppliers.map((s) => (
@@ -533,7 +564,9 @@ export function QuotationDialog({
                             onValueChange={(v) => v && updateOffer(offer.id, { currency: v })}
                             disabled={!!isLocked}
                           >
-                            <SelectTrigger className="h-7 text-xs w-[80px]"><SelectValue /></SelectTrigger>
+                            <SelectTrigger className="h-7 text-xs w-[80px]">
+                              <span>{offer.currency}</span>
+                            </SelectTrigger>
                             <SelectContent>
                               {CURRENCIES.map((c) => (
                                 <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>
@@ -614,7 +647,8 @@ export function QuotationDialog({
                         )}
                       </CardContent>
                     </Card>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>
