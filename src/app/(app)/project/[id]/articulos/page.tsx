@@ -1043,12 +1043,15 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
               <SearchableSelect
                 options={insumos.map((i) => ({
                   value: i.id,
-                  label: i.description,
+                  // Incluimos el número (#code) en el label para que el
+                  // search del SearchableSelect lo encuentre — antes sólo
+                  // se podía buscar por descripción.
+                  label: i.code != null ? `#${i.code} ${i.description}` : i.description,
                   sublabel: `${i.unit} - ${formatNumber(Number(i.pu_usd || 0))} USD`,
                 }))}
                 value={newComp.insumo_id}
                 onChange={(v) => setNewComp({ ...newComp, insumo_id: v })}
-                placeholder="Buscar insumo..."
+                placeholder="Buscar por número o descripción..."
               />
             </div>
             <div className="grid grid-cols-3 gap-4">
