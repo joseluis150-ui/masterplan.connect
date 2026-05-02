@@ -30,6 +30,67 @@ const BATCH_COLORS = [
   "#737373", "#166534", "#991B1B", "#FACC15", "#BFBFBF",
 ];
 
+/**
+ * Hook genérico que envuelve useState con persistencia automática en
+ * localStorage. Misma API que useState, sólo agrega `key` (única por
+ * proyecto) y opcionalmente `toJSON`/`fromJSON` para tipos no-JSON-nativos
+ * como `Set`. Si window no existe (SSR) o el JSON está corrupto, cae al
+ * `defaultValue`.
+ *
+ * Uso:
+ *   const [open, setOpen] = usePersistedState("foo:open:" + id, false);
+ *   const [tags, setTags] = usePersistedState<Set<string>>("foo:tags:" + id, new Set(), {
+ *     toJSON: (s) => Array.from(s),
+ *     fromJSON: (raw) => new Set(Array.isArray(raw) ? raw as string[] : []),
+ *   });
+ */
+function usePersistedState<T>(
+  key: string,
+  defaultValue: T,
+  options?: {
+    toJSON?: (v: T) => unknown;
+    fromJSON?: (raw: unknown) => T;
+  }
+): [T, React.Dispatch<React.SetStateAction<T>>] {
+  const toJSON = options?.toJSON ?? ((v: T) => v);
+  const fromJSON = options?.fromJSON ?? ((raw: unknown) => raw as T);
+
+  const [value, _setValue] = useState<T>(() => {
+    if (typeof window === "undefined") return defaultValue;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw === null) return defaultValue;
+      return fromJSON(JSON.parse(raw));
+    } catch {
+      return defaultValue;
+    }
+  });
+
+  const setValue: React.Dispatch<React.SetStateAction<T>> = (action) => {
+    _setValue((prev) => {
+      const next = typeof action === "function"
+        ? (action as (p: T) => T)(prev)
+        : action;
+      if (typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(key, JSON.stringify(toJSON(next)));
+        } catch {
+          // localStorage lleno o bloqueado — silencioso
+        }
+      }
+      return next;
+    });
+  };
+
+  return [value, setValue];
+}
+
+// Helpers de serialización para Sets (re-usable en el componente).
+const SET_PERSIST_OPTS = {
+  toJSON: (s: Set<string>) => Array.from(s),
+  fromJSON: (raw: unknown) => new Set<string>(Array.isArray(raw) ? raw as string[] : []),
+};
+
 interface QuantLine {
   id: string;
   articulo_id: string | null;
@@ -57,18 +118,20 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [subcategories, setSubcategories] = useState<EdtSubcategory[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterArticulo, setFilterArticulo] = useState<Set<string>>(new Set());
-  const [filterUnit, setFilterUnit] = useState<Set<string>>(new Set());
-  const [filterCategory, setFilterCategory] = useState<Set<string>>(new Set());
-  const [filterSubcategory, setFilterSubcategory] = useState<Set<string>>(new Set());
-  const [filterSector, setFilterSector] = useState<Set<string>>(new Set());
-  const [filterReview, setFilterReview] = useState<string>("all");
-  const [sort, setSort] = useState<SortConfig>({ key: "", dir: null });
+  // Filtros, sort y agrupamiento — persisten en localStorage por proyecto
+  // para que al volver a Cuantificación encuentres todo como lo dejaste.
+  const [filterArticulo, setFilterArticulo]       = usePersistedState<Set<string>>(`cuant:filterArticulo:${projectId}`,    new Set(), SET_PERSIST_OPTS);
+  const [filterUnit, setFilterUnit]               = usePersistedState<Set<string>>(`cuant:filterUnit:${projectId}`,        new Set(), SET_PERSIST_OPTS);
+  const [filterCategory, setFilterCategory]       = usePersistedState<Set<string>>(`cuant:filterCategory:${projectId}`,    new Set(), SET_PERSIST_OPTS);
+  const [filterSubcategory, setFilterSubcategory] = usePersistedState<Set<string>>(`cuant:filterSubcategory:${projectId}`, new Set(), SET_PERSIST_OPTS);
+  const [filterSector, setFilterSector]           = usePersistedState<Set<string>>(`cuant:filterSector:${projectId}`,      new Set(), SET_PERSIST_OPTS);
+  const [filterReview, setFilterReview]           = usePersistedState<string>(`cuant:filterReview:${projectId}`,           "all");
+  const [sort, setSort]                           = usePersistedState<SortConfig>(`cuant:sort:${projectId}`,               { key: "", dir: null });
   /** Cuando es true, las líneas se muestran agrupadas por sector con un
    *  encabezado por grupo + subtotal. El sort por columna se ignora dentro
    *  del grupo (los grupos se ordenan por sectors.order, las líneas dentro
    *  del grupo siguen el sort actual). */
-  const [groupBySector, setGroupBySector] = useState(false);
+  const [groupBySector, setGroupBySector]         = usePersistedState<boolean>(`cuant:groupBySector:${projectId}`,         false);
   const [artPUs, setArtPUs] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importDialogOpen, setImportDialogOpen] = useState(false);
