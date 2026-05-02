@@ -6,7 +6,9 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { evaluateFormula, formatNumber } from "@/lib/utils/formula";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { evaluateFormula, formatNumber, convertCurrency } from "@/lib/utils/formula";
 import { SearchableSelect } from "@/components/shared/searchable-select";
 import { FormulaInput } from "@/components/shared/formula-input";
 import {
@@ -18,7 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
-import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo } from "@/lib/types/database";
+import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, Project } from "@/lib/types/database";
 import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight } from "lucide-react";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 
@@ -122,6 +124,11 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   /** Catálogo de insumos del proyecto — usado por ArticuloCompositionDialog
    *  para poblar el SearchableSelect de "agregar insumo". */
   const [insumos, setInsumos] = useState<Insumo[]>([]);
+  /** Proyecto — necesario para TC y moneda local del toggle USD/PYG. */
+  const [project, setProject] = useState<Project | null>(null);
+  /** Toggle USD ↔ moneda local. Persistido por proyecto, mismo patrón que
+   *  presupuesto-tab. Convierte PU, Total, subtotales y grand total. */
+  const [showLocal, setShowLocal] = usePersistedState<boolean>(`cuant:showLocal:${projectId}`, false);
   const [loading, setLoading] = useState(true);
   // Filtros, sort y agrupamiento — persisten en localStorage por proyecto
   // para que al volver a Cuantificación encuentres todo como lo dejaste.
@@ -154,7 +161,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
 
   const loadData = useCallback(async () => {
     // All 6 queries in parallel — single round trip
-    const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes, insRes] = await Promise.all([
+    const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes, insRes, projRes] = await Promise.all([
       supabase.from("quantification_lines").select("*").eq("project_id", projectId).is("deleted_at", null).order("line_number"),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
@@ -162,6 +169,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.rpc("get_project_articulo_totals", { p_project_id: projectId }),
       supabase.from("insumos").select("*").eq("project_id", projectId).order("description"),
+      supabase.from("projects").select("*").eq("id", projectId).single(),
     ]);
 
     const arts = artsRes.data || [];
@@ -193,6 +201,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     setSectors(sects);
     setArtPUs(pus);
     setInsumos(inss);
+    if (projRes.data) setProject(projRes.data as Project);
     setLoading(false);
   }, [projectId]);
 
@@ -240,6 +249,15 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   });
 
   const grandTotal = filtered.reduce((sum, l) => sum + (Number(l.quantity) || 0) * l.articulo_pu, 0);
+
+  // Formato monetario sensible al toggle USD/local. Misma lógica que en
+  // presupuesto-tab. Si showLocal está activo y hay TC>0, multiplica el
+  // valor USD por el TC. Etiqueta de moneda dinámica para columnas/total.
+  const tc = Number(project?.exchange_rate || 0);
+  const fmtMoney = (val: number, decimals = 2) => showLocal && tc > 0
+    ? formatNumber(convertCurrency(val, tc, "usd_to_local"), decimals)
+    : formatNumber(val, decimals);
+  const moneyCurrency = showLocal ? (project?.local_currency || "LOCAL") : "USD";
 
   const sorted = [...filtered].sort((a, b) => {
     if (!sort.dir || !sort.key) return 0;
@@ -728,7 +746,15 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
             <X className="h-3 w-3 mr-1" /> Limpiar filtros
           </Button>
         )}
-        <span className="text-sm font-medium ml-auto">Total: {formatNumber(grandTotal)} USD</span>
+        <div className="flex items-center gap-2 ml-auto">
+          {/* Toggle USD ↔ moneda local */}
+          <Label className="text-xs text-muted-foreground">USD</Label>
+          <Switch checked={showLocal} onCheckedChange={setShowLocal} />
+          <Label className="text-xs text-muted-foreground">{project?.local_currency || "LOCAL"}</Label>
+          <span className="text-sm font-medium ml-3">
+            Total: {fmtMoney(grandTotal, 0)} <span className="text-xs text-muted-foreground">{moneyCurrency}</span>
+          </span>
+        </div>
       </div>
 
       {/* Inline table */}
@@ -770,13 +796,13 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                   <ColumnFilter label="Und" values={uniqueUnits} activeValues={filterUnit} onChange={setFilterUnit} align="center" sortDirection={sort.key === "unit" ? sort.dir : null} onSort={handleSort("unit")} />
                 </th>
                 <th className="px-2 py-2">
-                  <ColumnFilter label="PU USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu" ? sort.dir : null} onSort={handleSort("pu")} />
+                  <ColumnFilter label={`PU ${moneyCurrency}`} values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu" ? sort.dir : null} onSort={handleSort("pu")} />
                 </th>
                 <th className="px-2 py-2">
                   <ColumnFilter label="Cantidad" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "quantity" ? sort.dir : null} onSort={handleSort("quantity")} />
                 </th>
                 <th className="px-2 py-2">
-                  <ColumnFilter label="Total USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "total" ? sort.dir : null} onSort={handleSort("total")} />
+                  <ColumnFilter label={`Total ${moneyCurrency}`} values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "total" ? sort.dir : null} onSort={handleSort("total")} />
                 </th>
                 <th className="px-2 py-2">
                   <ColumnFilter label="Categoría" values={uniqueCategories} activeValues={filterCategory} onChange={setFilterCategory} sortDirection={sort.key === "category" ? sort.dir : null} onSort={handleSort("category")} />
@@ -935,7 +961,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                                   isLevel1 ? "text-[11px] text-neutral-700" : "text-xs text-[#E87722]"
                                 )}
                               >
-                                Subtotal: {formatNumber(item.total)} USD
+                                Subtotal: {fmtMoney(item.total, 0)} {moneyCurrency}
                               </span>
                             </div>
                           </td>
@@ -994,7 +1020,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                           className="hover:bg-[#E87722]/10 hover:text-[#E87722] rounded px-1.5 py-0.5 transition-colors cursor-pointer underline decoration-dotted underline-offset-2"
                           title="Ver y editar composición del artículo"
                         >
-                          {line.articulo_pu > 0 ? formatNumber(line.articulo_pu) : "—"}
+                          {line.articulo_pu > 0 ? fmtMoney(line.articulo_pu) : "—"}
                         </button>
                       ) : (
                         <span className="text-muted-foreground">—</span>
@@ -1010,7 +1036,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                       />
                     </td>
                     <td className="px-2 py-1 text-right font-mono text-xs font-bold">
-                      {line.articulo_pu > 0 && line.quantity ? formatNumber(Number(line.quantity) * line.articulo_pu) : "—"}
+                      {line.articulo_pu > 0 && line.quantity ? fmtMoney(Number(line.quantity) * line.articulo_pu) : "—"}
                     </td>
                     <td className="px-2 py-1">
                       <SearchableSelect
