@@ -18,12 +18,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
-import type { Articulo, EdtCategory, EdtSubcategory, Sector } from "@/lib/types/database";
+import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo } from "@/lib/types/database";
 import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight } from "lucide-react";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 
 type SortConfig = { key: string; dir: SortDirection };
 import { toast } from "sonner";
+import { ArticuloCompositionDialog } from "./_components/articulo-composition-dialog";
 
 // Batch colors for import tracking — brand-aligned palette (Ash + Amber + allowed accents)
 const BATCH_COLORS = [
@@ -118,6 +119,9 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [categories, setCategories] = useState<EdtCategory[]>([]);
   const [subcategories, setSubcategories] = useState<EdtSubcategory[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
+  /** Catálogo de insumos del proyecto — usado por ArticuloCompositionDialog
+   *  para poblar el SearchableSelect de "agregar insumo". */
+  const [insumos, setInsumos] = useState<Insumo[]>([]);
   const [loading, setLoading] = useState(true);
   // Filtros, sort y agrupamiento — persisten en localStorage por proyecto
   // para que al volver a Cuantificación encuentres todo como lo dejaste.
@@ -142,25 +146,29 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [artPUs, setArtPUs] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  /** Articulo abierto en el modal de composición (click en celda PU USD). */
+  const [composicionArticuloId, setComposicionArticuloId] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<CuantificacionImportResult | null>(null);
   const [importing, setImporting] = useState(false);
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
     // All 6 queries in parallel — single round trip
-    const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes] = await Promise.all([
+    const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes, insRes] = await Promise.all([
       supabase.from("quantification_lines").select("*").eq("project_id", projectId).is("deleted_at", null).order("line_number"),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.rpc("get_project_articulo_totals", { p_project_id: projectId }),
+      supabase.from("insumos").select("*").eq("project_id", projectId).order("description"),
     ]);
 
     const arts = artsRes.data || [];
     const cats = catsRes.data || [];
     const subs = subsRes.data || [];
     const sects = sectorsRes.data || [];
+    const inss = insRes.data || [];
 
     // Build PU map from single batch query (was N+1 sequential calls before)
     const pus: Record<string, number> = {};
@@ -184,6 +192,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     setSubcategories(subs);
     setSectors(sects);
     setArtPUs(pus);
+    setInsumos(inss);
     setLoading(false);
   }, [projectId]);
 
@@ -977,7 +986,20 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                       />
                     </td>
                     <td className="px-2 py-1 text-center text-xs">{line.articulo_unit}</td>
-                    <td className="px-2 py-1 text-right font-mono text-xs">{line.articulo_pu > 0 ? formatNumber(line.articulo_pu) : "—"}</td>
+                    <td className="px-2 py-1 text-right font-mono text-xs">
+                      {line.articulo_id ? (
+                        <button
+                          type="button"
+                          onClick={() => setComposicionArticuloId(line.articulo_id)}
+                          className="hover:bg-[#E87722]/10 hover:text-[#E87722] rounded px-1.5 py-0.5 transition-colors cursor-pointer underline decoration-dotted underline-offset-2"
+                          title="Ver y editar composición del artículo"
+                        >
+                          {line.articulo_pu > 0 ? formatNumber(line.articulo_pu) : "—"}
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
                     <td className="px-2 py-1">
                       <FormulaInput
                         value={Number(line.quantity) || 0}
@@ -1144,6 +1166,31 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Modal de composición de artículo (click sobre PU USD) */}
+      {composicionArticuloId && (
+        <ArticuloCompositionDialog
+          articuloId={composicionArticuloId}
+          insumos={insumos}
+          onClose={() => setComposicionArticuloId(null)}
+          onChanged={async () => {
+            // Re-fetch PUs y propagar a las líneas existentes. No re-fetcheamos
+            // toda la página — solo el RPC barato `get_project_articulo_totals`.
+            const { data: puRes } = await supabase.rpc("get_project_articulo_totals", { p_project_id: projectId });
+            const pus: Record<string, number> = {};
+            for (const row of (puRes || [])) {
+              pus[row.articulo_id] = Number(row.pu_costo);
+            }
+            setArtPUs(pus);
+            // Refrescamos también enriched articulo_pu en cada línea para
+            // que el sort y los totales reflejen el nuevo PU.
+            setLines((prev) => prev.map((l) => ({
+              ...l,
+              articulo_pu: l.articulo_id ? (pus[l.articulo_id] || 0) : 0,
+            })));
+          }}
+        />
+      )}
     </div>
   );
 }
