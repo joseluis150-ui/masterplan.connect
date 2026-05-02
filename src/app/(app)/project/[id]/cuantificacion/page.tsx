@@ -334,10 +334,25 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
       return next;
     });
   }
-  /** Colapsa todos los grupos visibles actualmente del modo activo. */
+  /** Colapsa todos los grupos visibles actualmente del modo activo.
+   *  En modo jerárquico "sector-category" colapsamos las CATEGORÍAS
+   *  (nivel 1) — no los sectores — para que el usuario pueda ver los
+   *  sectores expandidos con todas sus categorías plegadas adentro.
+   *  Si colapsáramos también los sectores, las categorías colapsadas
+   *  quedarían ocultas y el efecto sería confuso. */
   function collapseAllGroups() {
     const allKeys = new Set<string>();
-    for (const l of filtered) allKeys.add(getLineGroupKey(l));
+    if (groupBy === "sector-category") {
+      // Composite keys de TODAS las (sector, categoría) que aparecen
+      // en las líneas filtradas — ese es el set completo de subgrupos.
+      for (const l of filtered) {
+        const sec = l.sector_id || "__none__";
+        const cat = l.category_id || "__none__";
+        allKeys.add(`${sec}::${cat}`);
+      }
+    } else {
+      for (const l of filtered) allKeys.add(getLineGroupKey(l));
+    }
     setCollapsedGroups(allKeys);
   }
   /** Expande todos los grupos del modo activo. */
