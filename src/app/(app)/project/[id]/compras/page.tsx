@@ -10,19 +10,19 @@ import { FacturacionTab } from "./_components/facturacion-tab";
 import { AnticiposTab } from "./_components/anticipos-tab";
 import { HistoryDrawer } from "./_components/history-drawer";
 
-type TabKey = "proveedores" | "solicitudes" | "ordenes" | "anticipos" | "facturacion";
+type TabKey = "solicitudes" | "ordenes" | "anticipos" | "facturacion" | "proveedores";
 
 const TABS: { key: TabKey; label: string; icon: typeof FileText }[] = [
-  { key: "proveedores", label: "Proveedores", icon: Users },
   { key: "solicitudes", label: "Solicitudes", icon: ClipboardList },
   { key: "ordenes", label: "Órdenes de Compra", icon: FileText },
   { key: "anticipos", label: "Anticipos dados", icon: HandCoins },
   { key: "facturacion", label: "Facturación", icon: Receipt },
+  { key: "proveedores", label: "Proveedores", icon: Users },
 ];
 
 export default function ComprasPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: projectId } = use(params);
-  const [activeTab, setActiveTab] = useState<TabKey>("proveedores");
+  const [activeTab, setActiveTab] = useState<TabKey>("solicitudes");
   // Force refresh of active tab when an undo happens
   const [refreshKey, setRefreshKey] = useState(0);
 
