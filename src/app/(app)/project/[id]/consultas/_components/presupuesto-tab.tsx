@@ -98,12 +98,14 @@ type DisplayMode = "abs" | "per_m2";
 
 export function PresupuestoTab({
   projectId,
-  mode = "abs",
 }: {
   projectId: string;
-  /** "abs" = montos absolutos, "per_m2" = todos los montos divididos por m² */
-  mode?: DisplayMode;
 }) {
+  // Modo de visualización: absoluto vs por m². Antes era una pestaña
+  // separada en /consultas, ahora es un toggle interno acá. Manteniéndolo
+  // como state local en lugar de prop preserva los filtros y expansiones
+  // al cambiar de modo (mejor UX que tabs separadas con `key` distinto).
+  const [mode, setMode] = useState<DisplayMode>("abs");
   const isPerM2 = mode === "per_m2";
   const [budgetData, setBudgetData] = useState<BudgetRow[]>([]);
   const [project, setProject] = useState<Project | null>(null);
@@ -412,6 +414,30 @@ export function PresupuestoTab({
 
       {/* Controls */}
       <div className="flex gap-2 items-center flex-wrap">
+        {/* Modo de visualización: absoluto vs por m² */}
+        <div className="inline-flex rounded-md border bg-background overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setMode("abs")}
+            className={cn(
+              "px-3 py-1.5 text-sm font-medium transition-colors",
+              mode === "abs" ? "bg-neutral-900 text-white" : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            Absoluto
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("per_m2")}
+            className={cn(
+              "px-3 py-1.5 text-sm font-medium transition-colors border-l",
+              mode === "per_m2" ? "bg-neutral-900 text-white" : "text-muted-foreground hover:bg-muted"
+            )}
+          >
+            Por m²
+          </button>
+        </div>
+
         {/* View mode toggle */}
         <div className="inline-flex rounded-md border bg-background overflow-hidden">
           <button

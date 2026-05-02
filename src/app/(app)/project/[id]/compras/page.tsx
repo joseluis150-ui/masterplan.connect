@@ -2,16 +2,15 @@
 
 import { useState, use } from "react";
 import { cn } from "@/lib/utils";
-import { FileText, ClipboardList, TrendingUp, Receipt, HandCoins, Users } from "lucide-react";
+import { FileText, ClipboardList, Receipt, HandCoins, Users } from "lucide-react";
 import { ProveedoresTab } from "./_components/proveedores-tab";
 import { SolicitudesTab } from "./_components/solicitudes-tab";
 import { OrdenesTab } from "./_components/ordenes-tab";
 import { FacturacionTab } from "./_components/facturacion-tab";
 import { AnticiposTab } from "./_components/anticipos-tab";
-import { AvanceTab } from "./_components/avance-tab";
 import { HistoryDrawer } from "./_components/history-drawer";
 
-type TabKey = "proveedores" | "solicitudes" | "ordenes" | "anticipos" | "facturacion" | "avance";
+type TabKey = "proveedores" | "solicitudes" | "ordenes" | "anticipos" | "facturacion";
 
 const TABS: { key: TabKey; label: string; icon: typeof FileText }[] = [
   { key: "proveedores", label: "Proveedores", icon: Users },
@@ -19,7 +18,6 @@ const TABS: { key: TabKey; label: string; icon: typeof FileText }[] = [
   { key: "ordenes", label: "Órdenes de Compra", icon: FileText },
   { key: "anticipos", label: "Anticipos dados", icon: HandCoins },
   { key: "facturacion", label: "Facturación", icon: Receipt },
-  { key: "avance", label: "Avance Financiero", icon: TrendingUp },
 ];
 
 export default function ComprasPage({ params }: { params: Promise<{ id: string }> }) {
@@ -69,7 +67,6 @@ export default function ComprasPage({ params }: { params: Promise<{ id: string }
         {activeTab === "ordenes" && <OrdenesTab key={`ord-${refreshKey}`} projectId={projectId} />}
         {activeTab === "anticipos" && <AnticiposTab key={`ant-${refreshKey}`} projectId={projectId} />}
         {activeTab === "facturacion" && <FacturacionTab key={`fac-${refreshKey}`} projectId={projectId} />}
-        {activeTab === "avance" && <AvanceTab key={`ava-${refreshKey}`} projectId={projectId} />}
       </div>
 
       <HistoryDrawer projectId={projectId} onUndo={() => setRefreshKey((k) => k + 1)} />
