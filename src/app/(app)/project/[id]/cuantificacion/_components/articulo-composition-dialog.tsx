@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/shared/searchable-select";
 import { FormulaInput } from "@/components/shared/formula-input";
-import { formatNumber } from "@/lib/utils/formula";
+import { formatNumber, convertCurrency } from "@/lib/utils/formula";
 import {
   Plus, Trash2, Loader2, Puzzle, AlertCircle,
 } from "lucide-react";
@@ -56,6 +56,9 @@ export function ArticuloCompositionDialog({
   articuloId,
   insumos: insumosCatalog,
   projectProfitDefault,
+  showLocal = false,
+  exchangeRate = 0,
+  localCurrencyCode = "LOCAL",
   onClose,
   onChanged,
 }: {
@@ -65,6 +68,14 @@ export function ArticuloCompositionDialog({
   /** % ganancia por defecto (ej. del proyecto) — se usa solo si el artículo
    *  no tiene uno cargado, pero igual se respeta el del artículo. */
   projectProfitDefault?: number;
+  /** Si true, los montos se muestran en moneda local (TC × USD). Si false,
+   *  se muestran en USD. La conversión es solo de presentación — los datos
+   *  en DB siempre están en USD (insumos.pu_usd). */
+  showLocal?: boolean;
+  /** TC del proyecto para la conversión USD → local. */
+  exchangeRate?: number;
+  /** Código de moneda local del proyecto (ej. "PYG"). */
+  localCurrencyCode?: string;
   onClose: () => void;
   /** Callback que se dispara si hubo CUALQUIER cambio (insert/update/delete
    *  en composiciones o en metadata). El padre debe refrescar los PUs. */
@@ -96,6 +107,15 @@ export function ArticuloCompositionDialog({
   useEffect(() => { load(); }, [load]);
 
   const totals = articulo ? calcArticuloPU(comps, Number(articulo.profit_pct || 0)) : { pu_costo: 0, pu_venta: 0 };
+
+  // Conversión de display USD ↔ local. Idéntica al patrón de presupuesto-tab
+  // y de la página padre (cuantificacion). Si TC ≤ 0 o showLocal=false, no
+  // convierte nada.
+  const fmtMoney = (val: number, decimals = 2) =>
+    showLocal && exchangeRate > 0
+      ? formatNumber(convertCurrency(val, exchangeRate, "usd_to_local"), decimals)
+      : formatNumber(val, decimals);
+  const moneyCurrency = showLocal ? localCurrencyCode : "USD";
 
   /* ─────── Handlers ─────── */
 
@@ -249,11 +269,11 @@ export function ArticuloCompositionDialog({
                       <tr>
                         <th className="text-left px-3 py-2 uppercase tracking-wider font-semibold">Insumo</th>
                         <th className="text-center px-2 py-2 uppercase tracking-wider font-semibold w-[60px]">Un.</th>
-                        <th className="text-right px-2 py-2 uppercase tracking-wider font-semibold w-[100px]">PU USD</th>
+                        <th className="text-right px-2 py-2 uppercase tracking-wider font-semibold w-[100px]">PU {moneyCurrency}</th>
                         <th className="text-right px-2 py-2 uppercase tracking-wider font-semibold w-[110px]">Cantidad</th>
                         <th className="text-right px-2 py-2 uppercase tracking-wider font-semibold w-[80px]">Merma %</th>
                         <th className="text-right px-2 py-2 uppercase tracking-wider font-semibold w-[80px]">Margen %</th>
-                        <th className="text-right px-2 py-2 uppercase tracking-wider font-semibold w-[100px]">Subtotal USD</th>
+                        <th className="text-right px-2 py-2 uppercase tracking-wider font-semibold w-[100px]">Subtotal {moneyCurrency}</th>
                         <th className="px-2 py-2 w-[40px]"></th>
                       </tr>
                     </thead>
@@ -273,7 +293,7 @@ export function ArticuloCompositionDialog({
                             </td>
                             <td className="px-2 py-1.5 text-center text-muted-foreground">{insumo?.unit ?? ""}</td>
                             <td className="px-2 py-1.5 text-right font-mono">
-                              {insumo ? formatNumber(Number(insumo.pu_usd || 0), 2) : "—"}
+                              {insumo ? fmtMoney(Number(insumo.pu_usd || 0), 2) : "—"}
                             </td>
                             <td className="px-2 py-1.5">
                               <FormulaInput
@@ -305,7 +325,7 @@ export function ArticuloCompositionDialog({
                               />
                             </td>
                             <td className="px-2 py-1.5 text-right font-mono font-semibold">
-                              {formatNumber(subtotal, 2)}
+                              {fmtMoney(subtotal, 2)}
                             </td>
                             <td className="px-2 py-1.5 text-center">
                               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteComp(c.id)}>
@@ -321,7 +341,7 @@ export function ArticuloCompositionDialog({
                           PU costo
                         </td>
                         <td className="px-2 py-2 text-right font-mono text-[#E87722]">
-                          {formatNumber(totals.pu_costo, 2)} USD
+                          {fmtMoney(totals.pu_costo, 2)} {moneyCurrency}
                         </td>
                         <td></td>
                       </tr>
@@ -331,7 +351,7 @@ export function ArticuloCompositionDialog({
                             PU venta (+{Number(articulo.profit_pct)}%)
                           </td>
                           <td className="px-2 py-1.5 text-right font-mono text-emerald-700">
-                            {formatNumber(totals.pu_venta, 2)} USD
+                            {fmtMoney(totals.pu_venta, 2)} {moneyCurrency}
                           </td>
                           <td></td>
                         </tr>
@@ -353,7 +373,7 @@ export function ArticuloCompositionDialog({
                       .map((i) => ({
                         value: i.id,
                         label: i.code != null ? `#${i.code} ${i.description}` : i.description,
-                        sublabel: `${i.unit} · ${formatNumber(Number(i.pu_usd || 0), 2)} USD`,
+                        sublabel: `${i.unit} · ${fmtMoney(Number(i.pu_usd || 0), 2)} ${moneyCurrency}`,
                       }))}
                     value={addingInsumoId}
                     onChange={(v) => setAddingInsumoId(v || "")}

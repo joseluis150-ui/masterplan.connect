@@ -1198,6 +1198,9 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
         <ArticuloCompositionDialog
           articuloId={composicionArticuloId}
           insumos={insumos}
+          showLocal={showLocal}
+          exchangeRate={tc}
+          localCurrencyCode={project?.local_currency || "LOCAL"}
           onClose={() => setComposicionArticuloId(null)}
           onChanged={async () => {
             // Re-fetch PUs y propagar a las líneas existentes. No re-fetcheamos
