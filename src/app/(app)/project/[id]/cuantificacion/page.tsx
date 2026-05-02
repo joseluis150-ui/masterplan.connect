@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, use } from "react";
+import React, { useEffect, useState, useCallback, use } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
 import type { Articulo, EdtCategory, EdtSubcategory, Sector } from "@/lib/types/database";
-import { Plus, Trash2, Calculator, Upload, Download, Flag, X } from "lucide-react";
+import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers } from "lucide-react";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 
 type SortConfig = { key: string; dir: SortDirection };
@@ -64,6 +64,11 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [filterSector, setFilterSector] = useState<Set<string>>(new Set());
   const [filterReview, setFilterReview] = useState<string>("all");
   const [sort, setSort] = useState<SortConfig>({ key: "", dir: null });
+  /** Cuando es true, las líneas se muestran agrupadas por sector con un
+   *  encabezado por grupo + subtotal. El sort por columna se ignora dentro
+   *  del grupo (los grupos se ordenan por sectors.order, las líneas dentro
+   *  del grupo siguen el sort actual). */
+  const [groupBySector, setGroupBySector] = useState(false);
   const [artPUs, setArtPUs] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -514,6 +519,16 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
       {/* Summary bar */}
       <div className="flex gap-4 items-center flex-wrap">
         <span className="text-sm text-muted-foreground">{filtered.length} líneas</span>
+        <Button
+          variant={groupBySector ? "default" : "outline"}
+          size="sm"
+          className={groupBySector ? "text-xs bg-[#E87722] hover:bg-[#E87722]/90 text-white" : "text-xs"}
+          onClick={() => setGroupBySector((v) => !v)}
+          title="Agrupar las líneas por sector con encabezado y subtotal"
+        >
+          <Layers className="h-3 w-3 mr-1" />
+          {groupBySector ? "Agrupado por sector" : "Agrupar por sector"}
+        </Button>
         {reviewCount > 0 && (
           <Button
             variant={filterReview === "review" ? "default" : "outline"}
@@ -610,7 +625,73 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                   </td>
                 </tr>
               ) : (
-                sorted.map((line, idx) => (
+                // Cuando groupBySector=true, intercalamos antes de cada cambio
+                // de sector una fila "header de grupo" con el nombre del sector
+                // y el subtotal del grupo. Para mantener un único `.map` y no
+                // duplicar 70 líneas de JSX por cada fila, calculamos un mapa
+                // sectorId → { firstIdx, total } y rendereamos el header dentro
+                // del map cuando idx coincide con firstIdx del sector actual.
+                (() => {
+                  // Si está activo el agrupamiento, primero reordenamos `sorted`
+                  // para que las líneas queden contiguas por sector (respetando
+                  // sectors.order). Si no, usamos sorted tal cual.
+                  let displayOrder = sorted;
+                  const groupMeta = new Map<string, { firstIdx: number; total: number; count: number; label: string }>();
+                  if (groupBySector) {
+                    const groups = new Map<string, typeof sorted>();
+                    for (const l of sorted) {
+                      const k = l.sector_id || "__none__";
+                      if (!groups.has(k)) groups.set(k, []);
+                      groups.get(k)!.push(l);
+                    }
+                    const orderedKeys = Array.from(groups.keys()).sort((a, b) => {
+                      if (a === "__none__") return 1;
+                      if (b === "__none__") return -1;
+                      const sa = sectors.find((s) => s.id === a);
+                      const sb = sectors.find((s) => s.id === b);
+                      if (!sa) return 1;
+                      if (!sb) return -1;
+                      return (sa.order ?? 0) - (sb.order ?? 0);
+                    });
+                    displayOrder = orderedKeys.flatMap((k) => groups.get(k)!);
+                    let runningIdx = 0;
+                    for (const k of orderedKeys) {
+                      const ls = groups.get(k)!;
+                      const sec = sectors.find((s) => s.id === k);
+                      groupMeta.set(k, {
+                        firstIdx: runningIdx,
+                        total: ls.reduce((s, l) => s + (Number(l.quantity) || 0) * l.articulo_pu, 0),
+                        count: ls.length,
+                        label: sec?.name ?? "(Sin sector)",
+                      });
+                      runningIdx += ls.length;
+                    }
+                  }
+                  return displayOrder.map((line, idx) => {
+                    // Header de grupo: si esta línea es la primera de su sector
+                    const sectorKey = line.sector_id || "__none__";
+                    const meta = groupBySector ? groupMeta.get(sectorKey) : undefined;
+                    const isGroupHeader = !!meta && meta.firstIdx === idx;
+                    return (
+                      <React.Fragment key={`row-${line.id}`}>
+                        {isGroupHeader && meta && (
+                          <tr style={{ background: "#FFF7ED" }}>
+                            <td colSpan={12} className="px-3 py-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold uppercase tracking-wider text-[#E87722] inline-flex items-center gap-1.5">
+                                  <Layers className="h-3.5 w-3.5" />
+                                  {meta.label}
+                                  <span className="text-muted-foreground font-normal normal-case ml-1">
+                                    · {meta.count} {meta.count === 1 ? "línea" : "líneas"}
+                                  </span>
+                                </span>
+                                <span className="text-xs font-mono font-semibold text-[#E87722]">
+                                  Subtotal: {formatNumber(meta.total)} USD
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                   <tr key={line.id} style={{ borderBottom: "1px solid #F1F5F9", background: selected.has(line.id) ? "#EFF6FF" : undefined }}>
                     <td className="px-1 py-1 text-center">
                       <input
@@ -700,7 +781,10 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                       </Button>
                     </td>
                   </tr>
-                ))
+                      </React.Fragment>
+                    );
+                  });
+                })()
               )}
               {/* Add new line row */}
               <tr style={{ borderTop: "2px solid #E5E5E5" }}>
