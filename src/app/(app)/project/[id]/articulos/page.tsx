@@ -54,6 +54,11 @@ interface ArticuloWithComps extends Articulo {
   pu_glo: number;
   pu_costo: number;
   pu_venta: number;
+  /** Suma de quantity de todas las quantification_lines (no eliminadas)
+   *  que apuntan a este artículo. Si no se usa en cuantificación, es 0. */
+  quant_total: number;
+  /** quant_total × pu_costo — monto presupuestado total del artículo en USD. */
+  quant_amount_usd: number;
 }
 
 function calcArticuloTotals(compositions: (ArticuloComposition & { insumo: Insumo })[], profitPct: number) {
@@ -113,11 +118,17 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
-    const [artRes, compRes, insRes, projRes] = await Promise.all([
+    const [artRes, compRes, insRes, projRes, quantRes] = await Promise.all([
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("articulo_compositions").select("*, insumo:insumos(*)").eq("articulo_id", projectId ? undefined as never : ""),
       supabase.from("insumos").select("*").eq("project_id", projectId).order("description"),
       supabase.from("projects").select("*").eq("id", projectId).single(),
+      // Para totalizar la cantidad de cada artículo en cuantificación.
+      // Sólo articulo_id + quantity, sólo líneas no eliminadas.
+      supabase.from("quantification_lines")
+        .select("articulo_id, quantity")
+        .eq("project_id", projectId)
+        .is("deleted_at", null),
     ]);
 
     // Load compositions for all articulos
@@ -131,10 +142,21 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
       allComps = (data || []) as (ArticuloComposition & { insumo: Insumo })[];
     }
 
+    // Mapa articulo_id → suma total de quantity en cuantificación
+    const quantByArticulo = new Map<string, number>();
+    type QLineLite = { articulo_id: string | null; quantity: number | null };
+    for (const ql of (quantRes.data ?? []) as QLineLite[]) {
+      if (!ql.articulo_id) continue;
+      const q = Number(ql.quantity || 0);
+      quantByArticulo.set(ql.articulo_id, (quantByArticulo.get(ql.articulo_id) || 0) + q);
+    }
+
     const arts = (artRes.data || []).map((art) => {
       const comps = allComps.filter((c) => c.articulo_id === art.id);
       const totals = calcArticuloTotals(comps, Number(art.profit_pct));
-      return { ...art, compositions: comps, ...totals };
+      const quant_total = quantByArticulo.get(art.id) || 0;
+      const quant_amount_usd = quant_total * totals.pu_costo;
+      return { ...art, compositions: comps, ...totals, quant_total, quant_amount_usd };
     });
 
     setArticulos(arts);
@@ -168,6 +190,8 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
       case "pu_glo": return mult * (a.pu_glo - b.pu_glo);
       case "pu_costo": return mult * (a.pu_costo - b.pu_costo);
       case "pu_venta": return mult * (a.pu_venta - b.pu_venta);
+      case "quant_total": return mult * (a.quant_total - b.quant_total);
+      case "quant_amount_usd": return mult * (a.quant_amount_usd - b.quant_amount_usd);
       default: return 0;
     }
   });
@@ -769,6 +793,8 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                 <col style={{ width: "80px" }} />
                 <col style={{ width: "95px" }} />
                 {isVenta && <col style={{ width: "95px" }} />}
+                <col style={{ width: "85px" }} />
+                <col style={{ width: "110px" }} />
                 <col style={{ width: "90px" }} />
               </colgroup>
               <thead>
@@ -801,6 +827,12 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                   {isVenta && <th className="px-2 py-2">
                     <ColumnFilter label="PV USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_venta" ? sort.dir : null} onSort={handleSort("pu_venta")} />
                   </th>}
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Cant. cuant." values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "quant_total" ? sort.dir : null} onSort={handleSort("quant_total")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Total presup. USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "quant_amount_usd" ? sort.dir : null} onSort={handleSort("quant_amount_usd")} />
+                  </th>
                   <th className="px-2 py-2 text-center uppercase text-[11px] font-semibold tracking-wider">Acc.</th>
                 </tr>
               </thead>
@@ -840,6 +872,20 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                         <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_glo)}</td>
                         <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap" style={{ fontWeight: 600 }}>{formatNumber(art.pu_costo)}</td>
                         {isVenta && <td className="px-2 py-1.5 text-right font-mono text-green-600 whitespace-nowrap" style={{ fontWeight: 500 }}>{formatNumber(art.pu_venta)}</td>}
+                        <td
+                          className="px-2 py-1.5 text-right font-mono text-xs whitespace-nowrap"
+                          style={{ color: art.quant_total > 0 ? "#525252" : "#BFBFBF" }}
+                          title={art.quant_total > 0 ? `Suma de cantidades en cuantificación` : "No usado en cuantificación"}
+                        >
+                          {art.quant_total > 0 ? formatNumber(art.quant_total) : "—"}
+                        </td>
+                        <td
+                          className="px-2 py-1.5 text-right font-mono whitespace-nowrap"
+                          style={{ color: art.quant_amount_usd > 0 ? "#0A0A0A" : "#BFBFBF", fontWeight: 600 }}
+                          title="Cant. cuant. × PU costo"
+                        >
+                          {art.quant_amount_usd > 0 ? formatNumber(art.quant_amount_usd, 0) : "—"}
+                        </td>
                         <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
                           <div className="flex gap-0.5 justify-center">
                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEdit(art)}><Pencil className="h-3 w-3" /></Button>
@@ -851,7 +897,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                       {/* Expanded composition */}
                       {expanded.has(art.id) && (
                         <tr style={{ borderBottom: "1px solid #F1F5F9" }}>
-                          <td colSpan={isVenta ? 11 : 10} className="p-0">
+                          <td colSpan={isVenta ? 13 : 12} className="p-0">
                             <div className="px-4 py-3" style={{ background: "#FAFAFA" }}>
                               {art.compositions.length > 0 ? (
                                 <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
