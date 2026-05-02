@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Textarea } from "@/components/ui/textarea";
 import { evaluateFormula, formatNumber, convertCurrency } from "@/lib/utils/formula";
 import { SearchableSelect } from "@/components/shared/searchable-select";
 import { FormulaInput } from "@/components/shared/formula-input";
@@ -21,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
 import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, Project } from "@/lib/types/database";
-import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 
 type SortConfig = { key: string; dir: SortDirection };
@@ -790,7 +792,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
               <col style={{ width: "115px" }} />
               <col style={{ width: "115px" }} />
               <col style={{ width: "100px" }} />
-              <col style={{ width: "36px" }} />
+              <col style={{ width: "70px" }} />
             </colgroup>
             <thead>
               <tr>
@@ -1084,10 +1086,16 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                         placeholder="Sector..."
                       />
                     </td>
-                    <td className="px-2 py-1">
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteLine(line.id)}>
-                        <Trash2 className="h-3 w-3 text-destructive" />
-                      </Button>
+                    <td className="px-1 py-1">
+                      <div className="flex items-center justify-center gap-0.5">
+                        <CommentPopover
+                          comment={line.comment}
+                          onSave={(value) => updateLineField(line.id, "comment", value || null)}
+                        />
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteLine(line.id)} title="Eliminar línea">
+                          <Trash2 className="h-3 w-3 text-destructive" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                     );
@@ -1239,5 +1247,82 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Popover compacto para editar el comentario de una línea de cuantificación.
+ * Ícono cambia de color cuando ya hay comentario guardado, así el usuario
+ * ve de un vistazo cuáles líneas tienen notas. Guardado on-blur del textarea.
+ */
+function CommentPopover({
+  comment,
+  onSave,
+}: {
+  comment: string | null;
+  onSave: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // Draft local — sólo se persiste al cerrar el popover (o on-blur)
+  const [draft, setDraft] = useState(comment || "");
+  // Sincronizar draft cuando cambia el comentario externo (ej. recarga)
+  useEffect(() => { setDraft(comment || ""); }, [comment]);
+  const hasComment = !!(comment && comment.trim());
+
+  function commit() {
+    if (draft !== (comment || "")) onSave(draft);
+  }
+
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) commit(); }}>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            title={hasComment ? `Comentario: ${comment}` : "Agregar comentario"}
+          >
+            <MessageSquare
+              className={`h-3 w-3 ${hasComment ? "text-[#E87722] fill-[#E87722]/20" : "text-muted-foreground"}`}
+            />
+          </Button>
+        }
+      />
+      <PopoverContent className="w-[280px] p-2" align="end">
+        <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          Comentario de la línea
+        </Label>
+        <Textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          placeholder="Notas, justificación, recordatorio…"
+          rows={4}
+          className="mt-1 text-xs resize-none"
+          autoFocus
+        />
+        <div className="flex items-center justify-between mt-2">
+          {hasComment && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] text-destructive hover:text-destructive"
+              onClick={() => { setDraft(""); onSave(""); setOpen(false); }}
+            >
+              <X className="h-2.5 w-2.5 mr-1" />
+              Borrar
+            </Button>
+          )}
+          <Button
+            size="sm"
+            className="h-6 text-[10px] ml-auto bg-[#E87722] hover:bg-[#E87722]/90 text-white"
+            onClick={() => { commit(); setOpen(false); }}
+          >
+            Guardar
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
