@@ -110,10 +110,11 @@ export function ArticuloCompositionDialog({
 
   // Conversión de display USD ↔ local. Idéntica al patrón de presupuesto-tab
   // y de la página padre (cuantificacion). Si TC ≤ 0 o showLocal=false, no
-  // convierte nada.
+  // convierte nada. En moneda local SIEMPRE forzamos 0 decimales (PYG son
+  // montos grandes; los decimales son ruido).
   const fmtMoney = (val: number, decimals = 2) =>
     showLocal && exchangeRate > 0
-      ? formatNumber(convertCurrency(val, exchangeRate, "usd_to_local"), decimals)
+      ? formatNumber(convertCurrency(val, exchangeRate, "usd_to_local"), 0)
       : formatNumber(val, decimals);
   const moneyCurrency = showLocal ? localCurrencyCode : "USD";
 

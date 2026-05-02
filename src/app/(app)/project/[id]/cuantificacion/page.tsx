@@ -253,9 +253,11 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   // Formato monetario sensible al toggle USD/local. Misma lógica que en
   // presupuesto-tab. Si showLocal está activo y hay TC>0, multiplica el
   // valor USD por el TC. Etiqueta de moneda dinámica para columnas/total.
+  // En moneda local SIEMPRE forzamos 0 decimales (PYG son montos grandes;
+  // los decimales son ruido).
   const tc = Number(project?.exchange_rate || 0);
   const fmtMoney = (val: number, decimals = 2) => showLocal && tc > 0
-    ? formatNumber(convertCurrency(val, tc, "usd_to_local"), decimals)
+    ? formatNumber(convertCurrency(val, tc, "usd_to_local"), 0)
     : formatNumber(val, decimals);
   const moneyCurrency = showLocal ? (project?.local_currency || "LOCAL") : "USD";
 
@@ -780,7 +782,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
               <col style={{ width: "32px" }} />
               <col style={{ width: "28px" }} />
               <col style={{ width: "40px" }} />
-              <col style={{ width: "190px" }} />
+              <col style={{ width: "260px" }} />
               <col style={{ width: "45px" }} />
               <col style={{ width: "75px" }} />
               <col style={{ width: "85px" }} />
@@ -1024,6 +1026,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                         allowEmpty
                         emptyLabel="(Provisional)"
                         emptyValue=""
+                        multiline
                       />
                     </td>
                     <td className="px-2 py-1 text-center text-xs">{line.articulo_unit}</td>

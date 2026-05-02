@@ -21,6 +21,9 @@ interface SearchableSelectProps {
   allowEmpty?: boolean;
   emptyValue?: string;
   className?: string;
+  /** Si true, el label seleccionado puede envolver en hasta 2 líneas en lugar
+   *  de truncarse con ellipsis. La altura del trigger se vuelve auto. */
+  multiline?: boolean;
 }
 
 export function SearchableSelect({
@@ -32,6 +35,7 @@ export function SearchableSelect({
   allowEmpty = false,
   emptyValue = "",
   className,
+  multiline = false,
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -105,13 +109,21 @@ export function SearchableSelect({
         type="button"
         onClick={() => setOpen(!open)}
         className={cn(
-          "flex items-center justify-between w-full h-8 px-2 py-1 text-sm border rounded-md bg-background",
+          "flex items-center justify-between w-full px-2 py-1 text-sm border rounded-md bg-background",
+          multiline ? "min-h-8" : "h-8",
           "hover:border-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#E87722] focus:ring-offset-1",
           !selected && "text-muted-foreground"
         )}
         style={{ borderColor: "#CBD5E1" }}
       >
-        <span className="truncate text-left flex-1 text-xs">
+        <span
+          className={cn(
+            "text-left flex-1 text-xs",
+            multiline
+              ? "whitespace-normal break-words leading-tight line-clamp-2"
+              : "truncate"
+          )}
+        >
           {selected ? selected.label : placeholder}
         </span>
         <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground ml-1" />
