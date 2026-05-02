@@ -32,6 +32,9 @@ import {
   History,
   HandCoins,
   Shield,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { OC_STATUSES, CURRENCIES, DEFAULT_UNITS } from "@/lib/constants/units";
@@ -103,6 +106,9 @@ export function OrdenesTab({ projectId }: Props) {
   const [colFilterSupplier, setColFilterSupplier] = useState<Set<string>>(new Set());
   const [colFilterDate, setColFilterDate] = useState<Set<string>>(new Set());
   const [searchText, setSearchText] = useState("");
+  // Sort por click en cabecera de columna (Excel-style)
+  const [sortKey, setSortKey] = useState<"number" | "status" | "supplier" | "date" | "pendUsd" | "pendLocal">("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   // Receptions (albaranes) — Map<orderId, ReceptionNote[]>
   const [receptions, setReceptions] = useState<Map<string, (ReceptionNote & { lines: DeliveryNote[] })[]>>(new Map());
@@ -1042,7 +1048,36 @@ export function OrdenesTab({ projectId }: Props) {
     if (!matchesColumnFilter(colFilterSupplier, oc.supplier)) return false;
     if (!matchesColumnFilter(colFilterDate, oc.issue_date)) return false;
     return true;
+  }).sort((a, b) => {
+    // Sort por click en cabecera (Excel-style)
+    const dir = sortDir === "asc" ? 1 : -1;
+    if (sortKey === "number")   return a.number.localeCompare(b.number) * dir;
+    if (sortKey === "status")   return a.status.localeCompare(b.status) * dir;
+    if (sortKey === "supplier") return a.supplier.localeCompare(b.supplier) * dir;
+    if (sortKey === "date")     return (a.issue_date || "").localeCompare(b.issue_date || "") * dir;
+    if (sortKey === "pendUsd" || sortKey === "pendLocal") {
+      // Pendiente de certificar: total - certificado (sólo recepciones no de anticipo, no canceladas).
+      const calc = (oc: typeof a) => {
+        const total = getOCTotal(oc);
+        const recs = (receptions.get(oc.id) || []).filter((r) => r.type !== "advance" && r.status !== "cancelled");
+        const cert = recs.reduce((s, r) => s + r.lines.reduce((ss, l) => ss + Number(l.gross_amount || 0), 0), 0);
+        return Math.max(0, total - cert);
+      };
+      return (calc(a) - calc(b)) * dir;
+    }
+    return 0;
   });
+
+  function toggleSort(k: typeof sortKey) {
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setSortDir(["pendUsd","pendLocal","date"].includes(k) ? "desc" : "asc"); }
+  }
+  function sortIcon(k: typeof sortKey) {
+    if (sortKey !== k) return <ArrowUpDown className="h-3 w-3 text-muted-foreground/50 inline" />;
+    return sortDir === "asc"
+      ? <ArrowUp className="h-3 w-3 text-[#E87722] inline" />
+      : <ArrowDown className="h-3 w-3 text-[#E87722] inline" />;
+  }
 
   const hasActiveFilter =
     filterStatus !== "all" ||
@@ -1159,14 +1194,38 @@ export function OrdenesTab({ projectId }: Props) {
         const statusLabels: Record<string, string> = { open: "Abierta", closed: "Cerrada", cancelled: "Cancelada" };
         return (
           <div className="border rounded-lg overflow-hidden">
-            {/* Column header with Excel-style filters */}
-            <div className={cn("grid gap-3 px-4 py-2 bg-muted/60 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground", gridCols)}>
-              <ColumnFilter label="N° OC" values={allNumbers} selected={colFilterNumber} onChange={setColFilterNumber} />
-              <ColumnFilter label="Estado" values={allStatuses} valueLabels={statusLabels} selected={colFilterStatus} onChange={setColFilterStatus} />
-              <ColumnFilter label="Proveedor" values={allSuppliers} selected={colFilterSupplier} onChange={setColFilterSupplier} />
-              <ColumnFilter label="Fecha" values={allDates} selected={colFilterDate} onChange={setColFilterDate} />
-              <span className="text-right" title="Monto pendiente de certificar">Pend. cert. USD</span>
-              <span className="text-right" title="Monto pendiente de certificar">Pend. cert. {localCurr}</span>
+            {/* Column header con ColumnFilter + sort por click en cabecera */}
+            <div className={cn("grid gap-3 px-4 py-2 bg-muted/60 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground items-center", gridCols)}>
+              <div className="inline-flex items-center gap-1">
+                <button onClick={() => toggleSort("number")} className="hover:text-foreground inline-flex items-center gap-1">
+                  N° OC {sortIcon("number")}
+                </button>
+                <ColumnFilter label="" values={allNumbers} selected={colFilterNumber} onChange={setColFilterNumber} />
+              </div>
+              <div className="inline-flex items-center gap-1">
+                <button onClick={() => toggleSort("status")} className="hover:text-foreground inline-flex items-center gap-1">
+                  Estado {sortIcon("status")}
+                </button>
+                <ColumnFilter label="" values={allStatuses} valueLabels={statusLabels} selected={colFilterStatus} onChange={setColFilterStatus} />
+              </div>
+              <div className="inline-flex items-center gap-1">
+                <button onClick={() => toggleSort("supplier")} className="hover:text-foreground inline-flex items-center gap-1">
+                  Proveedor {sortIcon("supplier")}
+                </button>
+                <ColumnFilter label="" values={allSuppliers} selected={colFilterSupplier} onChange={setColFilterSupplier} />
+              </div>
+              <div className="inline-flex items-center gap-1">
+                <button onClick={() => toggleSort("date")} className="hover:text-foreground inline-flex items-center gap-1">
+                  Fecha {sortIcon("date")}
+                </button>
+                <ColumnFilter label="" values={allDates} selected={colFilterDate} onChange={setColFilterDate} />
+              </div>
+              <button onClick={() => toggleSort("pendUsd")} className="text-right hover:text-foreground inline-flex items-center gap-1 justify-end" title="Monto pendiente de certificar">
+                Pend. cert. USD {sortIcon("pendUsd")}
+              </button>
+              <button onClick={() => toggleSort("pendLocal")} className="text-right hover:text-foreground inline-flex items-center gap-1 justify-end" title="Monto pendiente de certificar">
+                Pend. cert. {localCurr} {sortIcon("pendLocal")}
+              </button>
               <span className="text-right">Acciones</span>
             </div>
             {filteredOrders.map((oc) => {

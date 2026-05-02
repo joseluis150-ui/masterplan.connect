@@ -28,7 +28,13 @@ import {
   Upload,
   Shield,
   Undo2,
+  ChevronDown,
+  ChevronRight,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
+import { ColumnFilter, matchesColumnFilter } from "./column-filter";
 import { toast } from "sonner";
 import { CURRENCIES } from "@/lib/constants/units";
 import type {
@@ -101,6 +107,15 @@ export function AnticiposTab({ projectId }: Props) {
   // Filters
   const [statusFilter, setStatusFilter] = useState<AdvanceStatus | "all">("all");
   const [supplierFilter, setSupplierFilter] = useState<string>("all");
+  // Filtros tipo Excel + sort por click en columna. Reemplazan a statusFilter
+  // y supplierFilter como mecanismo de filtrado visible.
+  const [colFilterStatus, setColFilterStatus] = useState<Set<string>>(new Set());
+  const [colFilterSupplier, setColFilterSupplier] = useState<Set<string>>(new Set());
+  const [colFilterNumber, setColFilterNumber] = useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = useState<"number" | "status" | "supplier" | "advance" | "paid" | "amortized" | "balance">("number");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [expandedAdvances, setExpandedAdvances] = useState<Set<string>>(new Set());
+  void statusFilter; void supplierFilter; void setStatusFilter; void setSupplierFilter;
 
   // Payment dialog state (only for retention return now; advance pays via Facturación circuit)
   const [dialogMode, setDialogMode] = useState<"retention_return" | null>(null);
@@ -424,11 +439,45 @@ export function AnticiposTab({ projectId }: Props) {
   if (loading) return <div className="py-6 text-muted-foreground">Cargando anticipos...</div>;
 
   const uniqueSuppliers = Array.from(new Set(cards.map((c) => c.oc.supplier))).sort();
-  const visible = cards.filter((c) => {
-    if (statusFilter !== "all" && c.status !== statusFilter) return false;
-    if (supplierFilter !== "all" && c.oc.supplier !== supplierFilter) return false;
-    return true;
-  });
+  void uniqueSuppliers; // mantenido para no romper imports si se reusa abajo
+  const visible = cards
+    .filter((c) => {
+      if (!matchesColumnFilter(colFilterNumber, c.oc.number)) return false;
+      if (!matchesColumnFilter(colFilterStatus, c.status)) return false;
+      if (!matchesColumnFilter(colFilterSupplier, c.oc.supplier)) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const dir = sortDir === "asc" ? 1 : -1;
+      switch (sortKey) {
+        case "number":    return a.oc.number.localeCompare(b.oc.number) * dir;
+        case "status":    return a.status.localeCompare(b.status) * dir;
+        case "supplier":  return a.oc.supplier.localeCompare(b.oc.supplier) * dir;
+        case "advance":   return (a.advanceAmount - b.advanceAmount) * dir;
+        case "paid":      return (a.paidAmount - b.paidAmount) * dir;
+        case "amortized": return (a.amortizedAmount - b.amortizedAmount) * dir;
+        case "balance":   return (a.outstandingBalance - b.outstandingBalance) * dir;
+        default:          return 0;
+      }
+    });
+
+  function toggleSort(k: typeof sortKey) {
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setSortDir(["advance","paid","amortized","balance"].includes(k) ? "desc" : "asc"); }
+  }
+  function sortIcon(k: typeof sortKey) {
+    if (sortKey !== k) return <ArrowUpDown className="h-3 w-3 text-muted-foreground/50 inline" />;
+    return sortDir === "asc"
+      ? <ArrowUp className="h-3 w-3 text-[#E87722] inline" />
+      : <ArrowDown className="h-3 w-3 text-[#E87722] inline" />;
+  }
+  function toggleExpandAdvance(id: string) {
+    setExpandedAdvances((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   // Summary — split by the OC's currency (local vs USD) so we don't mix units.
   // USD equivalent uses the project exchange rate.
@@ -501,79 +550,103 @@ export function AnticiposTab({ projectId }: Props) {
         ))}
       </div>
 
-      {/* Filters */}
-      {cards.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap border-b pb-3">
-          <span className="text-xs text-muted-foreground font-medium">Estado:</span>
-          <div className="flex gap-1">
-            {([
-              { v: "all", label: "Todas", count: cards.length },
-              { v: "pending_approval", label: "Pend. aprobación", count: cards.filter((c) => c.status === "pending_approval").length },
-              { v: "received", label: "Recibido", count: cards.filter((c) => c.status === "received").length },
-              { v: "invoiced", label: "Facturado", count: cards.filter((c) => c.status === "invoiced").length },
-              { v: "paid", label: "Pagado", count: cards.filter((c) => c.status === "paid").length },
-              { v: "amortizing", label: "Amortizándose", count: cards.filter((c) => c.status === "amortizing").length },
-              { v: "fully_amortized", label: "Amortizado", count: cards.filter((c) => c.status === "fully_amortized").length },
-            ] as const).map((opt) => (
-              <button
-                key={opt.v}
-                onClick={() => setStatusFilter(opt.v as AdvanceStatus | "all")}
-                className={cn(
-                  "text-xs px-2.5 py-1 rounded-md border transition-colors",
-                  statusFilter === opt.v
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-background hover:bg-muted"
-                )}
-              >
-                {opt.label} <span className="opacity-70">({opt.count})</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">Proveedor:</span>
-            <Select value={supplierFilter} onValueChange={(v) => { if (v) setSupplierFilter(v); }}>
-              <SelectTrigger className="h-8 w-[180px] text-xs">
-                <span className="truncate">{supplierFilter === "all" ? "Todos" : supplierFilter}</span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" className="text-xs">Todos los proveedores</SelectItem>
-                {uniqueSuppliers.map((s) => (
-                  <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="ml-auto text-xs text-muted-foreground">
-            {visible.length} de {cards.length} OC
-          </div>
-        </div>
-      )}
-
-      {/* Cards */}
+      {/* Lista tipo Excel: header con ColumnFilter + filas colapsables.
+          Click en una fila la expande mostrando todo el detalle (4 stats,
+          certificaciones, retenciones, botones de acción). */}
       {cards.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground text-sm">
           <HandCoins className="h-10 w-10 mx-auto mb-3 opacity-40" />
           No hay OCs con anticipo en este proyecto.
         </div>
-      ) : visible.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground text-sm">
-          No hay anticipos que coincidan con los filtros.
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {visible.map((card) => {
-            const StatusIcon = STATUS_META[card.status].icon;
-            const progressPct = card.advanceAmount > 0
-              ? Math.min(100, (card.amortizedAmount / card.advanceAmount) * 100)
-              : 0;
-            return (
-              <div
-                key={card.oc.id}
-                className="border rounded-lg overflow-hidden bg-card"
-                style={{ boxShadow: "0 1px 2px 0 rgb(10 10 10 / 0.04)" }}
-              >
+      ) : (() => {
+        const gridCols = "grid-cols-[28px_120px_140px_minmax(160px,1fr)_120px_120px_120px_120px_50px]";
+        const allNumbers = Array.from(new Set(cards.map((c) => c.oc.number))).sort();
+        const allStatuses = Array.from(new Set(cards.map((c) => c.status)));
+        const allSuppliers = Array.from(new Set(cards.map((c) => c.oc.supplier))).sort();
+        const statusValueLabels: Record<string, string> = Object.fromEntries(
+          (Object.entries(STATUS_META) as [string, { label: string }][]).map(([k, v]) => [k, v.label])
+        );
+        return (
+          <div className="border rounded-lg overflow-hidden">
+            {/* Excel-style header */}
+            <div className={cn("grid gap-3 px-4 py-2 bg-muted/60 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground items-center", gridCols)}>
+              <span /> {/* chevron column */}
+              <div className="inline-flex items-center gap-1">
+                <button onClick={() => toggleSort("number")} className="hover:text-foreground inline-flex items-center gap-1">
+                  N° OC {sortIcon("number")}
+                </button>
+                <ColumnFilter label="" values={allNumbers} selected={colFilterNumber} onChange={setColFilterNumber} />
+              </div>
+              <ColumnFilter label="Estado" values={allStatuses} valueLabels={statusValueLabels} selected={colFilterStatus} onChange={setColFilterStatus} />
+              <div className="inline-flex items-center gap-1">
+                <button onClick={() => toggleSort("supplier")} className="hover:text-foreground inline-flex items-center gap-1">
+                  Proveedor {sortIcon("supplier")}
+                </button>
+                <ColumnFilter label="" values={allSuppliers} selected={colFilterSupplier} onChange={setColFilterSupplier} />
+              </div>
+              <button onClick={() => toggleSort("advance")} className="text-right hover:text-foreground inline-flex items-center gap-1 justify-end">
+                Anticipo {sortIcon("advance")}
+              </button>
+              <button onClick={() => toggleSort("paid")} className="text-right hover:text-foreground inline-flex items-center gap-1 justify-end">
+                Pagado {sortIcon("paid")}
+              </button>
+              <button onClick={() => toggleSort("amortized")} className="text-right hover:text-foreground inline-flex items-center gap-1 justify-end">
+                Amortizado {sortIcon("amortized")}
+              </button>
+              <button onClick={() => toggleSort("balance")} className="text-right hover:text-foreground inline-flex items-center gap-1 justify-end">
+                Saldo {sortIcon("balance")}
+              </button>
+              <span /> {/* expand */}
+            </div>
+
+            {visible.length === 0 && (
+              <div className="text-center py-12 text-muted-foreground text-sm">
+                No hay anticipos que coincidan con los filtros.
+              </div>
+            )}
+
+            {visible.map((card) => {
+              const StatusIcon = STATUS_META[card.status].icon;
+              const progressPct = card.advanceAmount > 0
+                ? Math.min(100, (card.amortizedAmount / card.advanceAmount) * 100)
+                : 0;
+              const isExpanded = expandedAdvances.has(card.oc.id);
+              return (
+              <div key={card.oc.id} className="border-t">
+                {/* Excel-style row (collapsed) */}
+                <div
+                  className={cn(
+                    "grid gap-3 px-4 py-2.5 items-center text-xs cursor-pointer hover:bg-muted/30 transition-colors",
+                    gridCols
+                  )}
+                  onClick={() => toggleExpandAdvance(card.oc.id)}
+                >
+                  {isExpanded
+                    ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                    : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
+                  <span className="font-mono text-sm font-semibold">{card.oc.number}</span>
+                  <Badge className={cn("text-[10px] gap-1 w-fit", STATUS_META[card.status].color)}>
+                    <StatusIcon className="h-3 w-3" />
+                    {STATUS_META[card.status].label}
+                  </Badge>
+                  <span className="truncate" title={card.oc.supplier}>{card.oc.supplier}</span>
+                  <span className="text-right font-mono">{formatMoney(card.advanceAmount, card.oc.currency)}</span>
+                  <span className={cn("text-right font-mono", card.paidAmount > 0 ? "text-emerald-700" : "text-muted-foreground")}>
+                    {formatMoney(card.paidAmount, card.oc.currency)}
+                  </span>
+                  <span className={cn("text-right font-mono", card.amortizedAmount > 0 ? "text-[#B85A0F]" : "text-muted-foreground")}>
+                    {formatMoney(card.amortizedAmount, card.oc.currency)}
+                  </span>
+                  <span className="text-right font-mono">
+                    {formatMoney(card.outstandingBalance, card.oc.currency)}
+                  </span>
+                  <span className="text-muted-foreground text-[10px]">
+                    {progressPct > 0 ? `${progressPct.toFixed(0)}%` : ""}
+                  </span>
+                </div>
+                {/* Expanded detail: muestra todo el contenido rico de la card */}
+                {isExpanded && (
+                <div className="bg-card border-t" style={{ boxShadow: "inset 0 2px 4px 0 rgb(10 10 10 / 0.03)" }}>
                 {/* Card header */}
                 <div className="px-5 py-4 border-b bg-muted/20">
                   <div className="flex items-center gap-3 flex-wrap">
@@ -757,11 +830,14 @@ export function AnticiposTab({ projectId }: Props) {
                     </div>
                   </div>
                 )}
+                </div>
+                )}
               </div>
             );
-          })}
-        </div>
-      )}
+            })}
+          </div>
+        );
+      })()}
 
       {/* Payment Dialog — shared for advance payment and retention return */}
       <Dialog open={dialogCard !== null} onOpenChange={(open) => { if (!open) { setDialogCard(null); setDialogMode(null); } }}>

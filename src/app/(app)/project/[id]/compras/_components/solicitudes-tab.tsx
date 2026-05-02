@@ -29,8 +29,12 @@ import {
   FileText,
   CheckCircle2,
   Scale,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import { ComparativeQuoteDialog } from "./comparative-quote-dialog";
+import { ColumnFilter, matchesColumnFilter } from "./column-filter";
 import { toast } from "sonner";
 import {
   SC_STATUSES,
@@ -91,9 +95,18 @@ export function SolicitudesTab({ projectId }: Props) {
   const [historicalOCLines, setHistoricalOCLines] = useState<
     (PurchaseOrderLine & { oc_number?: string; supplier?: string; oc_currency?: string; oc_date?: string })[]
   >([]);
-  // Filter & sort
+  // Filter & sort — formato Excel: ColumnFilter por columna + sort por click en cabecera.
+  // statusFilter y sortBy quedan como compat para no tocar el código de creación de SCs;
+  // los nuevos col filters son los que realmente controlan la lista visible.
   const [statusFilter, setStatusFilter] = useState<PurchaseRequestStatus | "all">("all");
   const [sortBy, setSortBy] = useState<"recent" | "status" | "number">("recent");
+  const [colFilterNumber, setColFilterNumber] = useState<Set<string>>(new Set());
+  const [colFilterStatus, setColFilterStatus] = useState<Set<string>>(new Set());
+  const [colFilterOrigin, setColFilterOrigin] = useState<Set<string>>(new Set());
+  const [colFilterDate, setColFilterDate] = useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = useState<"number" | "status" | "origin" | "date" | "lines">("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  void statusFilter; void sortBy; void setStatusFilter; void setSortBy;
 
   // Import from packages
   const [packageDialogOpen, setPackageDialogOpen] = useState(false);
@@ -932,66 +945,91 @@ export function SolicitudesTab({ projectId }: Props) {
         </div>
       </div>
 
-      {/* Filter & Sort Bar */}
-      {requests.length > 0 && (
-        <div className="flex items-center gap-3 pb-2 border-b">
-          <span className="text-xs font-medium text-muted-foreground">Estado:</span>
-          <div className="flex gap-1">
-            {([
-              { v: "all", label: "Todas", count: requests.length },
-              ...SC_STATUSES.map((s) => ({
-                v: s.value,
-                label: s.label,
-                count: requests.filter((r) => getDerivedSCStatus(r) === s.value).length,
-              })),
-            ] as const).map((opt) => (
-              <button
-                key={opt.v}
-                onClick={() => setStatusFilter(opt.v as PurchaseRequestStatus | "all")}
-                className={cn(
-                  "text-xs px-2.5 py-1 rounded-md border transition-colors",
-                  statusFilter === opt.v
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-background hover:bg-muted"
-                )}
-              >
-                {opt.label} <span className="opacity-70">({opt.count})</span>
-              </button>
-            ))}
-          </div>
-          <div className="flex-1" />
-          <span className="text-xs text-muted-foreground">Ordenar por:</span>
-          <Select value={sortBy} onValueChange={(v) => { if (v) setSortBy(v as typeof sortBy); }}>
-            <SelectTrigger className="h-8 w-[160px] text-xs">
-              <span>{sortBy === "recent" ? "Más recientes" : sortBy === "status" ? "Estado" : "N° SC"}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="recent" className="text-xs">Más recientes</SelectItem>
-              <SelectItem value="status" className="text-xs">Estado</SelectItem>
-              <SelectItem value="number" className="text-xs">N° SC</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
       {requests.length === 0 && (
         <div className="text-center py-12 text-muted-foreground">
           No hay solicitudes de compra. Crea una nueva o importa desde paquetes.
         </div>
       )}
 
-      {/* SC List */}
-      <div className="space-y-3">
-        {requests
-          .filter((sc) => statusFilter === "all" || getDerivedSCStatus(sc) === statusFilter)
-          .sort((a, b) => {
-            if (sortBy === "recent") return (b.created_at || "").localeCompare(a.created_at || "");
-            if (sortBy === "number") return a.number.localeCompare(b.number);
-            // status: order pending → partial → completed → cancelled
-            const order = { pending: 0, partial: 1, completed: 2, cancelled: 3 };
-            return order[getDerivedSCStatus(a)] - order[getDerivedSCStatus(b)];
+      {/* SC List — formato tipo Excel con header sticky de columnas y
+          ColumnFilter por columna. Cada SC es una fila colapsable; click
+          en la fila la expande mostrando las líneas. */}
+      {requests.length > 0 && (() => {
+        const gridCols = "grid-cols-[28px_minmax(120px,160px)_130px_100px_110px_70px_minmax(160px,1fr)_auto]";
+        // Status options for column filter — derivedStatus, no el status crudo
+        const statusValueLabels: Record<string, string> = Object.fromEntries(
+          SC_STATUSES.map((s) => [s.value, s.label])
+        );
+        const allNumbers   = Array.from(new Set(requests.map((r) => r.number)));
+        const allStatuses  = Array.from(new Set(requests.map((r) => getDerivedSCStatus(r))));
+        const allOrigins   = Array.from(new Set(requests.map((r) => r.origin || "manual")));
+        const originLabels: Record<string, string> = { manual: "Manual", package: "Paquete" };
+        const allDates     = Array.from(new Set(requests.map((r) => r.date || ""))).filter(Boolean);
+
+        function toggleSort(k: typeof sortKey) {
+          if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+          else { setSortKey(k); setSortDir(k === "date" ? "desc" : "asc"); }
+        }
+        function sortIcon(k: typeof sortKey) {
+          if (sortKey !== k) return <ArrowUpDown className="h-3 w-3 text-muted-foreground/50 inline" />;
+          return sortDir === "asc"
+            ? <ArrowUp className="h-3 w-3 text-[#E87722] inline" />
+            : <ArrowDown className="h-3 w-3 text-[#E87722] inline" />;
+        }
+
+        const filteredSorted = requests
+          .filter((sc) => {
+            if (!matchesColumnFilter(colFilterNumber, sc.number)) return false;
+            if (!matchesColumnFilter(colFilterStatus, getDerivedSCStatus(sc))) return false;
+            if (!matchesColumnFilter(colFilterOrigin, sc.origin || "manual")) return false;
+            if (!matchesColumnFilter(colFilterDate, sc.date || "")) return false;
+            return true;
           })
-          .map((sc) => {
+          .sort((a, b) => {
+            const dir = sortDir === "asc" ? 1 : -1;
+            if (sortKey === "number") return a.number.localeCompare(b.number) * dir;
+            if (sortKey === "date") return (a.date || "").localeCompare(b.date || "") * dir;
+            if (sortKey === "lines") return (a.lines.length - b.lines.length) * dir;
+            if (sortKey === "origin") return (a.origin || "").localeCompare(b.origin || "") * dir;
+            // status: orden lógico pending → partial → completed → cancelled
+            const order = { pending: 0, partial: 1, completed: 2, cancelled: 3 } as const;
+            return (order[getDerivedSCStatus(a)] - order[getDerivedSCStatus(b)]) * dir;
+          });
+
+        return (
+          <div className="border rounded-lg overflow-hidden">
+            {/* Header con ColumnFilter / sort */}
+            <div className={cn("grid gap-3 px-4 py-2 bg-muted/60 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground items-center", gridCols)}>
+              <span /> {/* chevron column */}
+              <button onClick={() => toggleSort("number")} className="text-left hover:text-foreground inline-flex items-center gap-1">
+                N° SC {sortIcon("number")}
+              </button>
+              <ColumnFilter label="Estado" values={allStatuses} valueLabels={statusValueLabels} selected={colFilterStatus} onChange={setColFilterStatus} />
+              <ColumnFilter label="Origen" values={allOrigins} valueLabels={originLabels} selected={colFilterOrigin} onChange={setColFilterOrigin} />
+              <div className="inline-flex items-center gap-1">
+                <button onClick={() => toggleSort("date")} className="hover:text-foreground inline-flex items-center gap-1">
+                  Fecha {sortIcon("date")}
+                </button>
+                <ColumnFilter label="" values={allDates} selected={colFilterDate} onChange={setColFilterDate} />
+              </div>
+              <button onClick={() => toggleSort("lines")} className="text-left hover:text-foreground inline-flex items-center gap-1">
+                Líneas {sortIcon("lines")}
+              </button>
+              <span>Progreso</span>
+              <span className="text-right">Acciones</span>
+            </div>
+            {/* Hint: ColumnFilter de N° (búsqueda libre interna del popover) */}
+            <div className={cn("hidden", allNumbers.length > 0 && "")}>
+              {/* Reservado por si querés exponer búsqueda por número como ColumnFilter aparte */}
+            </div>
+
+            {filteredSorted.length === 0 && (
+              <div className="text-center py-8 text-muted-foreground text-sm">
+                No hay SC que coincidan con los filtros aplicados.
+              </div>
+            )}
+
+            {filteredSorted.map((sc) => {
           const isExpanded = expanded.has(sc.id);
           const progress = getSCProgress(sc);
           const derivedStatus = getDerivedSCStatus(sc);
@@ -1010,11 +1048,15 @@ export function SolicitudesTab({ projectId }: Props) {
             derivedStatus === "partial" &&
             (progress.pending > 0 || progress.partial > 0);
 
+          const qList = quotationsByRequest.get(sc.id) || [];
           return (
-            <div key={sc.id} className="border rounded-lg overflow-hidden">
-              {/* SC Header */}
+            <div key={sc.id} className="border-t">
+              {/* SC Row — Excel style */}
               <div
-                className="flex items-center gap-3 px-4 py-3 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
+                className={cn(
+                  "grid gap-3 px-4 py-2.5 items-center text-xs cursor-pointer hover:bg-muted/30 transition-colors",
+                  gridCols
+                )}
                 onClick={() => toggleExpand(sc.id)}
               >
                 {isExpanded ? (
@@ -1022,53 +1064,48 @@ export function SolicitudesTab({ projectId }: Props) {
                 ) : (
                   <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                 )}
-                <span className="font-mono text-sm font-semibold">{sc.number}</span>
-                {getStatusBadge(derivedStatus)}
-                <Lock className="h-3 w-3 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">
-                  {sc.origin === "package" ? "Paquete" : "Manual"} · {sc.date} · {sc.lines.length} línea(s)
+                <span className="font-mono text-sm font-semibold inline-flex items-center gap-1 truncate">
+                  {sc.number}
+                  <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
                 </span>
-
-                {/* Progress mini-badges */}
-                {sc.lines.length > 0 && (
-                  <div className="flex items-center gap-1 ml-2">
-                    {progress.complete > 0 && (
-                      <Badge className="text-[10px] bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
-                        ✓ {progress.complete}
-                      </Badge>
-                    )}
-                    {progress.excess > 0 && (
-                      <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100" title="Ordenado mayor que lo solicitado">
-                        ↑ {progress.excess}
-                      </Badge>
-                    )}
-                    {progress.partial > 0 && (
-                      <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100">
-                        ◐ {progress.partial}
-                      </Badge>
-                    )}
-                    {progress.pending > 0 && (
-                      <Badge className="text-[10px] bg-muted text-muted-foreground hover:bg-muted">
-                        ○ {progress.pending}
-                      </Badge>
-                    )}
-                  </div>
-                )}
-
-                <div className="flex-1" />
-
-                {/* Mini badge: cantidad de cotizaciones de esta SC */}
-                {(() => {
-                  const qList = quotationsByRequest.get(sc.id) || [];
-                  if (qList.length === 0) return null;
-                  return (
-                    <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <span>{getStatusBadge(derivedStatus)}</span>
+                <span className="text-muted-foreground">{sc.origin === "package" ? "Paquete" : "Manual"}</span>
+                <span className="text-muted-foreground font-mono">{sc.date}</span>
+                <span className="text-muted-foreground font-mono text-right pr-3">{sc.lines.length}</span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {sc.lines.length > 0 && (
+                    <>
+                      {progress.complete > 0 && (
+                        <Badge className="text-[10px] bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                          ✓ {progress.complete}
+                        </Badge>
+                      )}
+                      {progress.excess > 0 && (
+                        <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100" title="Ordenado mayor que lo solicitado">
+                          ↑ {progress.excess}
+                        </Badge>
+                      )}
+                      {progress.partial > 0 && (
+                        <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100">
+                          ◐ {progress.partial}
+                        </Badge>
+                      )}
+                      {progress.pending > 0 && (
+                        <Badge className="text-[10px] bg-muted text-muted-foreground hover:bg-muted">
+                          ○ {progress.pending}
+                        </Badge>
+                      )}
+                    </>
+                  )}
+                  {qList.length > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground ml-1">
                       <Scale className="h-3 w-3" />
-                      {qList.length} {qList.length === 1 ? "cotización" : "cotizaciones"}
-                    </div>
-                  );
-                })()}
+                      {qList.length}
+                    </span>
+                  )}
+                </div>
 
+                <div className="flex items-center gap-1 justify-end">
                 {canGenerateOC && (
                   <Button
                     size="sm"
@@ -1105,6 +1142,7 @@ export function SolicitudesTab({ projectId }: Props) {
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 )}
+                </div>
               </div>
 
               {/* SC Lines (READ-ONLY) */}
@@ -1244,7 +1282,9 @@ export function SolicitudesTab({ projectId }: Props) {
             </div>
           );
         })}
-      </div>
+          </div>
+        );
+      })()}
 
       {/* ─────── Package Import Dialog ─────── */}
       <Dialog open={packageDialogOpen} onOpenChange={setPackageDialogOpen}>
