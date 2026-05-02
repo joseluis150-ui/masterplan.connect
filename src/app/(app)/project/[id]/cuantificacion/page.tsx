@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
 import type { Articulo, EdtCategory, EdtSubcategory, Sector } from "@/lib/types/database";
-import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers } from "lucide-react";
+import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight } from "lucide-react";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 
 type SortConfig = { key: string; dir: SortDirection };
@@ -132,6 +132,10 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
    *  del grupo (los grupos se ordenan por sectors.order, las líneas dentro
    *  del grupo siguen el sort actual). */
   const [groupBySector, setGroupBySector]         = usePersistedState<boolean>(`cuant:groupBySector:${projectId}`,         false);
+  /** Set de sector_ids cuyo grupo está contraído (sus líneas se ocultan,
+   *  el header sigue visible mostrando el subtotal). El valor "__none__"
+   *  representa el grupo de líneas sin sector asignado. */
+  const [collapsedSectors, setCollapsedSectors]   = usePersistedState<Set<string>>(`cuant:collapsedSectors:${projectId}`,  new Set(), SET_PERSIST_OPTS);
   const [artPUs, setArtPUs] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -255,6 +259,27 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
 
   function handleSort(key: string) {
     return (dir: SortDirection) => setSort(dir ? { key, dir } : { key: "", dir: null });
+  }
+
+  /** Toggle collapse de un grupo de sector. Click en el header del grupo
+   *  o en los botones expandir/colapsar todo. */
+  function toggleSectorCollapse(sectorKey: string) {
+    setCollapsedSectors((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectorKey)) next.delete(sectorKey);
+      else next.add(sectorKey);
+      return next;
+    });
+  }
+  /** Colapsa todos los grupos visibles actualmente. */
+  function collapseAllSectors() {
+    const allKeys = new Set<string>();
+    for (const l of filtered) allKeys.add(l.sector_id || "__none__");
+    setCollapsedSectors(allKeys);
+  }
+  /** Expande todos los grupos (vacía el set). */
+  function expandAllSectors() {
+    setCollapsedSectors(new Set());
   }
 
   async function toggleLineReview(lineId: string) {
@@ -592,6 +617,31 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
           <Layers className="h-3 w-3 mr-1" />
           {groupBySector ? "Agrupado por sector" : "Agrupar por sector"}
         </Button>
+        {groupBySector && (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-foreground"
+              onClick={expandAllSectors}
+              disabled={collapsedSectors.size === 0}
+              title="Expandir todos los sectores"
+            >
+              <ChevronDown className="h-3 w-3 mr-1" />
+              Expandir todo
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-foreground"
+              onClick={collapseAllSectors}
+              title="Contraer todos los sectores"
+            >
+              <ChevronRight className="h-3 w-3 mr-1" />
+              Contraer todo
+            </Button>
+          </>
+        )}
         {reviewCount > 0 && (
           <Button
             variant={filterReview === "review" ? "default" : "outline"}
@@ -699,7 +749,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                   // para que las líneas queden contiguas por sector (respetando
                   // sectors.order). Si no, usamos sorted tal cual.
                   let displayOrder = sorted;
-                  const groupMeta = new Map<string, { firstIdx: number; total: number; count: number; label: string }>();
+                  const groupMeta = new Map<string, { firstIdx: number; total: number; count: number; label: string; collapsed: boolean }>();
                   if (groupBySector) {
                     const groups = new Map<string, typeof sorted>();
                     for (const l of sorted) {
@@ -716,32 +766,63 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                       if (!sb) return -1;
                       return (sa.order ?? 0) - (sb.order ?? 0);
                     });
-                    displayOrder = orderedKeys.flatMap((k) => groups.get(k)!);
-                    let runningIdx = 0;
+                    // Guardamos meta con totales y collapsed flag PRIMERO (sobre todas
+                    // las líneas del grupo, no sólo las visibles).
                     for (const k of orderedKeys) {
                       const ls = groups.get(k)!;
                       const sec = sectors.find((s) => s.id === k);
                       groupMeta.set(k, {
-                        firstIdx: runningIdx,
+                        firstIdx: -1, // se setea abajo, después de filtrar colapsadas
                         total: ls.reduce((s, l) => s + (Number(l.quantity) || 0) * l.articulo_pu, 0),
                         count: ls.length,
                         label: sec?.name ?? "(Sin sector)",
+                        collapsed: collapsedSectors.has(k),
                       });
-                      runningIdx += ls.length;
                     }
+                    // displayOrder = sólo líneas de grupos NO colapsados.
+                    // Pero los headers de grupos colapsados también necesitan
+                    // aparecer; los inyectamos via isGroupHeader. Para que el
+                    // header de un grupo colapsado se renderice, agregamos UNA
+                    // línea fantasma (la primera del grupo) que usamos sólo para
+                    // pintar el header — ver lógica abajo.
+                    const visibleLines: typeof sorted = [];
+                    let runningIdx = 0;
+                    for (const k of orderedKeys) {
+                      const ls = groups.get(k)!;
+                      const meta = groupMeta.get(k)!;
+                      meta.firstIdx = runningIdx;
+                      // Siempre necesitamos al menos una "fila ancla" donde
+                      // pintar el header. Si el grupo está colapsado, ponemos
+                      // sólo la primera línea (que el render skipea para no
+                      // mostrar la fila de datos) para que el header aparezca.
+                      if (meta.collapsed && ls.length > 0) {
+                        visibleLines.push(ls[0]);
+                        runningIdx += 1;
+                      } else {
+                        visibleLines.push(...ls);
+                        runningIdx += ls.length;
+                      }
+                    }
+                    displayOrder = visibleLines;
                   }
                   return displayOrder.map((line, idx) => {
                     // Header de grupo: si esta línea es la primera de su sector
                     const sectorKey = line.sector_id || "__none__";
                     const meta = groupBySector ? groupMeta.get(sectorKey) : undefined;
                     const isGroupHeader = !!meta && meta.firstIdx === idx;
+                    // Si este grupo está colapsado, sólo renderizamos el header
+                    // — la "línea ancla" se omite del data row.
+                    const skipDataRow = !!meta && meta.collapsed;
                     return (
                       <React.Fragment key={`row-${line.id}`}>
                         {isGroupHeader && meta && (
-                          <tr style={{ background: "#FFF7ED" }}>
+                          <tr style={{ background: "#FFF7ED", cursor: "pointer" }} onClick={() => toggleSectorCollapse(sectorKey)}>
                             <td colSpan={12} className="px-3 py-2">
                               <div className="flex items-center justify-between">
                                 <span className="text-xs font-semibold uppercase tracking-wider text-[#E87722] inline-flex items-center gap-1.5">
+                                  {meta.collapsed
+                                    ? <ChevronRight className="h-3.5 w-3.5" />
+                                    : <ChevronDown className="h-3.5 w-3.5" />}
                                   <Layers className="h-3.5 w-3.5" />
                                   {meta.label}
                                   <span className="text-muted-foreground font-normal normal-case ml-1">
@@ -755,6 +836,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                             </td>
                           </tr>
                         )}
+                        {skipDataRow ? null : (
                   <tr key={line.id} style={{ borderBottom: "1px solid #F1F5F9", background: selected.has(line.id) ? "#EFF6FF" : undefined }}>
                     <td className="px-1 py-1 text-center">
                       <input
@@ -844,6 +926,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                       </Button>
                     </td>
                   </tr>
+                        )}
                       </React.Fragment>
                     );
                   });
