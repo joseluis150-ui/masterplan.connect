@@ -994,7 +994,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                                   );
                                 })()}
                                 <span className={cn("font-mono font-semibold", textCls)}>
-                                  Subtotal: {fmtMoney(item.total, 0)} {moneyCurrency}
+                                  {fmtMoney(item.total, 0)} {moneyCurrency}
                                 </span>
                               </span>
                             </div>
