@@ -965,12 +965,15 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                               </span>
                               <span className="inline-flex items-center gap-2">
                                 {/* Botón "+" sólo en nivel 2 (subcategoría) en
-                                    modo 3-niveles. Crea una línea con el
-                                    sector / categoría / subcategoría del grupo
-                                    ya pre-llenados. No aparece si alguno de
-                                    los IDs es "__none__" (no tendría sentido
-                                    crear una línea en un grupo sin asignar). */}
-                                {lvl === 2 && (() => {
+                                    modo 3-niveles, EXPANDIDO. Crea una línea
+                                    con el sector / categoría / subcategoría
+                                    del grupo ya pre-llenados. No aparece si
+                                    alguno de los IDs es "__none__" (no
+                                    tendría sentido crear una línea en un
+                                    grupo sin asignar) ni si el grupo está
+                                    contraído (la línea quedaría oculta y
+                                    confundiría al usuario). */}
+                                {lvl === 2 && !item.collapsed && (() => {
                                   const [sId, cId, subId] = item.key.split("::");
                                   if (!sId || !cId || !subId) return null;
                                   if (sId === "__none__" || cId === "__none__" || subId === "__none__") return null;
