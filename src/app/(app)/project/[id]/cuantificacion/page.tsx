@@ -344,11 +344,24 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     toast.success(newVal ? "Marcado para revisión" : "Revisión completada");
   }
 
-  async function addNewLine() {
+  /** Crea una línea nueva. Si se pasan overrides (sector_id, category_id,
+   *  subcategory_id) los usa en lugar de los defaults — útil para los
+   *  botones "+" en los headers de grupo, que crean la línea ya con su
+   *  contexto correcto. */
+  async function addNewLine(overrides?: {
+    sector_id?: string;
+    category_id?: string;
+    subcategory_id?: string;
+  }) {
     const lineNumber = lines.length + 1;
-    const defaultCat = categories[0]?.id || "";
-    const defaultSub = subcategories.find((s) => s.category_id === defaultCat)?.id || "";
-    const defaultSector = sectors[0]?.id || "";
+    const defaultCat = overrides?.category_id || categories[0]?.id || "";
+    // Si pasaron una categoría específica, la subcategoría debe pertenecer
+    // a esa categoría — sino caemos a la primera de la categoría elegida.
+    const defaultSub =
+      overrides?.subcategory_id ||
+      subcategories.find((s) => s.category_id === defaultCat)?.id ||
+      "";
+    const defaultSector = overrides?.sector_id || sectors[0]?.id || "";
 
     if (!defaultCat || !defaultSub || !defaultSector) {
       toast.error("Necesitas al menos una categoría, subcategoría y sector definidos");
@@ -950,8 +963,36 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                                   · {item.count} {item.count === 1 ? "línea" : "líneas"}
                                 </span>
                               </span>
-                              <span className={cn("font-mono font-semibold", textCls)}>
-                                Subtotal: {fmtMoney(item.total, 0)} {moneyCurrency}
+                              <span className="inline-flex items-center gap-2">
+                                {/* Botón "+" sólo en nivel 2 (subcategoría) en
+                                    modo 3-niveles. Crea una línea con el
+                                    sector / categoría / subcategoría del grupo
+                                    ya pre-llenados. No aparece si alguno de
+                                    los IDs es "__none__" (no tendría sentido
+                                    crear una línea en un grupo sin asignar). */}
+                                {lvl === 2 && (() => {
+                                  const [sId, cId, subId] = item.key.split("::");
+                                  if (!sId || !cId || !subId) return null;
+                                  if (sId === "__none__" || cId === "__none__" || subId === "__none__") return null;
+                                  return (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-2 text-[10px] text-[#E87722] hover:bg-[#E87722]/10"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        addNewLine({ sector_id: sId, category_id: cId, subcategory_id: subId });
+                                      }}
+                                      title={`Agregar línea en ${item.label}`}
+                                    >
+                                      <Plus className="h-3 w-3 mr-0.5" />
+                                      Línea
+                                    </Button>
+                                  );
+                                })()}
+                                <span className={cn("font-mono font-semibold", textCls)}>
+                                  Subtotal: {fmtMoney(item.total, 0)} {moneyCurrency}
+                                </span>
                               </span>
                             </div>
                           </td>
@@ -1076,7 +1117,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
               {/* Add new line row */}
               <tr style={{ borderTop: "2px solid #E5E5E5" }}>
                 <td colSpan={12} className="px-2 py-2">
-                  <Button variant="outline" size="sm" onClick={addNewLine} className="w-full">
+                  <Button variant="outline" size="sm" onClick={() => addNewLine()} className="w-full">
                     <Plus className="h-4 w-4 mr-1" /> Nueva Línea
                   </Button>
                 </td>
