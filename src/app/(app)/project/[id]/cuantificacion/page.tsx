@@ -141,11 +141,13 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [filterSector, setFilterSector]           = usePersistedState<Set<string>>(`cuant:filterSector:${projectId}`,      new Set(), SET_PERSIST_OPTS);
   const [filterReview, setFilterReview]           = usePersistedState<string>(`cuant:filterReview:${projectId}`,           "all");
   const [sort, setSort]                           = usePersistedState<SortConfig>(`cuant:sort:${projectId}`,               { key: "", dir: null });
-  /** Modo de agrupamiento. "none" = lista plana (default), "sector" = agrupa
-   *  por sector_id, "category" = agrupa por category_id, "sector-category"
-   *  = jerarquía: sectores como nivel 0 con sub-grupos por categoría adentro.
-   *  Los grupos respetan el orden definido (sectors.order, categories.order). */
-  const [groupBy, setGroupBy]                     = usePersistedState<"none" | "sector" | "category" | "sector-category">(`cuant:groupBy:${projectId}`, "none");
+  /** Modo de agrupamiento. Sólo dos opciones jerárquicas:
+   *   - "sector-category" → 2 niveles: Sector → Categoría
+   *   - "sector-category-subcategory" → 3 niveles: Sector → Categoría → Subcategoría
+   *  Cada nivel respeta el orden de su tabla (sectors.order, categories.order,
+   *  edt_subcategories.order). Las líneas dentro del último nivel conservan
+   *  el sort por columna activo. */
+  const [groupBy, setGroupBy]                     = usePersistedState<"sector-category" | "sector-category-subcategory">(`cuant:groupBy:${projectId}`, "sector-category");
   /** Set de group_ids cuyo grupo está contraído. Las keys son sector_id o
    *  category_id según el modo activo — como son UUIDs no chocan entre
    *  sí, podemos compartir una sola Set para ambos modos sin perder estado
@@ -295,39 +297,6 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     return (dir: SortDirection) => setSort(dir ? { key, dir } : { key: "", dir: null });
   }
 
-  /** Devuelve la key de grupo de una línea según el modo activo. */
-  function getLineGroupKey(line: QuantLine): string {
-    if (groupBy === "sector")   return line.sector_id   || "__none__";
-    if (groupBy === "category") return line.category_id || "__none__";
-    return "";
-  }
-  /** Devuelve el orden numérico de un grupo (para ordenar headers). */
-  function getGroupSortValue(key: string): number {
-    if (key === "__none__") return Number.MAX_SAFE_INTEGER;
-    if (groupBy === "sector") {
-      const s = sectors.find((x) => x.id === key);
-      return s?.order ?? Number.MAX_SAFE_INTEGER;
-    }
-    if (groupBy === "category") {
-      const c = categories.find((x) => x.id === key);
-      return c?.order ?? Number.MAX_SAFE_INTEGER;
-    }
-    return 0;
-  }
-  /** Devuelve el label visible del header de un grupo. */
-  function getGroupLabel(key: string): string {
-    if (groupBy === "sector") {
-      if (key === "__none__") return "(Sin sector)";
-      return sectors.find((x) => x.id === key)?.name ?? "(Sin sector)";
-    }
-    if (groupBy === "category") {
-      if (key === "__none__") return "(Sin categoría)";
-      const c = categories.find((x) => x.id === key);
-      return c ? `${c.code} ${c.name}` : "(Sin categoría)";
-    }
-    return "";
-  }
-
   /** Toggle collapse de un grupo. Click en el header del grupo o en los
    *  botones expandir/colapsar todo. */
   function toggleGroupCollapse(groupKey: string) {
@@ -338,24 +307,26 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
       return next;
     });
   }
-  /** Colapsa todos los grupos visibles actualmente del modo activo.
-   *  En modo jerárquico "sector-category" colapsamos las CATEGORÍAS
-   *  (nivel 1) — no los sectores — para que el usuario pueda ver los
-   *  sectores expandidos con todas sus categorías plegadas adentro.
-   *  Si colapsáramos también los sectores, las categorías colapsadas
-   *  quedarían ocultas y el efecto sería confuso. */
+  /** Colapsa todos los grupos visibles del modo activo. Como ahora ambos
+   *  modos son jerárquicos, contraemos el ÚLTIMO nivel para que el
+   *  usuario vea los headers de los niveles superiores expandidos con
+   *  los hijos plegados adentro:
+   *   - sector-category               → contrae las categorías
+   *   - sector-category-subcategory   → contrae las subcategorías
+   *  Si colapsáramos los niveles superiores, los headers de hijos
+   *  quedarían ocultos y el efecto sería confuso. */
   function collapseAllGroups() {
     const allKeys = new Set<string>();
-    if (groupBy === "sector-category") {
-      // Composite keys de TODAS las (sector, categoría) que aparecen
-      // en las líneas filtradas — ese es el set completo de subgrupos.
-      for (const l of filtered) {
-        const sec = l.sector_id || "__none__";
-        const cat = l.category_id || "__none__";
+    for (const l of filtered) {
+      const sec = l.sector_id || "__none__";
+      const cat = l.category_id || "__none__";
+      const sub = l.subcategory_id || "__none__";
+      if (groupBy === "sector-category-subcategory") {
+        allKeys.add(`${sec}::${cat}::${sub}`);
+      } else {
+        // sector-category
         allKeys.add(`${sec}::${cat}`);
       }
-    } else {
-      for (const l of filtered) allKeys.add(getLineGroupKey(l));
     }
     setCollapsedGroups(allKeys);
   }
@@ -689,16 +660,14 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
       {/* Summary bar */}
       <div className="flex gap-4 items-center flex-wrap">
         <span className="text-sm text-muted-foreground">{filtered.length} líneas</span>
-        {/* Segmented control: sin agrupar / por sector / por categoría */}
+        {/* Segmented control: sólo dos vistas jerárquicas */}
         <div className="inline-flex rounded-md border bg-background overflow-hidden">
           <span className="px-2 py-1.5 text-xs text-muted-foreground border-r inline-flex items-center gap-1">
             <Layers className="h-3 w-3" /> Agrupar:
           </span>
           {([
-            { v: "none",             label: "Sin agrupar" },
-            { v: "sector",           label: "Por sector" },
-            { v: "category",         label: "Por categoría" },
-            { v: "sector-category",  label: "Sector → Categoría" },
+            { v: "sector-category",              label: "Sector → Categoría" },
+            { v: "sector-category-subcategory",  label: "Sector → Categoría → Subcategoría" },
           ] as const).map((opt, i) => (
             <button
               key={opt.v}
@@ -716,31 +685,27 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
             </button>
           ))}
         </div>
-        {groupBy !== "none" && (
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs text-muted-foreground hover:text-foreground"
-              onClick={expandAllGroups}
-              disabled={collapsedGroups.size === 0}
-              title="Expandir todos los grupos"
-            >
-              <ChevronDown className="h-3 w-3 mr-1" />
-              Expandir todo
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs text-muted-foreground hover:text-foreground"
-              onClick={collapseAllGroups}
-              title="Contraer todos los grupos"
-            >
-              <ChevronRight className="h-3 w-3 mr-1" />
-              Contraer todo
-            </Button>
-          </>
-        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs text-muted-foreground hover:text-foreground"
+          onClick={expandAllGroups}
+          disabled={collapsedGroups.size === 0}
+          title="Expandir todos los grupos"
+        >
+          <ChevronDown className="h-3 w-3 mr-1" />
+          Expandir todo
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs text-muted-foreground hover:text-foreground"
+          onClick={collapseAllGroups}
+          title="Contraer todos los grupos"
+        >
+          <ChevronRight className="h-3 w-3 mr-1" />
+          Contraer todo
+        </Button>
         {reviewCount > 0 && (
           <Button
             variant={filterReview === "review" ? "default" : "outline"}
@@ -851,7 +816,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                 // un map de líneas.
                 (() => {
                   type RenderItem =
-                    | { kind: "header"; level: 0 | 1; key: string; label: string; total: number; count: number; collapsed: boolean }
+                    | { kind: "header"; level: 0 | 1 | 2; key: string; label: string; total: number; count: number; collapsed: boolean }
                     | { kind: "line";   line: QuantLine; idx: number };
 
                   const items: RenderItem[] = [];
@@ -869,117 +834,123 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                     if (id === "__none__") return Number.MAX_SAFE_INTEGER;
                     return categories.find((c) => c.id === id)?.order ?? Number.MAX_SAFE_INTEGER;
                   };
+                  const subOrderVal = (id: string) => {
+                    if (id === "__none__") return Number.MAX_SAFE_INTEGER;
+                    return subcategories.find((s) => s.id === id)?.order ?? Number.MAX_SAFE_INTEGER;
+                  };
                   const sectorLabel = (id: string) => id === "__none__" ? "(Sin sector)" : (sectors.find((s) => s.id === id)?.name ?? "(Sin sector)");
                   const catLabel = (id: string) => {
                     if (id === "__none__") return "(Sin categoría)";
                     const c = categories.find((x) => x.id === id);
                     return c ? `${c.code} ${c.name}` : "(Sin categoría)";
                   };
+                  const subLabel = (id: string) => {
+                    if (id === "__none__") return "(Sin subcategoría)";
+                    const s = subcategories.find((x) => x.id === id);
+                    return s ? `${s.code} ${s.name}` : "(Sin subcategoría)";
+                  };
 
-                  if (groupBy === "none") {
-                    sorted.forEach((line, idx) => items.push({ kind: "line", line, idx }));
-                  } else if (groupBy === "sector-category") {
-                    // Jerarquía: agrupar por sector primero, dentro de cada sector
-                    // sub-agrupar por categoría. Las keys de subgrupo combinan
-                    // ambos IDs para no chocar entre sectores.
-                    const sectorGroups = new Map<string, typeof sorted>();
-                    for (const l of sorted) {
-                      const k = l.sector_id || "__none__";
-                      if (!sectorGroups.has(k)) sectorGroups.set(k, []);
-                      sectorGroups.get(k)!.push(l);
+                  // Agrupar siempre por sector como nivel 0. Las dos vistas
+                  // soportadas:
+                  //   "sector-category"               → 2 niveles (sector → categoría)
+                  //   "sector-category-subcategory"   → 3 niveles (sector → cat → subcat)
+                  const sectorGroups = new Map<string, typeof sorted>();
+                  for (const l of sorted) {
+                    const k = l.sector_id || "__none__";
+                    if (!sectorGroups.has(k)) sectorGroups.set(k, []);
+                    sectorGroups.get(k)!.push(l);
+                  }
+                  const orderedSectors = Array.from(sectorGroups.keys()).sort((a, b) => sectorOrderVal(a) - sectorOrderVal(b));
+                  let runningIdx = 0;
+                  for (const sKey of orderedSectors) {
+                    const sLines = sectorGroups.get(sKey)!;
+                    const sCollapsed = collapsedGroups.has(sKey);
+                    items.push({
+                      kind: "header", level: 0, key: sKey,
+                      label: sectorLabel(sKey),
+                      total: sumLines(sLines), count: sLines.length, collapsed: sCollapsed,
+                    });
+                    if (sCollapsed) continue;
+
+                    // Sub-agrupar por categoría dentro del sector
+                    const catGroups = new Map<string, typeof sorted>();
+                    for (const l of sLines) {
+                      const k = l.category_id || "__none__";
+                      if (!catGroups.has(k)) catGroups.set(k, []);
+                      catGroups.get(k)!.push(l);
                     }
-                    const orderedSectors = Array.from(sectorGroups.keys()).sort((a, b) => sectorOrderVal(a) - sectorOrderVal(b));
-                    let runningIdx = 0;
-                    for (const sKey of orderedSectors) {
-                      const sLines = sectorGroups.get(sKey)!;
-                      const sCollapsed = collapsedGroups.has(sKey);
+                    const orderedCats = Array.from(catGroups.keys()).sort((a, b) => catOrderVal(a) - catOrderVal(b));
+                    for (const cKey of orderedCats) {
+                      const cLines = catGroups.get(cKey)!;
+                      const cKeyComposite = `${sKey}::${cKey}`;
+                      const cCollapsed = collapsedGroups.has(cKeyComposite);
                       items.push({
-                        kind: "header", level: 0, key: sKey,
-                        label: sectorLabel(sKey),
-                        total: sumLines(sLines), count: sLines.length, collapsed: sCollapsed,
+                        kind: "header", level: 1, key: cKeyComposite,
+                        label: catLabel(cKey),
+                        total: sumLines(cLines), count: cLines.length, collapsed: cCollapsed,
                       });
-                      if (sCollapsed) continue;
+                      if (cCollapsed) continue;
 
-                      // Sub-agrupar por categoría dentro del sector
-                      const catGroups = new Map<string, typeof sorted>();
-                      for (const l of sLines) {
-                        const k = l.category_id || "__none__";
-                        if (!catGroups.has(k)) catGroups.set(k, []);
-                        catGroups.get(k)!.push(l);
-                      }
-                      const orderedCats = Array.from(catGroups.keys()).sort((a, b) => catOrderVal(a) - catOrderVal(b));
-                      for (const cKey of orderedCats) {
-                        const cLines = catGroups.get(cKey)!;
-                        const compositeKey = `${sKey}::${cKey}`;
-                        const cCollapsed = collapsedGroups.has(compositeKey);
-                        items.push({
-                          kind: "header", level: 1, key: compositeKey,
-                          label: catLabel(cKey),
-                          total: sumLines(cLines), count: cLines.length, collapsed: cCollapsed,
-                        });
-                        if (cCollapsed) continue;
+                      if (groupBy === "sector-category-subcategory") {
+                        // Tercer nivel: sub-agrupar por subcategoría dentro de la categoría
+                        const subGroups = new Map<string, typeof sorted>();
+                        for (const l of cLines) {
+                          const k = l.subcategory_id || "__none__";
+                          if (!subGroups.has(k)) subGroups.set(k, []);
+                          subGroups.get(k)!.push(l);
+                        }
+                        const orderedSubs = Array.from(subGroups.keys()).sort((a, b) => subOrderVal(a) - subOrderVal(b));
+                        for (const subKey of orderedSubs) {
+                          const subLines = subGroups.get(subKey)!;
+                          const subKeyComposite = `${sKey}::${cKey}::${subKey}`;
+                          const subCollapsed = collapsedGroups.has(subKeyComposite);
+                          items.push({
+                            kind: "header", level: 2, key: subKeyComposite,
+                            label: subLabel(subKey),
+                            total: sumLines(subLines), count: subLines.length, collapsed: subCollapsed,
+                          });
+                          if (subCollapsed) continue;
+                          for (const l of subLines) items.push({ kind: "line", line: l, idx: runningIdx++ });
+                        }
+                      } else {
+                        // sector-category: las líneas van directo bajo la categoría
                         for (const l of cLines) items.push({ kind: "line", line: l, idx: runningIdx++ });
                       }
-                    }
-                  } else {
-                    // Modo plano: "sector" o "category" — un solo nivel
-                    const groups = new Map<string, typeof sorted>();
-                    for (const l of sorted) {
-                      const k = getLineGroupKey(l);
-                      if (!groups.has(k)) groups.set(k, []);
-                      groups.get(k)!.push(l);
-                    }
-                    const orderedKeys = Array.from(groups.keys()).sort((a, b) => getGroupSortValue(a) - getGroupSortValue(b));
-                    let runningIdx = 0;
-                    for (const k of orderedKeys) {
-                      const ls = groups.get(k)!;
-                      const collapsed = collapsedGroups.has(k);
-                      items.push({
-                        kind: "header", level: 0, key: k,
-                        label: getGroupLabel(k),
-                        total: sumLines(ls), count: ls.length, collapsed,
-                      });
-                      if (collapsed) continue;
-                      for (const l of ls) items.push({ kind: "line", line: l, idx: runningIdx++ });
                     }
                   }
 
                   return items.map((item) => {
                     if (item.kind === "header") {
-                      const isLevel1 = item.level === 1;
+                      const lvl = item.level;
+                      // Estilos por nivel — sector (0) más prominente, subcategoría (2) más sutil
+                      const bg     = lvl === 0 ? "#FFF7ED" : lvl === 1 ? "#FAFAFA" : "#F8FAFC";
+                      const border = lvl === 0 ? "2px solid #FED7AA" : "1px solid #F1F5F9";
+                      const padding = lvl === 0 ? "px-3 py-2" : lvl === 1 ? "px-3 py-1.5 pl-10" : "px-3 py-1 pl-16";
+                      const textCls = lvl === 0
+                        ? "text-xs text-[#E87722]"
+                        : lvl === 1
+                          ? "text-[11px] text-neutral-700"
+                          : "text-[10px] text-neutral-600";
+                      const iconSize = lvl === 0 ? "h-3.5 w-3.5" : "h-3 w-3";
                       return (
                         <tr
-                          key={`hdr-${item.level}-${item.key}`}
-                          style={{
-                            background: isLevel1 ? "#FAFAFA" : "#FFF7ED",
-                            cursor: "pointer",
-                            borderTop: isLevel1 ? "1px solid #F1F5F9" : "2px solid #FED7AA",
-                          }}
+                          key={`hdr-${lvl}-${item.key}`}
+                          style={{ background: bg, cursor: "pointer", borderTop: border }}
                           onClick={() => toggleGroupCollapse(item.key)}
                         >
-                          <td colSpan={12} className={isLevel1 ? "px-3 py-1.5 pl-10" : "px-3 py-2"}>
+                          <td colSpan={12} className={padding}>
                             <div className="flex items-center justify-between">
-                              <span
-                                className={cn(
-                                  "inline-flex items-center gap-1.5 font-semibold uppercase tracking-wider",
-                                  isLevel1 ? "text-[11px] text-neutral-700" : "text-xs text-[#E87722]"
-                                )}
-                              >
+                              <span className={cn("inline-flex items-center gap-1.5 font-semibold uppercase tracking-wider", textCls)}>
                                 {item.collapsed
-                                  ? <ChevronRight className={isLevel1 ? "h-3 w-3" : "h-3.5 w-3.5"} />
-                                  : <ChevronDown  className={isLevel1 ? "h-3 w-3" : "h-3.5 w-3.5"} />}
-                                {!isLevel1 && <Layers className="h-3.5 w-3.5" />}
+                                  ? <ChevronRight className={iconSize} />
+                                  : <ChevronDown  className={iconSize} />}
+                                {lvl === 0 && <Layers className="h-3.5 w-3.5" />}
                                 {item.label}
                                 <span className="text-muted-foreground font-normal normal-case ml-1">
                                   · {item.count} {item.count === 1 ? "línea" : "líneas"}
                                 </span>
                               </span>
-                              <span
-                                className={cn(
-                                  "font-mono font-semibold",
-                                  isLevel1 ? "text-[11px] text-neutral-700" : "text-xs text-[#E87722]"
-                                )}
-                              >
+                              <span className={cn("font-mono font-semibold", textCls)}>
                                 Subtotal: {fmtMoney(item.total, 0)} {moneyCurrency}
                               </span>
                             </div>
