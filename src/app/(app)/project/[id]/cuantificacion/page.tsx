@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
 import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, Project } from "@/lib/types/database";
-import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
+import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare, Undo2 } from "lucide-react";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 
 type SortConfig = { key: string; dir: SortDirection };
@@ -156,6 +156,10 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [collapsedGroups, setCollapsedGroups]     = usePersistedState<Set<string>>(`cuant:collapsedGroups:${projectId}`, new Set(), SET_PERSIST_OPTS);
   const [artPUs, setArtPUs] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** Stack de operaciones deshacibles (in-memory, se pierde al recargar).
+   *  Por ahora soporta deshacer eliminación de líneas (single, bulk o all)
+   *  — son las acciones destructivas del módulo. Cap a 20 ops. */
+  const [undoStack, setUndoStack] = useState<{ kind: "delete"; lineIds: string[]; snapshots: QuantLine[]; label: string }[]>([]);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   /** Articulo abierto en el modal de composición (click en celda PU USD). */
   const [composicionArticuloId, setComposicionArticuloId] = useState<string | null>(null);
@@ -210,6 +214,26 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   }, [projectId]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Keyboard shortcut: Cmd/Ctrl+Z dispara undo. Sólo escuchamos cuando
+  // hay algo en el stack y el foco no está en un input/textarea (para no
+  // pisar el undo nativo del usuario mientras escribe).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const modifier = e.metaKey || e.ctrlKey;
+      if (!modifier || e.key.toLowerCase() !== "z" || e.shiftKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      if (undoStack.length === 0) return;
+      e.preventDefault();
+      undo();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoStack]);
 
   // Collect unique batches for filter and color assignment
   const batchList = Array.from(new Set(lines.filter((l) => l.import_batch).map((l) => l.import_batch!)));
@@ -431,11 +455,39 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     }
   }
 
+  /** Push una operación deshacible al stack (cap a 20). */
+  function pushUndo(op: { kind: "delete"; lineIds: string[]; snapshots: QuantLine[]; label: string }) {
+    setUndoStack((prev) => [...prev, op].slice(-20));
+  }
+
+  /** Deshacer la última operación del stack. Por ahora todas son
+   *  deletes — restauramos seteando deleted_at = null y volviendo
+   *  a poner las líneas en el state. */
+  async function undo() {
+    if (undoStack.length === 0) return;
+    const op = undoStack[undoStack.length - 1];
+    const { error } = await supabase
+      .from("quantification_lines")
+      .update({ deleted_at: null })
+      .in("id", op.lineIds);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    // Restaurar al state local respetando line_number
+    setLines((prev) => [...prev, ...op.snapshots].sort((a, b) => a.line_number - b.line_number));
+    setUndoStack((prev) => prev.slice(0, -1));
+    toast.success(`Deshecho: ${op.label}`);
+  }
+
   async function deleteLine(id: string) {
     if (!confirm("¿Eliminar esta línea?")) return;
+    const snapshot = lines.find((l) => l.id === id);
+    if (!snapshot) return;
     await supabase.from("quantification_lines").update({ deleted_at: new Date().toISOString() }).eq("id", id);
     setLines(lines.filter((l) => l.id !== id));
     setSelected((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    pushUndo({ kind: "delete", lineIds: [id], snapshots: [snapshot], label: "1 línea eliminada" });
     toast.success("Línea eliminada");
   }
 
@@ -443,17 +495,22 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     if (selected.size === 0) return;
     if (!confirm(`¿Eliminar ${selected.size} líneas seleccionadas?`)) return;
     const ids = Array.from(selected);
+    const snapshots = lines.filter((l) => selected.has(l.id));
     await supabase.from("quantification_lines").update({ deleted_at: new Date().toISOString() }).in("id", ids);
     setLines(lines.filter((l) => !selected.has(l.id)));
     setSelected(new Set());
+    pushUndo({ kind: "delete", lineIds: ids, snapshots, label: `${ids.length} líneas eliminadas` });
     toast.success(`${ids.length} líneas eliminadas`);
   }
 
   async function deleteAll() {
     if (!confirm(`¿Eliminar TODAS las ${lines.length} líneas de cuantificación?\n\nLos datos del cronograma y paquetes asociados se conservarán y podrán restaurarse.`)) return;
+    const allIds = lines.map((l) => l.id);
+    const allSnapshots = [...lines];
     await supabase.from("quantification_lines").update({ deleted_at: new Date().toISOString() }).eq("project_id", projectId).is("deleted_at", null);
     setLines([]);
     setSelected(new Set());
+    pushUndo({ kind: "delete", lineIds: allIds, snapshots: allSnapshots, label: `Todas las líneas (${allIds.length}) eliminadas` });
     toast.success("Todas las líneas eliminadas (soft-delete)");
   }
 
@@ -743,6 +800,22 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
             <X className="h-3 w-3 mr-1" /> Limpiar filtros
           </Button>
         )}
+        {/* Botón deshacer última operación destructiva (eliminación de líneas).
+            In-memory, se pierde al recargar la página. Cmd/Ctrl+Z también. */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-xs"
+          onClick={undo}
+          disabled={undoStack.length === 0}
+          title={undoStack.length > 0
+            ? `Deshacer: ${undoStack[undoStack.length - 1].label} (Cmd/Ctrl+Z)`
+            : "Nada que deshacer"}
+        >
+          <Undo2 className="h-3 w-3 mr-1" />
+          Deshacer
+          {undoStack.length > 0 && <span className="ml-1 text-muted-foreground">({undoStack.length})</span>}
+        </Button>
         <div className="flex items-center gap-2 ml-auto">
           {/* Toggle USD ↔ moneda local */}
           <Label className="text-xs text-muted-foreground">USD</Label>
