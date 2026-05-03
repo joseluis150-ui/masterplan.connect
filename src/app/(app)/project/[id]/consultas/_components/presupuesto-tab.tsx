@@ -121,7 +121,11 @@ export function PresupuestoTab({
   const [selectedSectors, setSelectedSectors] = useState<Set<string>>(new Set());
   const [sectorPickerOpen, setSectorPickerOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set()); // category ids con desglose visible
-  const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set()); // subcategory ids con artículos visibles
+  /** Subcategoría cuyos artículos están mostrados en el modal flotante.
+   *  Reemplaza al expandedSubs anterior — antes los artículos se desplegaban
+   *  inline dentro de la tabla (overflow horizontal feo); ahora viven en
+   *  un Dialog dedicado con espacio propio. */
+  const [openSubArticles, setOpenSubArticles] = useState<{ subId: string; subCode: string; subName: string } | null>(null);
   const [selectedArt, setSelectedArt] = useState<ArticuloRollup | null>(null); // articulo abierto en el modal
   const supabase = createClient();
 
@@ -285,19 +289,11 @@ export function PresupuestoTab({
       return next;
     });
   }
-  function toggleExpandedSub(subId: string) {
-    setExpandedSubs((prev) => {
-      const next = new Set(prev);
-      if (next.has(subId)) next.delete(subId); else next.add(subId);
-      return next;
-    });
-  }
   function expandAll() {
     setExpanded(new Set(Array.from(categoryTotals.keys())));
   }
   function collapseAll() {
     setExpanded(new Set());
-    setExpandedSubs(new Set());
   }
 
   // Articulos agrupados por subcategoría — qty/costo total y desglose por sector
@@ -643,28 +639,32 @@ export function PresupuestoTab({
                       </TableCell>
                     </TableRow>
                     {isOpen && Array.from(cat.subs.entries()).map(([subId, sub]) => {
-                      const subOpen = expandedSubs.has(subId);
                       const arts = articulosBySub.get(subId) || [];
                       const subTotal = filteredTotal(sub.bySector);
                       if (isFiltered && subTotal === 0) return null;
-                      const colSpanFull = 5 + (showSectorCols ? displayedSectors.length : 0); // toda la fila
                       return (
                         <React.Fragment key={subId}>
                           <TableRow
                             className="bg-background cursor-pointer hover:bg-muted/30 text-sm"
-                            onClick={() => toggleExpandedSub(subId)}
+                            onClick={() => arts.length > 0 && setOpenSubArticles({ subId, subCode: sub.code, subName: sub.name })}
+                            title={arts.length > 0 ? "Ver artículos en esta subcategoría" : "Sin artículos"}
                           >
                             <TableCell className="pl-4 text-muted-foreground sticky left-0 z-20 bg-background w-[110px] min-w-[110px] max-w-[110px]">
                               <span className="inline-flex items-center gap-1">
                                 {arts.length > 0
-                                  ? (subOpen
-                                    ? <ChevronDown className="h-3.5 w-3.5" />
-                                    : <ChevronRight className="h-3.5 w-3.5" />)
+                                  ? <Boxes className="h-3.5 w-3.5 text-[#E87722]" />
                                   : <span className="inline-block w-3.5" />}
                                 <span className="text-[#E87722] font-mono">{sub.code}</span>
                               </span>
                             </TableCell>
-                            <TableCell className="pl-8 sticky left-[110px] z-20 bg-background min-w-[260px] border-r-2 border-r-neutral-300">{sub.name}</TableCell>
+                            <TableCell className="pl-8 sticky left-[110px] z-20 bg-background min-w-[260px] border-r-2 border-r-neutral-300">
+                              {sub.name}
+                              {arts.length > 0 && (
+                                <span className="ml-2 text-[10px] text-muted-foreground">
+                                  · {arts.length} {arts.length === 1 ? "artículo" : "artículos"}
+                                </span>
+                              )}
+                            </TableCell>
                             {showSectorCols && displayedSectors.map((s) => {
                               const v = sub.bySector.get(s.id) || 0;
                               return (
@@ -683,99 +683,6 @@ export function PresupuestoTab({
                               {grandTotal > 0 ? `${((subTotal / grandTotal) * 100).toFixed(1)}%` : "—"}
                             </TableCell>
                           </TableRow>
-                          {subOpen && (
-                            <TableRow className="bg-muted/20 hover:bg-muted/20">
-                              <TableCell colSpan={colSpanFull} className="p-0">
-                                <div className="px-10 py-3">
-                                  <div className="flex items-center gap-2 mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">
-                                    <Package className="h-3.5 w-3.5" />
-                                    Artículos en {sub.code} {sub.name}
-                                    <span className="text-[10px] normal-case text-muted-foreground/80">
-                                      ({arts.length} {arts.length === 1 ? "artículo" : "artículos"})
-                                    </span>
-                                  </div>
-                                  {arts.length === 0 ? (
-                                    <p className="text-xs italic text-muted-foreground py-2">
-                                      Esta subcategoría no tiene artículos cuantificados.
-                                    </p>
-                                  ) : (
-                                    <div className="border rounded-md overflow-hidden bg-background">
-                                      <table className="w-full text-sm">
-                                        <thead>
-                                          <tr className="bg-neutral-900">
-                                            <th className="text-center px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[80px]">Cód.</th>
-                                            <th className="text-left px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white">Artículo</th>
-                                            <th className="text-center px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[70px]">Unidad</th>
-                                            {showSectorCols && displayedSectors.map((s) => (
-                                              <th key={s.id} className="text-center px-2 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[130px] min-w-[130px] max-w-[130px] align-middle">
-                                                <div className="leading-tight whitespace-normal break-words">{s.name}</div>
-                                              </th>
-                                            ))}
-                                            <th className="text-center px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[130px] min-w-[130px] max-w-[130px] align-middle">
-                                              <div className="leading-tight whitespace-normal break-words">{isPerM2 ? `Total ${currency}/m²` : `Total (${currency})`}</div>
-                                            </th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {arts.map((a) => {
-                                            const aTotal = filteredTotal(a.costBySector);
-                                            if (isFiltered && aTotal === 0) return null;
-                                            return (
-                                              <tr
-                                                key={a.articuloId}
-                                                className="border-t hover:bg-muted/10 cursor-pointer"
-                                                onClick={() => setSelectedArt(a)}
-                                                title="Ver insumos del artículo"
-                                              >
-                                                <td className="px-3 py-2 text-center font-mono text-muted-foreground w-[80px]">{a.number}</td>
-                                                <td className="px-3 py-2">
-                                                  <div className="flex items-center gap-1.5">
-                                                    <Boxes className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
-                                                    {a.description}
-                                                  </div>
-                                                  <div className="text-xs text-muted-foreground mt-0.5">
-                                                    Cant. total: <span className="font-mono">{formatNumber(a.quantity)}</span> {a.unit} · P.U. <span className="font-mono">{fmt(a.unitCost)}</span> {currency}
-                                                  </div>
-                                                </td>
-                                                <td className="px-3 py-2 text-center text-muted-foreground w-[70px]">{a.unit}</td>
-                                                {showSectorCols && displayedSectors.map((s) => {
-                                                  const v = a.costBySector.get(s.id) || 0;
-                                                  return (
-                                                    <td key={s.id} className="px-2 py-2 text-center font-mono w-[130px]">
-                                                      {v > 0
-                                                        ? fmtAmount(v, s)
-                                                        : <span className="text-muted-foreground">—</span>}
-                                                    </td>
-                                                  );
-                                                })}
-                                                <td className="px-2 py-2 text-center font-mono font-semibold w-[130px]">{fmtAmount(aTotal)}</td>
-                                              </tr>
-                                            );
-                                          })}
-                                          <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
-                                            <td colSpan={3} className="px-3 py-2 text-right text-xs uppercase tracking-wider text-white">
-                                              Subtotal
-                                            </td>
-                                            {showSectorCols && displayedSectors.map((s) => {
-                                              const v = arts.reduce((sum, a) => sum + (a.costBySector.get(s.id) || 0), 0);
-                                              return (
-                                                <td key={s.id} className="px-2 py-2 text-center font-mono text-white w-[130px]">
-                                                  {v > 0 ? fmtAmount(v, s) : <span className="text-white/40">—</span>}
-                                                </td>
-                                              );
-                                            })}
-                                            <td className="px-2 py-2 text-center font-mono text-[#E87722] w-[130px]">
-                                              {fmtAmount(arts.reduce((s, a) => s + filteredTotal(a.costBySector), 0))}
-                                            </td>
-                                          </tr>
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  )}
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
                         </React.Fragment>
                       );
                     })}
@@ -833,6 +740,112 @@ export function PresupuestoTab({
           </Table>
         </div>
       )}
+
+      {/* Modal: artículos de la subcategoría seleccionada (caja flotante).
+          Reemplaza al despliegue inline anterior — la caja tiene espacio
+          propio y no rompe el layout horizontal de la tabla principal. */}
+      <Dialog open={!!openSubArticles} onOpenChange={(open) => { if (!open) setOpenSubArticles(null); }}>
+        <DialogContent className="sm:max-w-5xl max-h-[92vh] overflow-y-auto">
+          {openSubArticles && (() => {
+            const arts = articulosBySub.get(openSubArticles.subId) || [];
+            const subTotal = arts.reduce((s, a) => s + filteredTotal(a.costBySector), 0);
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Boxes className="h-5 w-5 text-[#E87722]" />
+                    Artículos en {openSubArticles.subCode} {openSubArticles.subName}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {arts.length} {arts.length === 1 ? "artículo" : "artículos"}
+                    {isFiltered && filterLabel && <> · filtrado por {filterLabel}</>}
+                    {" · Click en un artículo para ver sus insumos"}
+                  </DialogDescription>
+                </DialogHeader>
+
+                {arts.length === 0 ? (
+                  <p className="text-sm italic text-muted-foreground py-6 text-center">
+                    Esta subcategoría no tiene artículos cuantificados.
+                  </p>
+                ) : (
+                  <div className="border rounded-md overflow-hidden bg-background">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-neutral-900">
+                          <th className="text-center px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[80px]">Cód.</th>
+                          <th className="text-left px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white">Artículo</th>
+                          <th className="text-center px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[70px]">Unidad</th>
+                          {showSectorCols && displayedSectors.map((s) => (
+                            <th key={s.id} className="text-center px-2 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[130px] min-w-[130px] max-w-[130px] align-middle">
+                              <div className="leading-tight whitespace-normal break-words">{s.name}</div>
+                            </th>
+                          ))}
+                          <th className="text-center px-3 py-2 font-semibold text-xs uppercase tracking-wider text-white w-[130px] min-w-[130px] max-w-[130px] align-middle">
+                            <div className="leading-tight whitespace-normal break-words">{isPerM2 ? `Total ${currency}/m²` : `Total (${currency})`}</div>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {arts.map((a) => {
+                          const aTotal = filteredTotal(a.costBySector);
+                          if (isFiltered && aTotal === 0) return null;
+                          return (
+                            <tr
+                              key={a.articuloId}
+                              className="border-t hover:bg-muted/10 cursor-pointer"
+                              onClick={() => setSelectedArt(a)}
+                              title="Ver insumos del artículo"
+                            >
+                              <td className="px-3 py-2 text-center font-mono text-muted-foreground w-[80px]">{a.number}</td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center gap-1.5">
+                                  <Boxes className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+                                  {a.description}
+                                </div>
+                                <div className="text-xs text-muted-foreground mt-0.5">
+                                  Cant. total: <span className="font-mono">{formatNumber(a.quantity)}</span> {a.unit} · P.U. <span className="font-mono">{fmt(a.unitCost)}</span> {currency}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 text-center text-muted-foreground w-[70px]">{a.unit}</td>
+                              {showSectorCols && displayedSectors.map((s) => {
+                                const v = a.costBySector.get(s.id) || 0;
+                                return (
+                                  <td key={s.id} className="px-2 py-2 text-center font-mono w-[130px]">
+                                    {v > 0
+                                      ? fmtAmount(v, s)
+                                      : <span className="text-muted-foreground">—</span>}
+                                  </td>
+                                );
+                              })}
+                              <td className="px-2 py-2 text-center font-mono font-semibold w-[130px]">{fmtAmount(aTotal)}</td>
+                            </tr>
+                          );
+                        })}
+                        <tr className="border-t-2 border-neutral-900 bg-neutral-900 font-bold">
+                          <td colSpan={3} className="px-3 py-2 text-right text-xs uppercase tracking-wider text-white">
+                            Subtotal
+                          </td>
+                          {showSectorCols && displayedSectors.map((s) => {
+                            const v = arts.reduce((sum, a) => sum + (a.costBySector.get(s.id) || 0), 0);
+                            return (
+                              <td key={s.id} className="px-2 py-2 text-center font-mono text-white w-[130px]">
+                                {v > 0 ? fmtAmount(v, s) : <span className="text-white/40">—</span>}
+                              </td>
+                            );
+                          })}
+                          <td className="px-2 py-2 text-center font-mono text-[#E87722] w-[130px]">
+                            {fmtAmount(subTotal)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal: insumos del artículo seleccionado */}
       <Dialog open={!!selectedArt} onOpenChange={(open) => { if (!open) setSelectedArt(null); }}>
