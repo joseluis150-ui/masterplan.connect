@@ -865,7 +865,9 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                           </button>
                         </td>
                         <td className="px-2 py-1.5 font-mono text-xs font-bold" style={{ color: "#E87722" }}>{art.number}</td>
-                        <td className="px-2 py-1.5 font-medium overflow-hidden text-ellipsis whitespace-nowrap" title={art.description}>{art.description}</td>
+                        <td className="px-2 py-1.5 font-medium leading-tight whitespace-normal break-words" title={art.description}>
+                          <span className="line-clamp-2">{art.description}</span>
+                        </td>
                         <td className="px-2 py-1.5 text-center text-xs">{art.unit}</td>
                         <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_mat)}</td>
                         <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_mo)}</td>
