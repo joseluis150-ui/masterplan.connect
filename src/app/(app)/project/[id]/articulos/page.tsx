@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
   Collapsible,
   CollapsibleContent,
@@ -46,6 +47,26 @@ import { ColumnFilter, type SortDirection } from "@/components/shared/column-fil
 
 type SortConfig = { key: string; dir: SortDirection };
 import { toast } from "sonner";
+
+/** Hook simple de persistencia en localStorage para un boolean. Mismo
+ *  patrón que en avance-tab y cuantificacion. */
+function usePersistedBool(key: string, defaultValue: boolean): [boolean, (v: boolean) => void] {
+  const [v, _setV] = useState<boolean>(() => {
+    if (typeof window === "undefined") return defaultValue;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw === null) return defaultValue;
+      return raw === "true";
+    } catch { return defaultValue; }
+  });
+  const setV = (next: boolean) => {
+    _setV(next);
+    if (typeof window !== "undefined") {
+      try { window.localStorage.setItem(key, next ? "true" : "false"); } catch {}
+    }
+  };
+  return [v, setV];
+}
 
 interface ArticuloWithComps extends Articulo {
   compositions: (ArticuloComposition & { insumo: Insumo })[];
@@ -726,6 +747,16 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   const typeLabel = (type: string) => DEFAULT_INSUMO_TYPES.find((t) => t.value === type)?.label || type;
   const isVenta = project?.project_type === "venta";
 
+  // Toggle USD ↔ moneda local — persistido por proyecto, mismo patrón que
+  // Cuantificación. En moneda local SIEMPRE 0 decimales (PYG son montos
+  // grandes; los decimales son ruido).
+  const [showLocal, setShowLocal] = usePersistedBool(`articulos:showLocal:${projectId}`, false);
+  const tcRate = Number(project?.exchange_rate || 0);
+  const fmtMoney = (val: number, decimals = 2) => showLocal && tcRate > 0
+    ? formatNumber(convertCurrency(val, tcRate, "usd_to_local"), 0)
+    : formatNumber(val, decimals);
+  const moneyCurrency = showLocal ? (project?.local_currency || "LOCAL") : "USD";
+
   if (loading) return <div className="animate-pulse h-96 bg-muted rounded-lg" />;
 
   return (
@@ -768,6 +799,12 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
             <X className="h-3 w-3 mr-1" /> Limpiar filtros
           </Button>
         )}
+        {/* Toggle USD ↔ moneda local */}
+        <div className="flex items-center gap-2 ml-auto">
+          <Label className="text-xs text-muted-foreground">USD</Label>
+          <Switch checked={showLocal} onCheckedChange={setShowLocal} />
+          <Label className="text-xs text-muted-foreground">{project?.local_currency || "LOCAL"}</Label>
+        </div>
       </div>
 
       {filtered.length === 0 ? (
@@ -822,16 +859,16 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                     <ColumnFilter label="GLO" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_glo" ? sort.dir : null} onSort={handleSort("pu_glo")} />
                   </th>
                   <th className="px-2 py-2">
-                    <ColumnFilter label="PU USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_costo" ? sort.dir : null} onSort={handleSort("pu_costo")} />
+                    <ColumnFilter label={`PU ${moneyCurrency}`} values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_costo" ? sort.dir : null} onSort={handleSort("pu_costo")} />
                   </th>
                   {isVenta && <th className="px-2 py-2">
-                    <ColumnFilter label="PV USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_venta" ? sort.dir : null} onSort={handleSort("pu_venta")} />
+                    <ColumnFilter label={`PV ${moneyCurrency}`} values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_venta" ? sort.dir : null} onSort={handleSort("pu_venta")} />
                   </th>}
                   <th className="px-2 py-2">
                     <ColumnFilter label="Cant. cuant." values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "quant_total" ? sort.dir : null} onSort={handleSort("quant_total")} />
                   </th>
                   <th className="px-2 py-2">
-                    <ColumnFilter label="Total presup. USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "quant_amount_usd" ? sort.dir : null} onSort={handleSort("quant_amount_usd")} />
+                    <ColumnFilter label={`Total presup. ${moneyCurrency}`} values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "quant_amount_usd" ? sort.dir : null} onSort={handleSort("quant_amount_usd")} />
                   </th>
                   <th className="px-2 py-2 text-center uppercase text-[11px] font-semibold tracking-wider">Acc.</th>
                 </tr>
@@ -869,11 +906,11 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                           <span className="line-clamp-2">{art.description}</span>
                         </td>
                         <td className="px-2 py-1.5 text-center text-xs">{art.unit}</td>
-                        <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_mat)}</td>
-                        <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_mo)}</td>
-                        <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{formatNumber(art.pu_glo)}</td>
-                        <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap" style={{ fontWeight: 600 }}>{formatNumber(art.pu_costo)}</td>
-                        {isVenta && <td className="px-2 py-1.5 text-right font-mono text-green-600 whitespace-nowrap" style={{ fontWeight: 500 }}>{formatNumber(art.pu_venta)}</td>}
+                        <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{fmtMoney(art.pu_mat)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{fmtMoney(art.pu_mo)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-xs" style={{ color: "#525252" }}>{fmtMoney(art.pu_glo)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap" style={{ fontWeight: 600 }}>{fmtMoney(art.pu_costo)}</td>
+                        {isVenta && <td className="px-2 py-1.5 text-right font-mono text-green-600 whitespace-nowrap" style={{ fontWeight: 500 }}>{fmtMoney(art.pu_venta)}</td>}
                         <td
                           className="px-2 py-1.5 text-right font-mono text-xs whitespace-nowrap"
                           style={{ color: art.quant_total > 0 ? "#525252" : "#BFBFBF" }}
@@ -886,7 +923,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                           style={{ color: art.quant_amount_usd > 0 ? "#0A0A0A" : "#BFBFBF", fontWeight: 600 }}
                           title="Cant. cuant. × PU costo"
                         >
-                          {art.quant_amount_usd > 0 ? formatNumber(art.quant_amount_usd, 0) : "—"}
+                          {art.quant_amount_usd > 0 ? fmtMoney(art.quant_amount_usd, 0) : "—"}
                         </td>
                         <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
                           <div className="flex gap-0.5 justify-center">
@@ -922,8 +959,8 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                                       <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Cantidad</th>
                                       <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Desp.%</th>
                                       <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Marg.%</th>
-                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">PU USD</th>
-                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Total</th>
+                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">PU {moneyCurrency}</th>
+                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Total {moneyCurrency}</th>
                                       <th className="px-1 py-1.5"></th>
                                     </tr>
                                   </thead>
@@ -970,8 +1007,8 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                                               step="0.01"
                                             />
                                           </td>
-                                          <td className="px-2 py-1 text-right font-mono text-xs">{formatNumber(Number(comp.insumo.pu_usd || 0))}</td>
-                                          <td className="px-2 py-1 text-right font-mono text-xs font-bold">{formatNumber(lineTotal)}</td>
+                                          <td className="px-2 py-1 text-right font-mono text-xs">{fmtMoney(Number(comp.insumo.pu_usd || 0))}</td>
+                                          <td className="px-2 py-1 text-right font-mono text-xs font-bold">{fmtMoney(lineTotal)}</td>
                                           <td className="px-1 py-1">
                                             <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => deleteComposition(comp.id)}>
                                               <Trash2 className="h-2.5 w-2.5 text-destructive" />
