@@ -16,7 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { CURRENCIES } from "@/lib/constants/units";
-import type { Project, Sector, SectorType, ExchangeRateVersion } from "@/lib/types/database";
+import type { Project, Sector, SectorType, ExchangeRateVersion, SectorGroup } from "@/lib/types/database";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MembersSection } from "./_components/members-section";
@@ -30,6 +30,7 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
   const { id: projectId } = use(params);
   const [project, setProject] = useState<Project | null>(null);
   const [sectors, setSectors] = useState<Sector[]>([]);
+  const [sectorGroups, setSectorGroups] = useState<SectorGroup[]>([]);
   const [tcVersions, setTcVersions] = useState<ExchangeRateVersion[]>([]);
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -42,14 +43,48 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
   }, [projectId]);
 
   async function loadData() {
-    const [projectRes, sectorsRes, tcRes] = await Promise.all([
+    const [projectRes, sectorsRes, tcRes, groupsRes] = await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).single(),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.from("exchange_rate_versions").select("*").eq("project_id", projectId).order("version", { ascending: false }),
+      supabase.from("sector_groups").select("*").eq("project_id", projectId).order("order"),
     ]);
     if (projectRes.data) setProject(projectRes.data);
     setSectors(sectorsRes.data || []);
     setTcVersions(tcRes.data || []);
+    setSectorGroups(groupsRes.data || []);
+  }
+
+  /* ─────── Sector groups CRUD ─────── */
+
+  async function addSectorGroup() {
+    const newOrder = sectorGroups.length;
+    const { data, error } = await supabase
+      .from("sector_groups")
+      .insert({ project_id: projectId, name: `Grupo ${newOrder + 1}`, order: newOrder })
+      .select()
+      .single();
+    if (!error && data) {
+      setSectorGroups([...sectorGroups, data]);
+      toast.success("Grupo agregado");
+    }
+  }
+
+  async function updateSectorGroup(groupId: string, updates: Partial<SectorGroup>) {
+    const { error } = await supabase.from("sector_groups").update(updates).eq("id", groupId);
+    if (!error) setSectorGroups(sectorGroups.map((g) => g.id === groupId ? { ...g, ...updates } : g));
+  }
+
+  async function deleteSectorGroup(groupId: string) {
+    if (!confirm("¿Eliminar este grupo? Los sectores que pertenecen a él quedarán sin grupo.")) return;
+    const { error } = await supabase.from("sector_groups").delete().eq("id", groupId);
+    if (!error) {
+      setSectorGroups(sectorGroups.filter((g) => g.id !== groupId));
+      // Sectores que estaban en este grupo: el FK se setea a NULL automáticamente
+      // por ON DELETE SET NULL, pero refresh local también
+      setSectors(sectors.map((s) => s.sector_group_id === groupId ? { ...s, sector_group_id: null } : s));
+      toast.success("Grupo eliminado");
+    }
   }
 
   async function updateProject(updates: Record<string, unknown>) {
@@ -467,6 +502,55 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
         </CardContent>
       </Card>
 
+      {/* Grupos de sectores (opcional) */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Grupos de Sectores</CardTitle>
+              <CardDescription>
+                Agrupá sectores relacionados (ej. &ldquo;Edificio A&rdquo;, &ldquo;Servicios&rdquo;).
+                El agrupamiento se refleja en Cuantificación y Presupuesto. Los sectores
+                sin grupo aparecen al final como &ldquo;Sin grupo&rdquo;.
+              </CardDescription>
+            </div>
+            <Button size="sm" variant="outline" onClick={addSectorGroup}>
+              <Plus className="h-4 w-4 mr-1" />
+              Nuevo grupo
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {sectorGroups.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              Sin grupos definidos. Los sectores actuales se ven como una lista plana.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {sectorGroups.map((g) => {
+                const memberCount = sectors.filter((s) => s.sector_group_id === g.id).length;
+                return (
+                  <div key={g.id} className="flex items-center gap-3 p-2 border rounded-md">
+                    <Input
+                      value={g.name}
+                      onChange={(e) => setSectorGroups(sectorGroups.map((x) => x.id === g.id ? { ...x, name: e.target.value } : x))}
+                      onBlur={() => updateSectorGroup(g.id, { name: g.name })}
+                      className="flex-1"
+                    />
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {memberCount} {memberCount === 1 ? "sector" : "sectores"}
+                    </span>
+                    <Button variant="ghost" size="icon" onClick={() => deleteSectorGroup(g.id)}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Sectores */}
       <Card>
         <CardHeader>
@@ -529,6 +613,21 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
                         <SelectItem value="gastos_generales">Gastos generales</SelectItem>
                       </SelectContent>
                     </Select>
+                    {/* Grupo del sector — sólo visible si hay grupos definidos */}
+                    {sectorGroups.length > 0 && (
+                      <Select
+                        value={sector.sector_group_id ?? "__none__"}
+                        onValueChange={(v) => updateSector(sector.id, { sector_group_id: v === "__none__" ? null : v })}
+                      >
+                        <SelectTrigger className="w-44"><SelectValue placeholder="Sin grupo" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Sin grupo</SelectItem>
+                          {sectorGroups.map((g) => (
+                            <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                     {sector.type === "fisico" && (
                       <div className="flex items-center gap-1">
                         <Input

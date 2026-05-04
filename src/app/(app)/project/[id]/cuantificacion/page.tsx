@@ -22,8 +22,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
-import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, Project } from "@/lib/types/database";
-import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare, Undo2 } from "lucide-react";
+import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, Project, SectorGroup } from "@/lib/types/database";
+import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare, Undo2, Folder } from "lucide-react";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 
 type SortConfig = { key: string; dir: SortDirection };
@@ -123,6 +123,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [categories, setCategories] = useState<EdtCategory[]>([]);
   const [subcategories, setSubcategories] = useState<EdtSubcategory[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
+  const [sectorGroups, setSectorGroups] = useState<SectorGroup[]>([]);
   /** Catálogo de insumos del proyecto — usado por ArticuloCompositionDialog
    *  para poblar el SearchableSelect de "agregar insumo". */
   const [insumos, setInsumos] = useState<Insumo[]>([]);
@@ -169,7 +170,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
 
   const loadData = useCallback(async () => {
     // All 6 queries in parallel — single round trip
-    const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes, insRes, projRes] = await Promise.all([
+    const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes, insRes, projRes, groupsRes] = await Promise.all([
       supabase.from("quantification_lines").select("*").eq("project_id", projectId).is("deleted_at", null).order("line_number"),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
@@ -178,6 +179,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
       supabase.rpc("get_project_articulo_totals", { p_project_id: projectId }),
       supabase.from("insumos").select("*").eq("project_id", projectId).order("description"),
       supabase.from("projects").select("*").eq("id", projectId).single(),
+      supabase.from("sector_groups").select("*").eq("project_id", projectId).order("order"),
     ]);
 
     const arts = artsRes.data || [];
@@ -209,6 +211,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     setSectors(sects);
     setArtPUs(pus);
     setInsumos(inss);
+    setSectorGroups(((groupsRes.data ?? []) as SectorGroup[]));
     if (projRes.data) setProject(projRes.data as Project);
     setLoading(false);
   }, [projectId]);
@@ -902,7 +905,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                 // un map de líneas.
                 (() => {
                   type RenderItem =
-                    | { kind: "header"; level: 0 | 1 | 2; key: string; label: string; total: number; count: number; collapsed: boolean }
+                    | { kind: "header"; level: 0 | 1 | 2 | 3; key: string; label: string; total: number; count: number; collapsed: boolean }
                     | { kind: "line";   line: QuantLine; idx: number };
 
                   const items: RenderItem[] = [];
@@ -935,89 +938,154 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                     const s = subcategories.find((x) => x.id === id);
                     return s ? `${s.code} ${s.name}` : "(Sin subcategoría)";
                   };
+                  const groupOrderVal = (id: string) => {
+                    if (id === "__none_group__") return Number.MAX_SAFE_INTEGER;
+                    return sectorGroups.find((g) => g.id === id)?.order ?? Number.MAX_SAFE_INTEGER;
+                  };
+                  const groupLabel = (id: string) =>
+                    id === "__none_group__" ? "Sin grupo" : (sectorGroups.find((g) => g.id === id)?.name ?? "Sin grupo");
 
-                  // Agrupar siempre por sector como nivel 0. Las dos vistas
-                  // soportadas:
-                  //   "sector-category"               → 2 niveles (sector → categoría)
-                  //   "sector-category-subcategory"   → 3 niveles (sector → cat → subcat)
-                  const sectorGroups = new Map<string, typeof sorted>();
+                  // Si hay sector_groups definidos, agregamos un nivel arriba:
+                  //    Grupo → Sector → Categoría → [Subcategoría]
+                  // Si no hay grupos, comportamiento anterior (sin nivel grupo).
+                  const useGroups = sectorGroups.length > 0;
+                  const sectorGroupOf = (sectorId: string | null) => {
+                    if (!sectorId) return "__none_group__";
+                    const sec = sectors.find((s) => s.id === sectorId);
+                    return sec?.sector_group_id ?? "__none_group__";
+                  };
+
+                  // Map sector_id → líneas
+                  const linesBySector = new Map<string, typeof sorted>();
                   for (const l of sorted) {
                     const k = l.sector_id || "__none__";
-                    if (!sectorGroups.has(k)) sectorGroups.set(k, []);
-                    sectorGroups.get(k)!.push(l);
+                    if (!linesBySector.has(k)) linesBySector.set(k, []);
+                    linesBySector.get(k)!.push(l);
                   }
-                  const orderedSectors = Array.from(sectorGroups.keys()).sort((a, b) => sectorOrderVal(a) - sectorOrderVal(b));
-                  let runningIdx = 0;
-                  for (const sKey of orderedSectors) {
-                    const sLines = sectorGroups.get(sKey)!;
-                    const sCollapsed = collapsedGroups.has(sKey);
-                    items.push({
-                      kind: "header", level: 0, key: sKey,
-                      label: sectorLabel(sKey),
-                      total: sumLines(sLines), count: sLines.length, collapsed: sCollapsed,
-                    });
-                    if (sCollapsed) continue;
+                  const orderedSectors = Array.from(linesBySector.keys()).sort((a, b) => sectorOrderVal(a) - sectorOrderVal(b));
 
-                    // Sub-agrupar por categoría dentro del sector
-                    const catGroups = new Map<string, typeof sorted>();
-                    for (const l of sLines) {
-                      const k = l.category_id || "__none__";
-                      if (!catGroups.has(k)) catGroups.set(k, []);
-                      catGroups.get(k)!.push(l);
+                  // Si usamos grupos, organizamos los sectores agrupados.
+                  // groupedOrderedSectors: Map<groupKey, sectorKeys[]>
+                  const sectorsByGroup = new Map<string, string[]>();
+                  if (useGroups) {
+                    for (const sKey of orderedSectors) {
+                      const gKey = sectorGroupOf(sKey === "__none__" ? null : sKey);
+                      if (!sectorsByGroup.has(gKey)) sectorsByGroup.set(gKey, []);
+                      sectorsByGroup.get(gKey)!.push(sKey);
                     }
-                    const orderedCats = Array.from(catGroups.keys()).sort((a, b) => catOrderVal(a) - catOrderVal(b));
-                    for (const cKey of orderedCats) {
-                      const cLines = catGroups.get(cKey)!;
-                      const cKeyComposite = `${sKey}::${cKey}`;
-                      const cCollapsed = collapsedGroups.has(cKeyComposite);
-                      items.push({
-                        kind: "header", level: 1, key: cKeyComposite,
-                        label: catLabel(cKey),
-                        total: sumLines(cLines), count: cLines.length, collapsed: cCollapsed,
-                      });
-                      if (cCollapsed) continue;
+                  }
+                  const orderedGroupKeys = useGroups
+                    ? Array.from(sectorsByGroup.keys()).sort((a, b) => groupOrderVal(a) - groupOrderVal(b))
+                    : ["__virtual_root__"]; // marker para iterar una vez sin nivel grupo
 
-                      if (groupBy === "sector-category-subcategory") {
-                        // Tercer nivel: sub-agrupar por subcategoría dentro de la categoría
-                        const subGroups = new Map<string, typeof sorted>();
-                        for (const l of cLines) {
-                          const k = l.subcategory_id || "__none__";
-                          if (!subGroups.has(k)) subGroups.set(k, []);
-                          subGroups.get(k)!.push(l);
+                  // Helper: render de los niveles sector→cat→[sub] dado el array
+                  // de sector keys a renderizar (para no duplicar la lógica
+                  // entre modo agrupado y no agrupado).
+                  let runningIdx = 0;
+                  function renderSectorsOfGroup(sectorKeys: string[]) {
+                    for (const sKey of sectorKeys) {
+                      const sLines = linesBySector.get(sKey)!;
+                      const sCollapsed = collapsedGroups.has(sKey);
+                      items.push({
+                        kind: "header", level: useGroups ? 1 : 0, key: sKey,
+                        label: sectorLabel(sKey),
+                        total: sumLines(sLines), count: sLines.length, collapsed: sCollapsed,
+                      });
+                      if (sCollapsed) continue;
+
+                      const catGroups = new Map<string, typeof sorted>();
+                      for (const l of sLines) {
+                        const k = l.category_id || "__none__";
+                        if (!catGroups.has(k)) catGroups.set(k, []);
+                        catGroups.get(k)!.push(l);
+                      }
+                      const orderedCats = Array.from(catGroups.keys()).sort((a, b) => catOrderVal(a) - catOrderVal(b));
+                      for (const cKey of orderedCats) {
+                        const cLines = catGroups.get(cKey)!;
+                        const cKeyComposite = `${sKey}::${cKey}`;
+                        const cCollapsed = collapsedGroups.has(cKeyComposite);
+                        items.push({
+                          kind: "header", level: (useGroups ? 2 : 1) as 0 | 1 | 2 | 3, key: cKeyComposite,
+                          label: catLabel(cKey),
+                          total: sumLines(cLines), count: cLines.length, collapsed: cCollapsed,
+                        });
+                        if (cCollapsed) continue;
+
+                        if (groupBy === "sector-category-subcategory") {
+                          const subGroups = new Map<string, typeof sorted>();
+                          for (const l of cLines) {
+                            const k = l.subcategory_id || "__none__";
+                            if (!subGroups.has(k)) subGroups.set(k, []);
+                            subGroups.get(k)!.push(l);
+                          }
+                          const orderedSubs = Array.from(subGroups.keys()).sort((a, b) => subOrderVal(a) - subOrderVal(b));
+                          for (const subKey of orderedSubs) {
+                            const subLines = subGroups.get(subKey)!;
+                            const subKeyComposite = `${sKey}::${cKey}::${subKey}`;
+                            const subCollapsed = collapsedGroups.has(subKeyComposite);
+                            items.push({
+                              kind: "header", level: (useGroups ? 3 : 2) as 0 | 1 | 2 | 3, key: subKeyComposite,
+                              label: subLabel(subKey),
+                              total: sumLines(subLines), count: subLines.length, collapsed: subCollapsed,
+                            });
+                            if (subCollapsed) continue;
+                            for (const l of subLines) items.push({ kind: "line", line: l, idx: runningIdx++ });
+                          }
+                        } else {
+                          for (const l of cLines) items.push({ kind: "line", line: l, idx: runningIdx++ });
                         }
-                        const orderedSubs = Array.from(subGroups.keys()).sort((a, b) => subOrderVal(a) - subOrderVal(b));
-                        for (const subKey of orderedSubs) {
-                          const subLines = subGroups.get(subKey)!;
-                          const subKeyComposite = `${sKey}::${cKey}::${subKey}`;
-                          const subCollapsed = collapsedGroups.has(subKeyComposite);
-                          items.push({
-                            kind: "header", level: 2, key: subKeyComposite,
-                            label: subLabel(subKey),
-                            total: sumLines(subLines), count: subLines.length, collapsed: subCollapsed,
-                          });
-                          if (subCollapsed) continue;
-                          for (const l of subLines) items.push({ kind: "line", line: l, idx: runningIdx++ });
-                        }
-                      } else {
-                        // sector-category: las líneas van directo bajo la categoría
-                        for (const l of cLines) items.push({ kind: "line", line: l, idx: runningIdx++ });
                       }
                     }
+                  }
+
+                  if (useGroups) {
+                    for (const gKey of orderedGroupKeys) {
+                      const sectorKeys = sectorsByGroup.get(gKey)!;
+                      const groupLineCount = sectorKeys.reduce((acc, sk) => acc + (linesBySector.get(sk)?.length ?? 0), 0);
+                      const groupTotal = sectorKeys.reduce(
+                        (acc, sk) => acc + sumLines(linesBySector.get(sk) ?? []),
+                        0
+                      );
+                      const gCollapsed = collapsedGroups.has(gKey);
+                      items.push({
+                        kind: "header", level: 0, key: gKey,
+                        label: groupLabel(gKey),
+                        total: groupTotal, count: groupLineCount, collapsed: gCollapsed,
+                      });
+                      if (gCollapsed) continue;
+                      renderSectorsOfGroup(sectorKeys);
+                    }
+                  } else {
+                    renderSectorsOfGroup(orderedSectors);
                   }
 
                   return items.map((item) => {
                     if (item.kind === "header") {
                       const lvl = item.level;
-                      // Estilos por nivel — sector (0) más prominente, subcategoría (2) más sutil
-                      const bg     = lvl === 0 ? "#FFF7ED" : lvl === 1 ? "#FAFAFA" : "#F8FAFC";
-                      const border = lvl === 0 ? "2px solid #FED7AA" : "1px solid #F1F5F9";
-                      const padding = lvl === 0 ? "px-3 py-2" : lvl === 1 ? "px-3 py-1.5 pl-10" : "px-3 py-1 pl-16";
-                      const textCls = lvl === 0
-                        ? "text-xs text-[#E87722]"
+                      // Estilos por nivel — nivel 0 (top) más prominente, niveles
+                      // inferiores cada vez más sutiles. Hasta 4 niveles porque
+                      // si hay grupos: Grupo(0) → Sector(1) → Cat(2) → Sub(3).
+                      const bg = ["#FFE6CC", "#FFF7ED", "#FAFAFA", "#F8FAFC"][lvl] ?? "#F8FAFC";
+                      const border = lvl === 0
+                        ? "3px solid #E87722"
                         : lvl === 1
-                          ? "text-[11px] text-neutral-700"
-                          : "text-[10px] text-neutral-600";
-                      const iconSize = lvl === 0 ? "h-3.5 w-3.5" : "h-3 w-3";
+                          ? "2px solid #FED7AA"
+                          : "1px solid #F1F5F9";
+                      const padding = lvl === 0
+                        ? "px-3 py-2.5"
+                        : lvl === 1
+                          ? "px-3 py-2 pl-8"
+                          : lvl === 2
+                            ? "px-3 py-1.5 pl-14"
+                            : "px-3 py-1 pl-20";
+                      const textCls = lvl === 0
+                        ? "text-xs text-[#9A4D08] font-bold"
+                        : lvl === 1
+                          ? "text-xs text-[#E87722]"
+                          : lvl === 2
+                            ? "text-[11px] text-neutral-700"
+                            : "text-[10px] text-neutral-600";
+                      const iconSize = lvl <= 1 ? "h-3.5 w-3.5" : "h-3 w-3";
                       return (
                         <tr
                           key={`hdr-${lvl}-${item.key}`}
@@ -1030,23 +1098,22 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                                 {item.collapsed
                                   ? <ChevronRight className={iconSize} />
                                   : <ChevronDown  className={iconSize} />}
-                                {lvl === 0 && <Layers className="h-3.5 w-3.5" />}
+                                {/* Ícono según tipo: grupo (lvl 0 con groups
+                                    activos), sector (lvl 0 sin groups o lvl 1
+                                    con groups). Niveles más profundos sin ícono. */}
+                                {lvl === 0 && useGroups && <Folder className="h-3.5 w-3.5" />}
+                                {((lvl === 0 && !useGroups) || (lvl === 1 && useGroups)) && <Layers className="h-3.5 w-3.5" />}
                                 {item.label}
                                 <span className="text-muted-foreground font-normal normal-case ml-1">
                                   · {item.count} {item.count === 1 ? "línea" : "líneas"}
                                 </span>
                               </span>
                               <span className="inline-flex items-center gap-2">
-                                {/* Botón "+" sólo en nivel 2 (subcategoría) en
-                                    modo 3-niveles, EXPANDIDO. Crea una línea
-                                    con el sector / categoría / subcategoría
-                                    del grupo ya pre-llenados. No aparece si
-                                    alguno de los IDs es "__none__" (no
-                                    tendría sentido crear una línea en un
-                                    grupo sin asignar) ni si el grupo está
-                                    contraído (la línea quedaría oculta y
-                                    confundiría al usuario). */}
-                                {lvl === 2 && !item.collapsed && (() => {
+                                {/* Botón "+" en headers de subcategoría
+                                    (key con formato sector::cat::sub).
+                                    Independiente del nivel numérico, que
+                                    cambia si hay grupos definidos. */}
+                                {item.key.split("::").length === 3 && !item.collapsed && (() => {
                                   const [sId, cId, subId] = item.key.split("::");
                                   if (!sId || !cId || !subId) return null;
                                   if (sId === "__none__" || cId === "__none__" || subId === "__none__") return null;

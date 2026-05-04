@@ -28,7 +28,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatNumber, convertCurrency } from "@/lib/utils/formula";
-import type { Project, Sector, Articulo } from "@/lib/types/database";
+import type { Project, Sector, Articulo, SectorGroup } from "@/lib/types/database";
 import { DollarSign, ChevronDown, ChevronRight, Package, Boxes, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -110,6 +110,7 @@ export function PresupuestoTab({
   const [budgetData, setBudgetData] = useState<BudgetRow[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [sectors, setSectors] = useState<Sector[]>([]);
+  const [sectorGroups, setSectorGroups] = useState<SectorGroup[]>([]);
   const [qLines, setQLines] = useState<QLine[]>([]);
   const [articulos, setArticulos] = useState<Articulo[]>([]);
   const [articuloCosts, setArticuloCosts] = useState<Map<string, number>>(new Map());
@@ -130,7 +131,7 @@ export function PresupuestoTab({
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
-    const [projRes, sectorsRes, budgetRes, qlRes, artsRes, costsRes, compsRes] = await Promise.all([
+    const [projRes, sectorsRes, budgetRes, qlRes, artsRes, costsRes, compsRes, groupsRes] = await Promise.all([
       supabase.from("projects").select("*").eq("id", projectId).single(),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.rpc("get_budget_summary", { p_project_id: projectId }),
@@ -146,9 +147,11 @@ export function PresupuestoTab({
         .from("articulo_compositions")
         .select("articulo_id, quantity, waste_pct, articulo:articulos!inner(project_id), insumo:insumos(id, code, description, type, unit, pu_usd)")
         .eq("articulo.project_id", projectId),
+      supabase.from("sector_groups").select("*").eq("project_id", projectId).order("order"),
     ]);
     if (projRes.data) setProject(projRes.data);
     setSectors(sectorsRes.data || []);
+    setSectorGroups(((groupsRes.data ?? []) as SectorGroup[]));
     setBudgetData((budgetRes.data || []).map((r: Record<string, unknown>) => ({
       ...r,
       total_usd: Number(r.total_usd),
@@ -348,7 +351,45 @@ export function PresupuestoTab({
   const sectorsWithData = sectors.filter((s) => grandBySector.has(s.id));
   const sectorList = sectorsWithData.length > 0 ? sectorsWithData : sectors;
   // Cuando viewMode = "detailed" mostramos columnas por sector. Si hay filtro, sólo el sector seleccionado.
-  const displayedSectors = isFiltered ? sectorList.filter((s) => selectedSectors.has(s.id)) : sectorList;
+  // Si hay grupos definidos, reordenamos los sectores agrupados (sectores
+  // del grupo 1 contiguos, luego grupo 2, etc; "sin grupo" al final).
+  const filteredSectors = isFiltered ? sectorList.filter((s) => selectedSectors.has(s.id)) : sectorList;
+  const useSectorGroups = sectorGroups.length > 0;
+  const displayedSectors = useSectorGroups
+    ? (() => {
+        const orderedGroupIds = sectorGroups.map((g) => g.id);
+        const byGroup = new Map<string, Sector[]>();
+        for (const s of filteredSectors) {
+          const k = s.sector_group_id ?? "__none__";
+          if (!byGroup.has(k)) byGroup.set(k, []);
+          byGroup.get(k)!.push(s);
+        }
+        const result: Sector[] = [];
+        for (const gId of orderedGroupIds) {
+          const ss = byGroup.get(gId);
+          if (ss) result.push(...ss);
+        }
+        const noGroup = byGroup.get("__none__");
+        if (noGroup) result.push(...noGroup);
+        return result;
+      })()
+    : filteredSectors;
+  // Para el header agrupado: array de { group, sectorIds }
+  const groupSpans = useSectorGroups
+    ? (() => {
+        const spans: { groupId: string | null; groupName: string; count: number }[] = [];
+        for (const s of displayedSectors) {
+          const last = spans[spans.length - 1];
+          const groupId = s.sector_group_id ?? null;
+          const groupName = groupId
+            ? (sectorGroups.find((g) => g.id === groupId)?.name ?? "Sin grupo")
+            : "Sin grupo";
+          if (last && last.groupId === groupId) last.count += 1;
+          else spans.push({ groupId, groupName, count: 1 });
+        }
+        return spans;
+      })()
+    : [];
   const showSectorCols = viewMode === "detailed";
   const filterLabel = (() => {
     if (!isFiltered) return "";
@@ -559,6 +600,27 @@ export function PresupuestoTab({
           */}
           <Table className="w-auto border-separate border-spacing-0 [&_tr]:border-b-0 [&_td]:border-b [&_td]:border-border [&_th]:border-b [&_th]:border-border">
             <TableHeader>
+              {/* Fila extra de grupos de sectores — sólo si hay grupos definidos */}
+              {showSectorCols && useSectorGroups && (
+                <TableRow className="bg-[#9A4D08] hover:bg-[#9A4D08]">
+                  <TableHead className="w-[110px] min-w-[110px] max-w-[110px] text-white font-semibold text-xs sticky left-0 z-30 bg-[#9A4D08]" />
+                  <TableHead className="text-white font-semibold text-xs sticky left-[110px] z-30 bg-[#9A4D08] min-w-[260px] border-r-2 border-r-white/40" />
+                  {groupSpans.map((g, i) => (
+                    <TableHead
+                      key={`gs-${i}-${g.groupId ?? "none"}`}
+                      colSpan={g.count}
+                      className="text-center text-white font-semibold text-xs uppercase tracking-wider align-middle border-r border-r-white/30"
+                    >
+                      {g.groupName}
+                    </TableHead>
+                  ))}
+                  <TableHead className="text-center w-[130px] min-w-[130px] max-w-[130px] text-white font-semibold text-xs uppercase tracking-wider align-middle border-l-2 border-l-white/40" />
+                  {!isPerM2 && (
+                    <TableHead className="text-center w-[130px] min-w-[130px] max-w-[130px] text-white font-semibold text-xs align-middle" />
+                  )}
+                  <TableHead className="text-center w-[80px] text-white font-semibold text-xs align-middle" />
+                </TableRow>
+              )}
               <TableRow className="bg-neutral-900 hover:bg-neutral-900">
                 <TableHead className="w-[110px] min-w-[110px] max-w-[110px] text-white font-semibold text-sm sticky left-0 z-30 bg-neutral-900">Código</TableHead>
                 <TableHead className="text-white font-semibold text-sm sticky left-[110px] z-30 bg-neutral-900 min-w-[260px] border-r-2 border-r-white/40">Descripción</TableHead>

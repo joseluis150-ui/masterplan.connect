@@ -80,6 +80,14 @@ export interface ExchangeRateVersion {
   created_at: string;
 }
 
+export interface SectorGroup {
+  id: string;
+  project_id: string;
+  name: string;
+  order: number;
+  created_at: string;
+}
+
 export interface Sector {
   id: string;
   project_id: string;
@@ -89,6 +97,9 @@ export interface Sector {
   is_construction: boolean;   // suma al m² total de construcción del proyecto
   rentable_m2: number | null; // m² rentables (opcional, no todos los proyectos lo usan)
   order: number;
+  /** Grupo de sectores al que pertenece (opcional). Si null, el sector
+   *  queda sin grupo. */
+  sector_group_id: string | null;
 }
 
 export interface EdtCategory {
