@@ -138,12 +138,16 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const typeBadgeColor = (type: string) => {
+  // Colores de los badges de tipo. Reservamos el rojo para indicadores
+  // de error / sobrecosto — no para clasificar tipos. Cada tipo tiene su
+  // propio tono neutro o frío para distinguirse a primera vista sin
+  // sugerir alarma.
+  const typeBadgeClass = (type: string) => {
     switch (type) {
-      case "material": return "default";
-      case "mano_de_obra": return "secondary";
-      case "servicio": return "outline";
-      default: return "destructive";
+      case "material":     return "bg-amber-100 text-amber-800 border border-amber-200"; // naranja suave
+      case "mano_de_obra": return "bg-sky-100 text-sky-800 border border-sky-200";       // azul claro
+      case "servicio":     return "bg-emerald-100 text-emerald-800 border border-emerald-200"; // verde
+      default:             return "bg-violet-100 text-violet-800 border border-violet-200"; // global / otros — violeta
     }
   };
 
@@ -620,7 +624,7 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
                     <td className="px-2 py-1.5 font-mono text-xs" style={{ color: "#525252" }}>{insumo.code}</td>
                     <td className="px-2 py-1.5 text-xs overflow-hidden text-ellipsis whitespace-nowrap" style={{ color: "#525252" }}>{insumo.family || "—"}</td>
                     <td className="px-2 py-1.5">
-                      <Badge variant={typeBadgeColor(insumo.type) as "default" | "secondary" | "outline" | "destructive"} className="text-[10px]">
+                      <Badge variant="outline" className={cn("text-[10px]", typeBadgeClass(insumo.type))}>
                         {typeLabel(insumo.type)}
                       </Badge>
                     </td>
