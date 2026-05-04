@@ -263,7 +263,9 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
                 value={project.project_type}
                 onValueChange={(v) => v && updateProject({ project_type: v })}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <span>{project.project_type === "costo" ? "Costo interno" : "Venta"}</span>
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="costo">Costo interno</SelectItem>
                   <SelectItem value="venta">Venta</SelectItem>
@@ -387,7 +389,14 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
                 value={project.local_currency}
                 onValueChange={(v) => v && updateProject({ local_currency: v })}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <span>
+                    {(() => {
+                      const c = CURRENCIES.find((x) => x.code === project.local_currency);
+                      return c ? `${c.code} (${c.symbol}) - ${c.name}` : project.local_currency;
+                    })()}
+                  </span>
+                </SelectTrigger>
                 <SelectContent>
                   {CURRENCIES.map((c) => (
                     <SelectItem key={c.code} value={c.code}>
@@ -607,7 +616,11 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
                       value={sector.type}
                       onValueChange={(v) => v && updateSector(sector.id, { type: v as SectorType })}
                     >
-                      <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="w-48">
+                        {/* SelectValue no resuelve a label automáticamente en
+                            este Base UI fork — pasamos children con el label. */}
+                        <span>{sector.type === "fisico" ? "Sector físico" : "Gastos generales"}</span>
+                      </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="fisico">Sector físico</SelectItem>
                         <SelectItem value="gastos_generales">Gastos generales</SelectItem>
@@ -619,7 +632,13 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
                         value={sector.sector_group_id ?? "__none__"}
                         onValueChange={(v) => updateSector(sector.id, { sector_group_id: v === "__none__" ? null : v })}
                       >
-                        <SelectTrigger className="w-44"><SelectValue placeholder="Sin grupo" /></SelectTrigger>
+                        <SelectTrigger className="w-44">
+                          <span className={!sector.sector_group_id ? "text-muted-foreground" : ""}>
+                            {sector.sector_group_id
+                              ? (sectorGroups.find((g) => g.id === sector.sector_group_id)?.name ?? "Sin grupo")
+                              : "Sin grupo"}
+                          </span>
+                        </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__none__">Sin grupo</SelectItem>
                           {sectorGroups.map((g) => (
@@ -692,7 +711,9 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
                   value={project.proration_criteria}
                   onValueChange={(v) => v && updateProject({ proration_criteria: v })}
                 >
-                  <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-64">
+                    <span>{project.proration_criteria === "area" ? "Por área (m²)" : "Por monto presupuestado"}</span>
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="area">Por área (m²)</SelectItem>
                     <SelectItem value="monto">Por monto presupuestado</SelectItem>
