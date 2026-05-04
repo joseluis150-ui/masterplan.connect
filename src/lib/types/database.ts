@@ -147,6 +147,7 @@ export interface InsumoPriceHistory {
   pu_usd_old: number | null;
   pu_usd_new: number | null;
   tc_used: number | null;
+  description: string | null;
   created_by: string | null;
   created_at: string;
 }

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Articulo, ArticuloComposition, Insumo } from "@/lib/types/database";
+import { InsumoPriceEditDialog } from "./insumo-price-edit-dialog";
 
 /** Calcula el PU USD del artículo a partir de su composición.
  *  Misma fórmula que `calcArticuloTotals` en articulos/page.tsx — copia
@@ -85,6 +86,9 @@ export function ArticuloCompositionDialog({
   const [loading, setLoading] = useState(true);
   const [articulo, setArticulo] = useState<Articulo | null>(null);
   const [comps, setComps] = useState<CompRow[]>([]);
+  /** Insumo cuyo precio está siendo editado en el sub-dialog (click en
+   *  nombre del insumo en la tabla de composición). */
+  const [editingInsumoId, setEditingInsumoId] = useState<string | null>(null);
   const [savingMeta, setSavingMeta] = useState(false);
   const [addingInsumoId, setAddingInsumoId] = useState<string>("");
   const [hasAnyChange, setHasAnyChange] = useState(false);
@@ -286,11 +290,26 @@ export function ArticuloCompositionDialog({
                         return (
                           <tr key={c.id} className="border-t">
                             <td className="px-3 py-1.5">
-                              <p className="font-medium leading-tight">{insumo?.description ?? "(insumo eliminado)"}</p>
-                              <p className="text-[10px] text-muted-foreground">
-                                {insumo?.code != null ? `#${insumo.code}` : ""}
-                                {insumo?.type ? ` · ${insumo.type}` : ""}
-                              </p>
+                              {insumo ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingInsumoId(insumo.id)}
+                                  className="text-left hover:text-[#E87722] transition-colors group"
+                                  title="Click para actualizar el precio de este insumo"
+                                >
+                                  <p className="font-medium leading-tight group-hover:underline decoration-dotted underline-offset-2">
+                                    {insumo.description}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    {insumo.code != null ? `#${insumo.code}` : ""}
+                                    {insumo.type ? ` · ${insumo.type}` : ""}
+                                  </p>
+                                </button>
+                              ) : (
+                                <p className="font-medium leading-tight italic text-muted-foreground">
+                                  (insumo eliminado)
+                                </p>
+                              )}
                             </td>
                             <td className="px-2 py-1.5 text-center text-muted-foreground">{insumo?.unit ?? ""}</td>
                             <td className="px-2 py-1.5 text-right font-mono">
@@ -396,6 +415,25 @@ export function ArticuloCompositionDialog({
           </>
         )}
       </DialogContent>
+      {/* Sub-dialog: actualizar precio del insumo + histórico. Se abre
+          al click en el nombre de cualquier insumo de la composición.
+          Al guardar, refrescamos el listado para que aparezca el nuevo
+          PU y se recalcule el subtotal del artículo. */}
+      {editingInsumoId && (
+        <InsumoPriceEditDialog
+          insumoId={editingInsumoId}
+          exchangeRate={exchangeRate}
+          localCurrencyCode={localCurrencyCode}
+          onClose={() => setEditingInsumoId(null)}
+          onSaved={() => {
+            // Reload tanto la composición (para refrescar pu_usd del insumo)
+            // como notificar al padre (cuantificación) para que refresque
+            // los PU de los artículos.
+            load();
+            onChanged();
+          }}
+        />
+      )}
     </Dialog>
   );
 }
