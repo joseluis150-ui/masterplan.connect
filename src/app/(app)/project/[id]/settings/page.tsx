@@ -20,7 +20,7 @@ import type { Project, Sector, SectorType, ExchangeRateVersion } from "@/lib/typ
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MembersSection } from "./_components/members-section";
-import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon } from "lucide-react";
+import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon, ChevronUp, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { setNumberLocale } from "@/lib/utils/number-format";
@@ -147,6 +147,35 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
     if (!error) {
       setSectors(sectors.filter((s) => s.id !== sectorId));
       toast.success("Sector eliminado");
+    }
+  }
+
+  /** Reordena sectores moviendo `sectorId` arriba o abajo. Hace swap del
+   *  campo `order` con el sector adyacente y persiste ambos cambios. */
+  async function moveSector(sectorId: string, direction: "up" | "down") {
+    const idx = sectors.findIndex((s) => s.id === sectorId);
+    if (idx === -1) return;
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= sectors.length) return;
+    const a = sectors[idx];
+    const b = sectors[targetIdx];
+    // Swap del orden — usamos los valores actuales por si están descalibrados
+    // (ej. después de borrar un sector intermedio).
+    const newSectors = [...sectors];
+    newSectors[idx] = { ...a, order: b.order };
+    newSectors[targetIdx] = { ...b, order: a.order };
+    // Reordenar visualmente sin esperar a la DB
+    newSectors.sort((s1, s2) => (s1.order ?? 0) - (s2.order ?? 0));
+    setSectors(newSectors);
+    // Persistir ambos
+    const [errA, errB] = await Promise.all([
+      supabase.from("sectors").update({ order: b.order }).eq("id", a.id),
+      supabase.from("sectors").update({ order: a.order }).eq("id", b.id),
+    ]);
+    if (errA.error || errB.error) {
+      toast.error("No se pudo guardar el nuevo orden");
+      // Revertir UI
+      setSectors(sectors);
     }
   }
 
@@ -459,11 +488,31 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
             </p>
           ) : (
             <div className="space-y-3">
-              {sectors.map((sector) => (
+              {sectors.map((sector, idx) => (
                 <div key={sector.id} className="p-3 border rounded-lg space-y-2">
                   {/* Fila 1: nombre, tipo, área, eliminar */}
                   <div className="flex items-center gap-3">
-                    <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab" />
+                    <div className="flex flex-col items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => moveSector(sector.id, "up")}
+                        disabled={idx === 0}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="Subir"
+                      >
+                        <ChevronUp className="h-3 w-3" />
+                      </button>
+                      <GripVertical className="h-3 w-3 text-muted-foreground/50" />
+                      <button
+                        type="button"
+                        onClick={() => moveSector(sector.id, "down")}
+                        disabled={idx === sectors.length - 1}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="Bajar"
+                      >
+                        <ChevronDown className="h-3 w-3" />
+                      </button>
+                    </div>
                     <Input
                       value={sector.name}
                       onChange={(e) => setSectors(sectors.map((s) => s.id === sector.id ? { ...s, name: e.target.value } : s))}
