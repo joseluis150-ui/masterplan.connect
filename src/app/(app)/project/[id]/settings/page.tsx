@@ -87,6 +87,30 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
     }
   }
 
+  /** Reordena grupos de sectores. Mismo patrón que moveSector — swap del
+   *  campo `order` con el grupo adyacente y persiste ambos cambios. */
+  async function moveSectorGroup(groupId: string, direction: "up" | "down") {
+    const idx = sectorGroups.findIndex((g) => g.id === groupId);
+    if (idx === -1) return;
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= sectorGroups.length) return;
+    const a = sectorGroups[idx];
+    const b = sectorGroups[targetIdx];
+    const next = [...sectorGroups];
+    next[idx] = { ...a, order: b.order };
+    next[targetIdx] = { ...b, order: a.order };
+    next.sort((g1, g2) => (g1.order ?? 0) - (g2.order ?? 0));
+    setSectorGroups(next);
+    const [errA, errB] = await Promise.all([
+      supabase.from("sector_groups").update({ order: b.order }).eq("id", a.id),
+      supabase.from("sector_groups").update({ order: a.order }).eq("id", b.id),
+    ]);
+    if (errA.error || errB.error) {
+      toast.error("No se pudo guardar el nuevo orden");
+      setSectorGroups(sectorGroups);
+    }
+  }
+
   async function updateProject(updates: Record<string, unknown>) {
     if (!project) return;
     setSaving(true);
@@ -536,10 +560,31 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
             </p>
           ) : (
             <div className="space-y-2">
-              {sectorGroups.map((g) => {
+              {sectorGroups.map((g, idx) => {
                 const memberCount = sectors.filter((s) => s.sector_group_id === g.id).length;
                 return (
                   <div key={g.id} className="flex items-center gap-3 p-2 border rounded-md">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => moveSectorGroup(g.id, "up")}
+                        disabled={idx === 0}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="Subir"
+                      >
+                        <ChevronUp className="h-3 w-3" />
+                      </button>
+                      <GripVertical className="h-3 w-3 text-muted-foreground/50" />
+                      <button
+                        type="button"
+                        onClick={() => moveSectorGroup(g.id, "down")}
+                        disabled={idx === sectorGroups.length - 1}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="Bajar"
+                      >
+                        <ChevronDown className="h-3 w-3" />
+                      </button>
+                    </div>
                     <Input
                       value={g.name}
                       onChange={(e) => setSectorGroups(sectorGroups.map((x) => x.id === g.id ? { ...x, name: e.target.value } : x))}
