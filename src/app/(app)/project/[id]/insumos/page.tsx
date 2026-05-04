@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, use } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,6 +44,15 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
   const { id: projectId } = use(params);
   const [insumos, setInsumos] = useState<Insumo[]>([]);
   const [project, setProject] = useState<Project | null>(null);
+  /** Pestaña activa: "all" = todos los insumos del catálogo,
+   *  "in-use" = sólo los que aparecen en alguna composición de un
+   *  artículo que se usa en cuantificación. */
+  const [activeTab, setActiveTab] = useState<"all" | "in-use">("all");
+  /** Mapa insumo_id → { qty consumida total (con waste), monto USD }.
+   *  qty = Σ (qline.quantity × comp.quantity × (1 + waste/100))
+   *  monto = qty × insumo.pu_usd × (1 + comp.margin/100) — promediado
+   *  por composición porque el margin es por línea de composición. */
+  const [usageByInsumo, setUsageByInsumo] = useState<Map<string, { qty: number; amountUsd: number }>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortConfig>({ key: "", dir: null });
@@ -64,12 +74,65 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
-    const [insRes, projRes] = await Promise.all([
+    const [insRes, projRes, compRes, quantRes] = await Promise.all([
       supabase.from("insumos").select("*").eq("project_id", projectId).order("code"),
       supabase.from("projects").select("*").eq("id", projectId).single(),
+      // Composiciones (insumo_id, articulo_id, quantity, waste_pct, margin_pct)
+      // — sólo de articulos del proyecto.
+      supabase.from("articulo_compositions")
+        .select("insumo_id, articulo_id, quantity, waste_pct, margin_pct, articulo:articulos!inner(project_id)")
+        .eq("articulo.project_id", projectId),
+      // Líneas de cuantificación (articulo_id, quantity), no eliminadas
+      supabase.from("quantification_lines")
+        .select("articulo_id, quantity")
+        .eq("project_id", projectId)
+        .is("deleted_at", null),
     ]);
-    setInsumos(insRes.data || []);
+    const insList = insRes.data || [];
+    setInsumos(insList);
     if (projRes.data) setProject(projRes.data);
+
+    // Calcular consumo total por insumo:
+    //   1. Sumar quantity de cuantificación por articulo_id
+    //   2. Por cada composición, multiplicar (qty articulo × comp.quantity ×
+    //      (1+waste/100)) y acumular en el insumo
+    //   3. Monto = qty × pu_usd × (1+margin/100)
+    type Comp = {
+      insumo_id: string;
+      articulo_id: string;
+      quantity: number;
+      waste_pct: number;
+      margin_pct: number;
+    };
+    type QLine = { articulo_id: string | null; quantity: number | null };
+
+    const qtyByArticulo = new Map<string, number>();
+    for (const ql of (quantRes.data ?? []) as QLine[]) {
+      if (!ql.articulo_id) continue;
+      qtyByArticulo.set(
+        ql.articulo_id,
+        (qtyByArticulo.get(ql.articulo_id) || 0) + Number(ql.quantity || 0)
+      );
+    }
+
+    const puByInsumo = new Map<string, number>();
+    for (const i of insList) puByInsumo.set(i.id, Number(i.pu_usd || 0));
+
+    const usage = new Map<string, { qty: number; amountUsd: number }>();
+    for (const c of (compRes.data ?? []) as unknown as Comp[]) {
+      const qArt = qtyByArticulo.get(c.articulo_id);
+      if (!qArt) continue; // articulo sin uso en cuantificación
+      const qtyTotal = qArt * Number(c.quantity || 0) * (1 + Number(c.waste_pct || 0) / 100);
+      const pu = puByInsumo.get(c.insumo_id) || 0;
+      const amount = qtyTotal * pu * (1 + Number(c.margin_pct || 0) / 100);
+      const cur = usage.get(c.insumo_id) || { qty: 0, amountUsd: 0 };
+      usage.set(c.insumo_id, {
+        qty: cur.qty + qtyTotal,
+        amountUsd: cur.amountUsd + amount,
+      });
+    }
+    setUsageByInsumo(usage);
+
     setLoading(false);
   }, [projectId]);
 
@@ -95,6 +158,9 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
 
   const reviewCount = insumos.filter((i) => i.needs_review).length;
 
+  // Conteo de insumos en uso (para mostrar en el badge del tab)
+  const inUseCount = insumos.filter((i) => (usageByInsumo.get(i.id)?.qty || 0) > 0).length;
+
   const filtered = insumos.filter((i) => {
     const matchSearch = !search || i.description.toLowerCase().includes(search.toLowerCase()) || (i.family || "").toLowerCase().includes(search.toLowerCase());
     const matchType = filterType === "all" || i.type === filterType;
@@ -102,23 +168,35 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
     const matchTypeCol = filterTypeCol.size === 0 || filterTypeCol.has(typeLabel(i.type));
     const matchUnitCol = filterUnit.size === 0 || filterUnit.has(i.unit);
     const matchReview = filterReview === "all" || (filterReview === "review" ? i.needs_review : !i.needs_review);
-    return matchSearch && matchType && matchFamilyCol && matchTypeCol && matchUnitCol && matchReview;
+    // En vista "En uso" filtramos sólo los que tienen consumo > 0
+    const matchInUse = activeTab === "all" || (usageByInsumo.get(i.id)?.qty || 0) > 0;
+    return matchSearch && matchType && matchFamilyCol && matchTypeCol && matchUnitCol && matchReview && matchInUse;
   });
 
-  // Sort
+  // Sort. En vista "En uso" el orden por defecto es monto desc; en vista
+  // "Todos" se respeta el sort manual (code asc por carga).
   const sorted = [...filtered].sort((a, b) => {
-    if (!sort.dir || !sort.key) return 0;
-    const mult = sort.dir === "asc" ? 1 : -1;
-    switch (sort.key) {
-      case "code": return mult * (a.code - b.code);
-      case "family": return mult * (a.family || "").localeCompare(b.family || "", "es");
-      case "type": return mult * typeLabel(a.type).localeCompare(typeLabel(b.type), "es");
-      case "description": return mult * a.description.localeCompare(b.description, "es");
-      case "unit": return mult * a.unit.localeCompare(b.unit, "es");
-      case "pu_usd": return mult * (Number(a.pu_usd || 0) - Number(b.pu_usd || 0));
-      case "pu_local": return mult * (Number(a.pu_local || 0) - Number(b.pu_local || 0));
-      default: return 0;
+    // Sort manual (cabecera clickeada) tiene prioridad sobre cualquier default.
+    if (sort.dir && sort.key) {
+      const mult = sort.dir === "asc" ? 1 : -1;
+      switch (sort.key) {
+        case "code": return mult * (a.code - b.code);
+        case "family": return mult * (a.family || "").localeCompare(b.family || "", "es");
+        case "type": return mult * typeLabel(a.type).localeCompare(typeLabel(b.type), "es");
+        case "description": return mult * a.description.localeCompare(b.description, "es");
+        case "unit": return mult * a.unit.localeCompare(b.unit, "es");
+        case "pu_usd": return mult * (Number(a.pu_usd || 0) - Number(b.pu_usd || 0));
+        case "pu_local": return mult * (Number(a.pu_local || 0) - Number(b.pu_local || 0));
+        case "consumed_qty": return mult * ((usageByInsumo.get(a.id)?.qty || 0) - (usageByInsumo.get(b.id)?.qty || 0));
+        case "consumed_amount": return mult * ((usageByInsumo.get(a.id)?.amountUsd || 0) - (usageByInsumo.get(b.id)?.amountUsd || 0));
+        default: return 0;
+      }
     }
+    // Default: en vista "En uso" → monto presupuestado desc.
+    if (activeTab === "in-use") {
+      return (usageByInsumo.get(b.id)?.amountUsd || 0) - (usageByInsumo.get(a.id)?.amountUsd || 0);
+    }
+    return 0;
   });
 
   function handleSort(key: string) {
@@ -384,6 +462,38 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
         </div>
       </div>
 
+      {/* Tab bar: Todos / Insumos en uso */}
+      <div className="border-b">
+        <div className="flex gap-0">
+          {([
+            { v: "all",     label: "Todos los insumos", count: insumos.length },
+            { v: "in-use",  label: "Insumos en uso",    count: inUseCount },
+          ] as const).map((tab) => {
+            const isActive = activeTab === tab.v;
+            return (
+              <button
+                key={tab.v}
+                onClick={() => setActiveTab(tab.v)}
+                className={cn(
+                  "flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px",
+                  isActive
+                    ? "border-[#E87722] text-[#E87722]"
+                    : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
+                )}
+              >
+                {tab.label}
+                <span className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded-full font-mono",
+                  isActive ? "bg-[#E87722]/10" : "bg-muted text-muted-foreground"
+                )}>
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Filters */}
       <div className="flex gap-4 items-center">
         <div className="relative flex-1 max-w-sm">
@@ -445,6 +555,8 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
                 <col style={{ width: "50px" }} />
                 <col style={{ width: "95px" }} />
                 <col style={{ width: "105px" }} />
+                {activeTab === "in-use" && <col style={{ width: "100px" }} />}
+                {activeTab === "in-use" && <col style={{ width: "130px" }} />}
                 <col style={{ width: "80px" }} />
               </colgroup>
               <thead>
@@ -473,6 +585,16 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
                   <th className="px-2 py-2">
                     <ColumnFilter label={"PU " + (project?.local_currency || "Local")} values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu_local" ? sort.dir : null} onSort={handleSort("pu_local")} />
                   </th>
+                  {activeTab === "in-use" && (
+                    <th className="px-2 py-2">
+                      <ColumnFilter label="Cant. en uso" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "consumed_qty" ? sort.dir : null} onSort={handleSort("consumed_qty")} />
+                    </th>
+                  )}
+                  {activeTab === "in-use" && (
+                    <th className="px-2 py-2">
+                      <ColumnFilter label="Monto presup. USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "consumed_amount" ? sort.dir : null} onSort={handleSort("consumed_amount")} />
+                    </th>
+                  )}
                   <th className="px-2 py-2 text-center uppercase text-[11px] font-semibold tracking-wider">Acc.</th>
                 </tr>
               </thead>
@@ -506,6 +628,21 @@ export default function InsumosPage({ params }: { params: Promise<{ id: string }
                     <td className="px-2 py-1.5 text-center">{insumo.unit}</td>
                     <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap" style={{ fontWeight: 500 }}>{insumo.pu_usd != null ? formatNumber(Number(insumo.pu_usd)) : "—"}</td>
                     <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap" style={{ fontWeight: 500 }}>{insumo.pu_local != null ? formatNumber(Number(insumo.pu_local), 0) : "—"}</td>
+                    {activeTab === "in-use" && (() => {
+                      const u = usageByInsumo.get(insumo.id);
+                      const qty = u?.qty || 0;
+                      const amount = u?.amountUsd || 0;
+                      return (
+                        <>
+                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap text-xs" style={{ color: qty > 0 ? "#525252" : "#BFBFBF" }} title="Cantidad consumida (incluye merma)">
+                            {qty > 0 ? formatNumber(qty, 2) : "—"}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap" style={{ color: amount > 0 ? "#0A0A0A" : "#BFBFBF", fontWeight: 600 }} title="Cant. en uso × PU USD × (1 + margen)">
+                            {amount > 0 ? formatNumber(amount, 0) : "—"}
+                          </td>
+                        </>
+                      );
+                    })()}
                     <td className="px-2 py-1.5">
                       <div className="flex gap-0.5 justify-center">
                         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEdit(insumo)}><Pencil className="h-3 w-3" /></Button>
