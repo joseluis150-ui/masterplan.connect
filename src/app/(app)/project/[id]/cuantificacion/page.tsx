@@ -29,6 +29,7 @@ import { ColumnFilter, type SortDirection } from "@/components/shared/column-fil
 type SortConfig = { key: string; dir: SortDirection };
 import { toast } from "sonner";
 import { ArticuloCompositionDialog } from "./_components/articulo-composition-dialog";
+import { NewLineDialog } from "./_components/new-line-dialog";
 
 // Batch colors for import tracking — brand-aligned palette (Ash + Amber + allowed accents)
 const BATCH_COLORS = [
@@ -164,6 +165,13 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   /** Articulo abierto en el modal de composición (click en celda PU USD). */
   const [composicionArticuloId, setComposicionArticuloId] = useState<string | null>(null);
+  /** Modal de creación de nueva línea. Si pasa un objeto con
+   *  pre-fill, abre con esos campos ya seleccionados (ej. desde
+   *  el botón en header de subcategoría). */
+  const [newLineDialog, setNewLineDialog] = useState<
+    | { sector_id?: string; category_id?: string; subcategory_id?: string }
+    | null
+  >(null);
   const [importResult, setImportResult] = useState<CuantificacionImportResult | null>(null);
   const [importing, setImporting] = useState(false);
   const supabase = createClient();
@@ -379,6 +387,9 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     sector_id?: string;
     category_id?: string;
     subcategory_id?: string;
+    articulo_id?: string | null;
+    quantity?: number | null;
+    comment?: string | null;
   }) {
     const lineNumber = lines.length + 1;
     const defaultCat = overrides?.category_id || categories[0]?.id || "";
@@ -392,34 +403,42 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
 
     if (!defaultCat || !defaultSub || !defaultSector) {
       toast.error("Necesitas al menos una categoría, subcategoría y sector definidos");
-      return;
+      return false;
     }
 
+    const articuloId = overrides?.articulo_id ?? null;
     const { data, error } = await supabase
       .from("quantification_lines")
       .insert({
         project_id: projectId,
-        articulo_id: null,
-        quantity: null,
+        articulo_id: articuloId,
+        quantity: overrides?.quantity ?? null,
         quantity_formula: null,
         category_id: defaultCat,
         subcategory_id: defaultSub,
         sector_id: defaultSector,
         line_number: lineNumber,
-        comment: null,
+        comment: overrides?.comment ?? null,
       })
       .select()
       .single();
 
-    if (!error && data) {
+    if (error) {
+      toast.error(error.message);
+      return false;
+    }
+    if (data) {
+      // Enriquecer con descripción + unidad + PU del artículo si fue asignado
+      const art = articulos.find((a) => a.id === articuloId);
       const newLine: QuantLine = {
         ...data,
-        articulo_desc: "",
-        articulo_unit: "",
-        articulo_pu: 0,
+        articulo_desc: art?.description ?? "",
+        articulo_unit: art?.unit ?? "",
+        articulo_pu: articuloId ? (artPUs[articuloId] || 0) : 0,
       };
       setLines([...lines, newLine]);
     }
+    return true;
   }
 
   async function updateLineField(lineId: string, field: string, value: unknown) {
@@ -832,7 +851,23 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
 
       {/* Inline table */}
       <div className="border rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Toolbar arriba de la tabla con el botón "Nueva línea" a la derecha */}
+        <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/20">
+          <span className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
+            Líneas de cuantificación
+          </span>
+          <Button
+            size="sm"
+            onClick={() => setNewLineDialog({})}
+            className="h-8 bg-[#E87722] hover:bg-[#E87722]/90 text-white"
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" /> Nueva línea
+          </Button>
+        </div>
+        {/* Wrapper con altura limitada y scroll vertical para que el thead
+            sticky funcione. La altura se calcula relativa al viewport para
+            dejar espacio al header de la página, summary bar y toolbar. */}
+        <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 360px)" }}>
           <table className="brand-table w-full text-sm" style={{ tableLayout: "fixed" }}>
             <colgroup>
               <col style={{ width: "32px" }} />
@@ -848,9 +883,9 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
               <col style={{ width: "100px" }} />
               <col style={{ width: "70px" }} />
             </colgroup>
-            <thead>
+            <thead className="sticky top-0 z-30 bg-background shadow-sm">
               <tr>
-                <th className="px-1 py-2 text-center">
+                <th className="px-1 py-2 text-center bg-background">
                   <input
                     type="checkbox"
                     checked={filtered.length > 0 && selected.size === filtered.length}
@@ -1124,7 +1159,9 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                                       className="h-6 px-2 text-[10px] text-[#E87722] hover:bg-[#E87722]/10"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        addNewLine({ sector_id: sId, category_id: cId, subcategory_id: subId });
+                                        // Abre el modal con pre-fill — el usuario puede ajustar
+                                        // categoría/subcategoría/etc si quiere antes de crear.
+                                        setNewLineDialog({ sector_id: sId, category_id: cId, subcategory_id: subId });
                                       }}
                                       title={`Agregar línea en ${item.label}`}
                                     >
@@ -1257,14 +1294,6 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                   });
                 })()
               )}
-              {/* Add new line row */}
-              <tr style={{ borderTop: "2px solid #E5E5E5" }}>
-                <td colSpan={12} className="px-2 py-2">
-                  <Button variant="outline" size="sm" onClick={() => addNewLine()} className="w-full">
-                    <Plus className="h-4 w-4 mr-1" /> Nueva Línea
-                  </Button>
-                </td>
-              </tr>
             </tbody>
           </table>
         </div>
@@ -1398,6 +1427,22 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
               ...l,
               articulo_pu: l.articulo_id ? (pus[l.articulo_id] || 0) : 0,
             })));
+          }}
+        />
+      )}
+
+      {/* Modal de creación de nueva línea */}
+      {newLineDialog !== null && (
+        <NewLineDialog
+          sectors={sectors}
+          categories={categories}
+          subcategories={subcategories}
+          articulos={articulos}
+          initial={newLineDialog}
+          onClose={() => setNewLineDialog(null)}
+          onCreate={async (data) => {
+            const ok = await addNewLine(data);
+            return ok;
           }}
         />
       )}
