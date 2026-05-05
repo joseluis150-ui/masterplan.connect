@@ -111,11 +111,24 @@ interface QuantLine {
   import_batch: string | null;
   import_batch_date: string | null;
   needs_review: boolean;
+  /** Banderas de marcado por color. Múltiples por línea, paleta acotada
+   *  (ver FLAG_COLORS en flags-popover.tsx). Default array vacío. */
+  flag_colors: string[];
   // enriched
   articulo_desc: string;
   articulo_unit: string;
   articulo_pu: number;
 }
+
+/** Paleta de colores de banderas. Cada color tiene una clase de fondo
+ *  + label legible + descripción opcional para el tooltip del popover. */
+const FLAG_COLORS: { id: string; label: string; cls: string; fillCls: string }[] = [
+  { id: "amber",   label: "Por revisar",         cls: "text-amber-500",   fillCls: "fill-amber-500" },
+  { id: "red",     label: "Urgente / problema",  cls: "text-red-600",     fillCls: "fill-red-600" },
+  { id: "blue",    label: "Información",         cls: "text-blue-600",    fillCls: "fill-blue-600" },
+  { id: "green",   label: "Validado / OK",       cls: "text-emerald-600", fillCls: "fill-emerald-600" },
+  { id: "violet",  label: "Consultar",           cls: "text-violet-600",  fillCls: "fill-violet-600" },
+];
 
 export default function CuantificacionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: projectId } = use(params);
@@ -141,7 +154,11 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [filterCategory, setFilterCategory]       = usePersistedState<Set<string>>(`cuant:filterCategory:${projectId}`,    new Set(), SET_PERSIST_OPTS);
   const [filterSubcategory, setFilterSubcategory] = usePersistedState<Set<string>>(`cuant:filterSubcategory:${projectId}`, new Set(), SET_PERSIST_OPTS);
   const [filterSector, setFilterSector]           = usePersistedState<Set<string>>(`cuant:filterSector:${projectId}`,      new Set(), SET_PERSIST_OPTS);
-  const [filterReview, setFilterReview]           = usePersistedState<string>(`cuant:filterReview:${projectId}`,           "all");
+  /** Filtro por banderas de color. Set vacío = mostrar todo. Si tiene
+   *  colores, sólo se muestran líneas cuyo flag_colors incluya AL MENOS
+   *  uno de los colores seleccionados (semántica OR — mismo estilo que
+   *  los demás column filters). */
+  const [filterFlagColors, setFilterFlagColors]   = usePersistedState<Set<string>>(`cuant:filterFlagColors:${projectId}`, new Set(), SET_PERSIST_OPTS);
   const [sort, setSort]                           = usePersistedState<SortConfig>(`cuant:sort:${projectId}`,               { key: "", dir: null });
   /** Modo de agrupamiento. Sólo dos opciones jerárquicas:
    *   - "sector-category" → 2 niveles: Sector → Categoría
@@ -206,6 +223,9 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
       const art = arts.find((a) => a.id === line.articulo_id);
       return {
         ...line,
+        // flag_colors viene como text[] desde Postgres; aseguramos que
+        // siempre sea array (default vacío si null).
+        flag_colors: Array.isArray(line.flag_colors) ? line.flag_colors : [],
         articulo_desc: art?.description || "",
         articulo_unit: art?.unit || "",
         articulo_pu: line.articulo_id ? (pus[line.articulo_id] || 0) : 0,
@@ -251,7 +271,16 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const batchColorMap = new Map<string, string>();
   batchList.forEach((b, i) => batchColorMap.set(b, BATCH_COLORS[i % BATCH_COLORS.length]));
 
-  const reviewCount = lines.filter((l) => l.needs_review).length;
+  // Total de líneas con al menos una bandera (cualquier color). El
+  // botón de filtro sólo se muestra si hay > 0.
+  const flaggedCount = lines.filter((l) => (l.flag_colors || []).length > 0).length;
+  // Conteo por color — usado en el popover de filtro para mostrar
+  // cuántas líneas tiene cada color al lado del nombre.
+  const flagCountByColor: Record<string, number> = {};
+  for (const c of FLAG_COLORS) flagCountByColor[c.id] = 0;
+  for (const l of lines) for (const c of (l.flag_colors || [])) {
+    if (flagCountByColor[c] !== undefined) flagCountByColor[c]++;
+  }
 
   // Unique values for column filters
   const uniqueArticulos = Array.from(new Set(lines.map((l) => l.articulo_desc || "(Sin artículo)")));
@@ -269,7 +298,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     return sec?.name || "(Vacío)";
   })));
 
-  const hasAnyColumnFilter = filterArticulo.size > 0 || filterUnit.size > 0 || filterCategory.size > 0 || filterSubcategory.size > 0 || filterSector.size > 0 || filterReview !== "all";
+  const hasAnyColumnFilter = filterArticulo.size > 0 || filterUnit.size > 0 || filterCategory.size > 0 || filterSubcategory.size > 0 || filterSector.size > 0 || filterFlagColors.size > 0;
 
   const filtered = lines.filter((l) => {
     const artLabel = l.articulo_desc || "(Sin artículo)";
@@ -283,8 +312,8 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     const matchCat = filterCategory.size === 0 || filterCategory.has(catLabel);
     const matchSub = filterSubcategory.size === 0 || filterSubcategory.has(subLabel);
     const matchSector = filterSector.size === 0 || filterSector.has(secLabel);
-    const matchReview = filterReview === "all" || (filterReview === "review" ? l.needs_review : !l.needs_review);
-    return matchArt && matchUnit && matchCat && matchSub && matchSector && matchReview;
+    const matchFlags = filterFlagColors.size === 0 || (l.flag_colors || []).some((c) => filterFlagColors.has(c));
+    return matchArt && matchUnit && matchCat && matchSub && matchSector && matchFlags;
   });
 
   const grandTotal = filtered.reduce((sum, l) => sum + (Number(l.quantity) || 0) * l.articulo_pu, 0);
@@ -370,13 +399,23 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     setCollapsedGroups(new Set());
   }
 
-  async function toggleLineReview(lineId: string) {
+  /** Toggle de una bandera de color en la línea. Si ya existe, se remueve;
+   *  si no, se agrega. needs_review queda derivado: TRUE si hay al menos
+   *  una bandera, FALSE si no. */
+  async function toggleLineFlag(lineId: string, color: string) {
     const line = lines.find((l) => l.id === lineId);
     if (!line) return;
-    const newVal = !line.needs_review;
-    await supabase.from("quantification_lines").update({ needs_review: newVal }).eq("id", lineId);
-    setLines((prev) => prev.map((l) => l.id === lineId ? { ...l, needs_review: newVal } : l));
-    toast.success(newVal ? "Marcado para revisión" : "Revisión completada");
+    const current = Array.isArray(line.flag_colors) ? line.flag_colors : [];
+    const next = current.includes(color)
+      ? current.filter((c) => c !== color)
+      : [...current, color];
+    await supabase
+      .from("quantification_lines")
+      .update({ flag_colors: next, needs_review: next.length > 0 })
+      .eq("id", lineId);
+    setLines((prev) => prev.map((l) =>
+      l.id === lineId ? { ...l, flag_colors: next, needs_review: next.length > 0 } : l
+    ));
   }
 
   /** Crea una línea nueva. Si se pasan overrides (sector_id, category_id,
@@ -798,15 +837,78 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
           <ChevronRight className="h-3 w-3 mr-1" />
           Contraer todo
         </Button>
-        {reviewCount > 0 && (
-          <Button
-            variant={filterReview === "review" ? "default" : "outline"}
-            size="sm"
-            className={filterReview === "review" ? "text-xs bg-amber-500 hover:bg-amber-600 text-white" : "text-xs text-amber-600 border-amber-300 hover:bg-amber-50"}
-            onClick={() => setFilterReview(filterReview === "review" ? "all" : "review")}
-          >
-            <Flag className="h-3 w-3 mr-1" /> {reviewCount} por revisar
-          </Button>
+        {flaggedCount > 0 && (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  variant={filterFlagColors.size > 0 ? "default" : "outline"}
+                  size="sm"
+                  className={filterFlagColors.size > 0
+                    ? "text-xs bg-amber-500 hover:bg-amber-600 text-white"
+                    : "text-xs text-amber-600 border-amber-300 hover:bg-amber-50"}
+                  title="Filtrar por banderas de color"
+                />
+              }
+            >
+              {/* Si hay filtro activo, mostrar las banderitas de los colores seleccionados.
+                  Si no, ícono genérico + conteo total. */}
+              {filterFlagColors.size > 0 ? (
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-flex items-center -space-x-0.5">
+                    {FLAG_COLORS.filter((c) => filterFlagColors.has(c.id)).slice(0, 3).map((c) => (
+                      <Flag key={c.id} className={cn("h-3 w-3", c.cls, c.fillCls)} />
+                    ))}
+                  </span>
+                  <span>{filtered.filter((l) => (l.flag_colors || []).some((c) => filterFlagColors.has(c))).length}</span>
+                </span>
+              ) : (
+                <>
+                  <Flag className="h-3 w-3 mr-1" /> {flaggedCount} con bandera
+                </>
+              )}
+            </PopoverTrigger>
+            <PopoverContent className="w-[230px] p-1" align="start">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground px-2 py-1.5 border-b mb-1">
+                Filtrar por color
+              </p>
+              {FLAG_COLORS.map((c) => {
+                const count = flagCountByColor[c.id] || 0;
+                if (count === 0) return null;
+                const isActive = filterFlagColors.has(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      const next = new Set(filterFlagColors);
+                      if (isActive) next.delete(c.id); else next.add(c.id);
+                      setFilterFlagColors(next);
+                    }}
+                    className={cn(
+                      "w-full text-left flex items-center gap-2 px-2 py-1.5 text-xs rounded transition-colors",
+                      isActive ? "bg-muted" : "hover:bg-muted/50"
+                    )}
+                  >
+                    <Flag className={cn("h-3.5 w-3.5", c.cls, c.fillCls)} />
+                    <span className="flex-1">{c.label}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground">{count}</span>
+                    {isActive && <span className="text-[10px] text-emerald-600">✓</span>}
+                  </button>
+                );
+              })}
+              {filterFlagColors.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFilterFlagColors(new Set())}
+                  className="w-full text-left flex items-center gap-2 px-2 py-1.5 text-xs rounded transition-colors hover:bg-muted/50 border-t mt-1 pt-1.5"
+                >
+                  <X className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="flex-1">Limpiar filtro</span>
+                </button>
+              )}
+            </PopoverContent>
+          </Popover>
         )}
         {hasAnyColumnFilter && (
           <Button
@@ -816,7 +918,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
             onClick={() => {
               setFilterArticulo(new Set()); setFilterUnit(new Set());
               setFilterCategory(new Set()); setFilterSubcategory(new Set());
-              setFilterSector(new Set()); setFilterReview("all");
+              setFilterSector(new Set()); setFilterFlagColors(new Set());
             }}
           >
             <X className="h-3 w-3 mr-1" /> Limpiar filtros
@@ -1185,20 +1287,10 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                       />
                     </td>
                     <td className="px-1 py-1 text-center">
-                      <button
-                        type="button"
-                        onClick={() => toggleLineReview(line.id)}
-                        className="cursor-pointer hover:scale-110 transition-transform"
-                        title={line.needs_review ? "Quitar marca de revisión" : "Marcar para revisión"}
-                      >
-                        <Flag
-                          className={`h-3.5 w-3.5 mx-auto transition-colors ${
-                            line.needs_review
-                              ? "text-amber-500 fill-amber-500"
-                              : "text-gray-200 hover:text-amber-300"
-                          }`}
-                        />
-                      </button>
+                      <FlagsPopover
+                        colors={line.flag_colors || []}
+                        onToggle={(c) => toggleLineFlag(line.id, c)}
+                      />
                     </td>
                     <td className="px-2 py-1 font-mono text-xs text-muted-foreground">{idx + 1}</td>
                     <td className="px-2 py-1">
@@ -1440,6 +1532,78 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Popover de banderas — múltiples colores por línea. Click en el ícono
+ * abre un menú con los 5 colores predefinidos como toggles. La fila
+ * muestra hasta 3 banderitas chicas; si hay más se ve un "+N".
+ */
+function FlagsPopover({
+  colors,
+  onToggle,
+}: {
+  /** Array de IDs de color activos en la línea. */
+  colors: string[];
+  /** Callback al togglear un color. */
+  onToggle: (color: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = FLAG_COLORS.filter((c) => colors.includes(c.id));
+  const visible = active.slice(0, 3);
+  const extra = Math.max(0, active.length - 3);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex items-center gap-0 hover:scale-110 transition-transform"
+            title={active.length > 0
+              ? `Banderas: ${active.map((c) => c.label).join(", ")}`
+              : "Marcar con bandera de color"}
+          />
+        }
+      >
+        {active.length === 0 ? (
+          <Flag className="h-3.5 w-3.5 text-gray-200 hover:text-amber-300" />
+        ) : (
+          <div className="inline-flex items-center -space-x-1">
+            {visible.map((c) => (
+              <Flag key={c.id} className={cn("h-3.5 w-3.5", c.cls, c.fillCls)} />
+            ))}
+            {extra > 0 && (
+              <span className="ml-1 text-[9px] font-mono text-muted-foreground">+{extra}</span>
+            )}
+          </div>
+        )}
+      </PopoverTrigger>
+      <PopoverContent className="w-[210px] p-1" align="start">
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground px-2 py-1.5 border-b mb-1">
+          Banderas
+        </p>
+        {FLAG_COLORS.map((c) => {
+          const isActive = colors.includes(c.id);
+          return (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => onToggle(c.id)}
+              className={cn(
+                "w-full text-left flex items-center gap-2 px-2 py-1.5 text-xs rounded transition-colors",
+                isActive ? "bg-muted" : "hover:bg-muted/50"
+              )}
+            >
+              <Flag className={cn("h-3.5 w-3.5", c.cls, isActive && c.fillCls)} />
+              <span className="flex-1">{c.label}</span>
+              {isActive && <span className="text-[10px] text-emerald-600">✓</span>}
+            </button>
+          );
+        })}
+      </PopoverContent>
+    </Popover>
   );
 }
 
