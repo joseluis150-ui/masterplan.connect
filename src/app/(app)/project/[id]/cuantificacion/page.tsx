@@ -838,6 +838,13 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
           Deshacer
           {undoStack.length > 0 && <span className="ml-1 text-muted-foreground">({undoStack.length})</span>}
         </Button>
+        <Button
+          size="sm"
+          className="text-xs h-8 bg-[#E87722] hover:bg-[#E87722]/90 text-white"
+          onClick={() => setNewLineDialog({})}
+        >
+          <Plus className="h-3 w-3 mr-1" /> Nueva línea
+        </Button>
         <div className="flex items-center gap-2 ml-auto">
           {/* Toggle USD ↔ moneda local */}
           <Label className="text-xs text-muted-foreground">USD</Label>
@@ -849,25 +856,10 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
         </div>
       </div>
 
-      {/* Inline table */}
-      <div className="border rounded-lg overflow-hidden">
-        {/* Toolbar arriba de la tabla con el botón "Nueva línea" a la derecha */}
-        <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/20">
-          <span className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
-            Líneas de cuantificación
-          </span>
-          <Button
-            size="sm"
-            onClick={() => setNewLineDialog({})}
-            className="h-8 bg-[#E87722] hover:bg-[#E87722]/90 text-white"
-          >
-            <Plus className="h-3.5 w-3.5 mr-1" /> Nueva línea
-          </Button>
-        </div>
-        {/* Wrapper con altura limitada y scroll vertical para que el thead
-            sticky funcione. La altura se calcula relativa al viewport para
-            dejar espacio al header de la página, summary bar y toolbar. */}
-        <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 360px)" }}>
+      {/* Tabla — sin border ni toolbar dedicada para no robar espacio
+          vertical. Altura limitada (con margen para header de pestaña +
+          summary bar) + overflow-auto para que el thead sticky funcione. */}
+      <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 240px)" }}>
           <table className="brand-table w-full text-sm" style={{ tableLayout: "fixed" }}>
             <colgroup>
               <col style={{ width: "32px" }} />
@@ -1296,7 +1288,6 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
               )}
             </tbody>
           </table>
-        </div>
       </div>
       {/* Import Dialog */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
