@@ -602,9 +602,9 @@ export function PresupuestoTab({
             <TableHeader>
               {/* Fila extra de grupos de sectores — sólo si hay grupos definidos */}
               {showSectorCols && useSectorGroups && (
-                <TableRow className="bg-[#9A4D08] hover:bg-[#9A4D08]">
-                  <TableHead className="w-[110px] min-w-[110px] max-w-[110px] text-white font-semibold text-xs sticky left-0 z-30 bg-[#9A4D08]" />
-                  <TableHead className="text-white font-semibold text-xs sticky left-[110px] z-30 bg-[#9A4D08] min-w-[260px] border-r-2 border-r-white/40" />
+                <TableRow className="bg-neutral-700 hover:bg-neutral-700">
+                  <TableHead className="w-[110px] min-w-[110px] max-w-[110px] text-white font-semibold text-xs sticky left-0 z-30 bg-neutral-700" />
+                  <TableHead className="text-white font-semibold text-xs sticky left-[110px] z-30 bg-neutral-700 min-w-[260px] border-r-2 border-r-white/40" />
                   {groupSpans.map((g, i) => (
                     <TableHead
                       key={`gs-${i}-${g.groupId ?? "none"}`}
