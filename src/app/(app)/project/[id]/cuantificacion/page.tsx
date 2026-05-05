@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
 import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, Project, SectorGroup } from "@/lib/types/database";
-import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare, Undo2, Folder } from "lucide-react";
+import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare, Undo2, Folder, Copy } from "lucide-react";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 
 type SortConfig = { key: string; dir: SortDirection };
@@ -176,9 +176,15 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [artPUs, setArtPUs] = useState<Record<string, number>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   /** Stack de operaciones deshacibles (in-memory, se pierde al recargar).
-   *  Por ahora soporta deshacer eliminación de líneas (single, bulk o all)
-   *  — son las acciones destructivas del módulo. Cap a 20 ops. */
-  const [undoStack, setUndoStack] = useState<{ kind: "delete"; lineIds: string[]; snapshots: QuantLine[]; label: string }[]>([]);
+   *  Soporta:
+   *   - "delete": restaurar líneas borradas (deleted_at=null + reinsert state)
+   *   - "duplicate": deshacer una duplicación (delete soft de las nuevas)
+   *  lineIds = IDs afectados por la op (a deshacer). snapshots se usa
+   *  sólo en delete para poder restaurar el state local. Cap a 20 ops. */
+  type UndoOp =
+    | { kind: "delete"; lineIds: string[]; snapshots: QuantLine[]; label: string }
+    | { kind: "duplicate"; lineIds: string[]; label: string };
+  const [undoStack, setUndoStack] = useState<UndoOp[]>([]);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   /** Articulo abierto en el modal de composición (click en celda PU USD). */
   const [composicionArticuloId, setComposicionArticuloId] = useState<string | null>(null);
@@ -517,26 +523,38 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   }
 
   /** Push una operación deshacible al stack (cap a 20). */
-  function pushUndo(op: { kind: "delete"; lineIds: string[]; snapshots: QuantLine[]; label: string }) {
+  function pushUndo(op: UndoOp) {
     setUndoStack((prev) => [...prev, op].slice(-20));
   }
 
-  /** Deshacer la última operación del stack. Por ahora todas son
-   *  deletes — restauramos seteando deleted_at = null y volviendo
-   *  a poner las líneas en el state. */
+  /** Deshacer la última operación del stack.
+   *   - delete  → seteamos deleted_at=null y reinsertamos snapshots
+   *   - duplicate → soft-delete de las líneas nuevas (las que se crearon) */
   async function undo() {
     if (undoStack.length === 0) return;
     const op = undoStack[undoStack.length - 1];
-    const { error } = await supabase
-      .from("quantification_lines")
-      .update({ deleted_at: null })
-      .in("id", op.lineIds);
-    if (error) {
-      toast.error(error.message);
-      return;
+    if (op.kind === "delete") {
+      const { error } = await supabase
+        .from("quantification_lines")
+        .update({ deleted_at: null })
+        .in("id", op.lineIds);
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      setLines((prev) => [...prev, ...op.snapshots].sort((a, b) => a.line_number - b.line_number));
+    } else if (op.kind === "duplicate") {
+      const { error } = await supabase
+        .from("quantification_lines")
+        .update({ deleted_at: new Date().toISOString() })
+        .in("id", op.lineIds);
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+      const ids = new Set(op.lineIds);
+      setLines((prev) => prev.filter((l) => !ids.has(l.id)));
     }
-    // Restaurar al state local respetando line_number
-    setLines((prev) => [...prev, ...op.snapshots].sort((a, b) => a.line_number - b.line_number));
     setUndoStack((prev) => prev.slice(0, -1));
     toast.success(`Deshecho: ${op.label}`);
   }
@@ -562,6 +580,67 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     setSelected(new Set());
     pushUndo({ kind: "delete", lineIds: ids, snapshots, label: `${ids.length} líneas eliminadas` });
     toast.success(`${ids.length} líneas eliminadas`);
+  }
+
+  /** Duplica las líneas seleccionadas. Cada copia hereda sector,
+   *  categoría, subcategoría, artículo, cantidad, comentario y banderas
+   *  de su original. Reseteamos import_batch porque la copia ya no es
+   *  parte del lote de importación original. line_number nuevo =
+   *  max(line_number) + i + 1 para mantener orden ascendente. La op
+   *  es deshacible (Cmd/Ctrl+Z las elimina). */
+  async function duplicateSelected() {
+    if (selected.size === 0) return;
+    const ids = Array.from(selected);
+    // Preservamos el orden de línea original al duplicar — más predecible
+    // que el orden del Set.
+    const originals = lines
+      .filter((l) => selected.has(l.id))
+      .sort((a, b) => a.line_number - b.line_number);
+    if (originals.length === 0) return;
+    const baseNumber = lines.reduce((m, l) => Math.max(m, l.line_number), 0);
+    const payload = originals.map((l, i) => ({
+      project_id: projectId,
+      articulo_id: l.articulo_id,
+      quantity: l.quantity,
+      quantity_formula: l.quantity_formula,
+      category_id: l.category_id,
+      subcategory_id: l.subcategory_id,
+      sector_id: l.sector_id,
+      line_number: baseNumber + i + 1,
+      comment: l.comment,
+      // Reseteamos batch — la copia es manual, no importada.
+      import_batch: null,
+      import_batch_date: null,
+      needs_review: l.needs_review,
+      flag_colors: l.flag_colors || [],
+    }));
+    const { data, error } = await supabase
+      .from("quantification_lines")
+      .insert(payload)
+      .select("*");
+    if (error) {
+      toast.error(`Error al duplicar: ${error.message}`);
+      return;
+    }
+    // Enriquecer las nuevas líneas con datos de artículo (igual que loadData)
+    const enriched: QuantLine[] = (data || []).map((line) => {
+      const art = articulos.find((a) => a.id === line.articulo_id);
+      return {
+        ...line,
+        flag_colors: Array.isArray(line.flag_colors) ? line.flag_colors : [],
+        articulo_desc: art?.description || "",
+        articulo_unit: art?.unit || "",
+        articulo_pu: line.articulo_id ? (artPUs[line.articulo_id] || 0) : 0,
+      };
+    });
+    setLines((prev) => [...prev, ...enriched].sort((a, b) => a.line_number - b.line_number));
+    setSelected(new Set());
+    pushUndo({
+      kind: "duplicate",
+      lineIds: enriched.map((l) => l.id),
+      label: `${enriched.length} línea${enriched.length === 1 ? "" : "s"} duplicada${enriched.length === 1 ? "" : "s"}`,
+    });
+    toast.success(`${enriched.length} línea${enriched.length === 1 ? "" : "s"} duplicada${enriched.length === 1 ? "" : "s"}`);
   }
 
   async function deleteAll() {
@@ -775,11 +854,10 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
             <Upload className="h-4 w-4 mr-1" /> Importar Excel
           </Button>
           <input id="cuant-file-input" type="file" accept=".xlsx,.xls" onChange={handleFileUpload} className="hidden" />
-          {selected.size > 0 && (
-            <Button variant="outline" size="sm" onClick={deleteSelected} className="text-destructive hover:bg-destructive hover:text-white">
-              <Trash2 className="h-4 w-4 mr-1" /> Eliminar ({selected.size})
-            </Button>
-          )}
+          {/* Las acciones bulk (eliminar, duplicar, ...) viven en la
+              barra contextual que aparece arriba de la tabla cuando
+              hay líneas seleccionadas — más visible y reservada para
+              ese flow específico. */}
           {lines.length > 0 && (
             <Button variant="outline" size="sm" onClick={deleteAll} className="text-destructive hover:bg-destructive hover:text-white">
               <Trash2 className="h-4 w-4 mr-1" /> Eliminar todo
@@ -957,6 +1035,50 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
           </span>
         </div>
       </div>
+
+      {/* Barra contextual de acciones bulk — sólo aparece cuando hay
+          líneas seleccionadas. Pattern Gmail/Drive: flota arriba de la
+          tabla, fondo Ink Black para máximo contraste con la tabla,
+          y agrupa las operaciones que aplican al multi-select. */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-[#0A0A0A] text-white shadow-md">
+          <span className="text-sm font-medium">
+            {selected.size} línea{selected.size === 1 ? "" : "s"} seleccionada{selected.size === 1 ? "" : "s"}
+          </span>
+          <span className="h-4 w-px bg-white/20 mx-1" />
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={duplicateSelected}
+            className="text-xs h-7 text-white hover:bg-white/10 hover:text-white"
+            title="Duplicar las líneas seleccionadas (Cmd/Ctrl+Z para deshacer)"
+          >
+            <Copy className="h-3.5 w-3.5 mr-1" /> Duplicar
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={deleteSelected}
+            className="text-xs h-7 text-white hover:bg-red-600 hover:text-white"
+            title="Eliminar las líneas seleccionadas (Cmd/Ctrl+Z para deshacer)"
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1" /> Eliminar
+          </Button>
+          {/* Más acciones futuras irán acá: cambiar sector/categoría/subcategoría
+              en bulk, asignar bandera, copiar a portapapeles, etc. */}
+          <div className="ml-auto flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelected(new Set())}
+              className="text-xs h-7 text-white/70 hover:bg-white/10 hover:text-white"
+              title="Limpiar selección"
+            >
+              <X className="h-3.5 w-3.5 mr-1" /> Deseleccionar
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Tabla — sin border ni toolbar dedicada para no robar espacio
           vertical. Altura limitada (con margen para header de pestaña +
