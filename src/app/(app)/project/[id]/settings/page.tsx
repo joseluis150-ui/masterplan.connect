@@ -20,7 +20,8 @@ import type { Project, Sector, SectorType, ExchangeRateVersion, SectorGroup } fr
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MembersSection } from "./_components/members-section";
-import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon, ChevronUp, ChevronDown } from "lucide-react";
+import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon, ChevronUp, ChevronDown, Copy, Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { setNumberLocale } from "@/lib/utils/number-format";
@@ -35,6 +36,11 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const logoFileInputRef = useRef<HTMLInputElement>(null);
+  /** Sector que se está duplicando — abre un dialog para confirmar el
+   *  nombre nuevo y muestra spinner mientras la RPC corre. */
+  const [duplicatingSector, setDuplicatingSector] = useState<Sector | null>(null);
+  const [duplicateName, setDuplicateName] = useState<string>("");
+  const [duplicating, setDuplicating] = useState(false);
   const supabase = createClient();
   const router = useRouter();
 
@@ -207,6 +213,30 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
       setSectors(sectors.filter((s) => s.id !== sectorId));
       toast.success("Sector eliminado");
     }
+  }
+
+  /** Duplica un sector completo dentro del mismo proyecto. Llama a la
+   *  RPC clone_sector que copia el sector + sus quantification_lines +
+   *  sus schedule_weeks en una transacción atómica.
+   *  Los artículos e insumos NO se duplican — son catálogo global del
+   *  proyecto y las líneas nuevas apuntan a los mismos. */
+  async function duplicateSector(sectorId: string, newName: string) {
+    const { data, error } = await supabase.rpc("clone_sector", {
+      p_project_id: projectId,
+      p_sector_id: sectorId,
+      p_new_name: newName,
+    });
+    if (error) {
+      toast.error(`Error al duplicar: ${error.message}`);
+      return false;
+    }
+    // Recargar sectores — la RPC inserta filas nuevas que no están en
+    // nuestro state. Más simple que merger manualmente.
+    const { data: refreshed } = await supabase
+      .from("sectors").select("*").eq("project_id", projectId).order("order");
+    if (refreshed) setSectors(refreshed);
+    toast.success(`Sector duplicado como "${newName}" — ID: ${data}`);
+    return true;
   }
 
   /** Reordena sectores moviendo `sectorId` arriba o abajo. Hace swap del
@@ -709,6 +739,17 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
                     <Button
                       variant="ghost"
                       size="icon"
+                      onClick={() => {
+                        setDuplicatingSector(sector);
+                        setDuplicateName(`${sector.name} (copia)`);
+                      }}
+                      title="Duplicar sector con sus líneas, cuantificación y cronograma"
+                    >
+                      <Copy className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={() => deleteSector(sector.id)}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -772,6 +813,66 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
 
       {/* Miembros y permisos */}
       <MembersSection projectId={projectId} />
+
+      {/* Dialog de duplicar sector — confirmación con edición del nombre.
+          La RPC clone_sector copia: el sector mismo, sus quantification_lines
+          (con cantidades, fórmulas, comentarios, banderas) y sus schedule_weeks.
+          Los artículos e insumos NO se duplican (catálogo global del proyecto). */}
+      <Dialog
+        open={!!duplicatingSector}
+        onOpenChange={(o) => { if (!o && !duplicating) { setDuplicatingSector(null); setDuplicateName(""); } }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Copy className="h-5 w-5 text-[#E87722]" />
+              Duplicar sector completo
+            </DialogTitle>
+            <DialogDescription>
+              Se creará una copia del sector <span className="font-semibold">{duplicatingSector?.name}</span> con
+              {" "}<span className="font-semibold">todas sus líneas de cuantificación</span> (cantidades, fórmulas,
+              comentarios, banderas) y <span className="font-semibold">su cronograma</span> (semanas activas).
+              Los artículos e insumos del catálogo se reutilizan — la copia apunta a los mismos.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 py-2">
+            <Label className="text-xs">Nombre del nuevo sector</Label>
+            <Input
+              value={duplicateName}
+              onChange={(e) => setDuplicateName(e.target.value)}
+              placeholder="Nombre del sector duplicado"
+              autoFocus
+              disabled={duplicating}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => { setDuplicatingSector(null); setDuplicateName(""); }}
+              disabled={duplicating}
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="bg-[#E87722] hover:bg-[#E87722]/90 text-white"
+              onClick={async () => {
+                if (!duplicatingSector || !duplicateName.trim()) return;
+                setDuplicating(true);
+                const ok = await duplicateSector(duplicatingSector.id, duplicateName.trim());
+                setDuplicating(false);
+                if (ok) { setDuplicatingSector(null); setDuplicateName(""); }
+              }}
+              disabled={duplicating || !duplicateName.trim()}
+            >
+              {duplicating
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Duplicando...</>
+                : <><Copy className="h-4 w-4 mr-2" /> Duplicar sector</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
