@@ -1092,12 +1092,13 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                       // Estilos por nivel en escala de grises — nivel 0 (top) más
                       // prominente, niveles inferiores cada vez más sutiles. Hasta
                       // 4 niveles si hay grupos: Grupo(0)→Sector(1)→Cat(2)→Sub(3).
-                      const bg = ["#E5E5E5", "#F5F5F5", "#FAFAFA", "#FCFCFC"][lvl] ?? "#FCFCFC";
+                      // Contraste fuerte: nivel 0 oscuro casi negro, baja gradualmente.
+                      const bg = ["#404040", "#A3A3A3", "#E5E5E5", "#F5F5F5"][lvl] ?? "#F5F5F5";
                       const border = lvl === 0
-                        ? "3px solid #525252"
+                        ? "3px solid #0A0A0A"
                         : lvl === 1
-                          ? "2px solid #A3A3A3"
-                          : "1px solid #F1F5F9";
+                          ? "2px solid #525252"
+                          : "1px solid #E5E5E5";
                       const padding = lvl === 0
                         ? "px-3 py-2.5"
                         : lvl === 1
@@ -1105,13 +1106,14 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                           : lvl === 2
                             ? "px-3 py-1.5 pl-14"
                             : "px-3 py-1 pl-20";
+                      // Texto blanco sobre niveles oscuros, oscuro sobre los claros.
                       const textCls = lvl === 0
-                        ? "text-xs text-neutral-900 font-bold"
+                        ? "text-xs text-white font-bold"
                         : lvl === 1
-                          ? "text-xs text-neutral-800 font-semibold"
+                          ? "text-xs text-white font-semibold"
                           : lvl === 2
-                            ? "text-[11px] text-neutral-700"
-                            : "text-[10px] text-neutral-600";
+                            ? "text-[11px] text-neutral-900 font-semibold"
+                            : "text-[11px] text-neutral-800";
                       const iconSize = lvl <= 1 ? "h-3.5 w-3.5" : "h-3 w-3";
                       return (
                         <tr
@@ -1131,7 +1133,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
                                 {lvl === 0 && useGroups && <Folder className="h-3.5 w-3.5" />}
                                 {((lvl === 0 && !useGroups) || (lvl === 1 && useGroups)) && <Layers className="h-3.5 w-3.5" />}
                                 {item.label}
-                                <span className="text-muted-foreground font-normal normal-case ml-1">
+                                <span className="font-normal normal-case ml-1 opacity-70">
                                   · {item.count} {item.count === 1 ? "línea" : "líneas"}
                                 </span>
                               </span>
