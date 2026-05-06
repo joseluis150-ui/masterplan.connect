@@ -22,8 +22,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
-import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, Project, SectorGroup } from "@/lib/types/database";
-import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare, Undo2, Folder, Copy } from "lucide-react";
+import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, Project, SectorGroup, ProcurementPackage } from "@/lib/types/database";
+import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare, Undo2, Folder, Copy, Package } from "lucide-react";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 
 type SortConfig = { key: string; dir: SortDirection };
@@ -143,6 +143,10 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const [insumos, setInsumos] = useState<Insumo[]>([]);
   /** Proyecto — necesario para TC y moneda local del toggle USD/PYG. */
   const [project, setProject] = useState<Project | null>(null);
+  /** Paquetes de procurement del proyecto — usados para el dropdown de
+   *  "Asignar a paquete" en la barra contextual de bulk actions. Se
+   *  cargan junto con el resto de datos en loadData. */
+  const [packages, setPackages] = useState<ProcurementPackage[]>([]);
   /** Toggle USD ↔ moneda local. Persistido por proyecto, mismo patrón que
    *  presupuesto-tab. Convierte PU, Total, subtotales y grand total. */
   const [showLocal, setShowLocal] = usePersistedState<boolean>(`cuant:showLocal:${projectId}`, false);
@@ -200,8 +204,8 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
   const supabase = createClient();
 
   const loadData = useCallback(async () => {
-    // All 6 queries in parallel — single round trip
-    const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes, insRes, projRes, groupsRes] = await Promise.all([
+    // All queries in parallel — single round trip
+    const [linesRes, artsRes, catsRes, subsRes, sectorsRes, puRes, insRes, projRes, groupsRes, pkgsRes] = await Promise.all([
       supabase.from("quantification_lines").select("*").eq("project_id", projectId).is("deleted_at", null).order("line_number"),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
@@ -211,6 +215,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
       supabase.from("insumos").select("*").eq("project_id", projectId).order("description"),
       supabase.from("projects").select("*").eq("id", projectId).single(),
       supabase.from("sector_groups").select("*").eq("project_id", projectId).order("order"),
+      supabase.from("procurement_packages").select("*").eq("project_id", projectId).order("created_at", { ascending: false }),
     ]);
 
     const arts = artsRes.data || [];
@@ -246,6 +251,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     setArtPUs(pus);
     setInsumos(inss);
     setSectorGroups(((groupsRes.data ?? []) as SectorGroup[]));
+    setPackages(((pkgsRes.data ?? []) as ProcurementPackage[]));
     if (projRes.data) setProject(projRes.data as Project);
     setLoading(false);
   }, [projectId]);
@@ -641,6 +647,60 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
       label: `${enriched.length} línea${enriched.length === 1 ? "" : "s"} duplicada${enriched.length === 1 ? "" : "s"}`,
     });
     toast.success(`${enriched.length} línea${enriched.length === 1 ? "" : "s"} duplicada${enriched.length === 1 ? "" : "s"}`);
+  }
+
+  /** Asigna las líneas seleccionadas a un paquete de procurement.
+   *  Llama a la RPC assign_lines_to_package que expande cada línea a
+   *  sus composiciones (vía articulo_id → articulo_compositions) e
+   *  inserta procurement_lines con quantity=0 para cada una. La
+   *  cantidad se ajusta luego en el módulo Paquetes.
+   *
+   *  Devuelve el resumen via toast: cuántas se asignaron, cuántas ya
+   *  estaban en el paquete, cuántas conflictaron con otro paquete y
+   *  cuántas líneas no tenían artículo. */
+  async function assignSelectedToPackage(packageId: string) {
+    if (selected.size === 0) return;
+    const ids = Array.from(selected);
+    const { data, error } = await supabase.rpc("assign_lines_to_package", {
+      p_project_id: projectId,
+      p_line_ids: ids,
+      p_package_id: packageId,
+    });
+    if (error) {
+      toast.error(`Error al asignar: ${error.message}`);
+      return;
+    }
+    const result = (data || {}) as {
+      assigned: number;
+      already_in_package: number;
+      conflicts: number;
+      skipped_no_articulo: number;
+      conflict_packages: { name: string; count: number }[];
+    };
+    const pkgName = packages.find((p) => p.id === packageId)?.name || "paquete";
+
+    if (result.assigned > 0) {
+      toast.success(
+        `${result.assigned} insumo${result.assigned === 1 ? "" : "s"} asignado${result.assigned === 1 ? "" : "s"} a "${pkgName}"`
+      );
+    }
+    if (result.already_in_package > 0) {
+      toast.info(`${result.already_in_package} ya estaban en "${pkgName}"`);
+    }
+    if (result.conflicts > 0 && result.conflict_packages.length > 0) {
+      const breakdown = result.conflict_packages.map((p) => `"${p.name}" (${p.count})`).join(", ");
+      toast.warning(
+        `${result.conflicts} insumo${result.conflicts === 1 ? "" : "s"} ya asignado${result.conflicts === 1 ? "" : "s"} a otros paquetes: ${breakdown}`,
+        { duration: 6000 }
+      );
+    }
+    if (result.skipped_no_articulo > 0) {
+      toast.info(`${result.skipped_no_articulo} línea${result.skipped_no_articulo === 1 ? "" : "s"} sin artículo asignado (no se incluyen)`);
+    }
+    if (result.assigned === 0 && result.already_in_package === 0 && result.conflicts === 0) {
+      toast.info("No había composiciones nuevas para asignar");
+    }
+    setSelected(new Set());
   }
 
   async function deleteAll() {
@@ -1055,6 +1115,77 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
           >
             <Copy className="h-3.5 w-3.5 mr-1" /> Duplicar
           </Button>
+          {/* Asignar a paquete — popover con la lista de paquetes del
+              proyecto. Al click, llama a la RPC que arma procurement_lines
+              desde las composiciones de cada articulo de las lineas
+              seleccionadas. Skipea aprobados (no se pueden modificar). */}
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-xs h-7 text-white hover:bg-white/10 hover:text-white"
+                  title="Asignar las líneas seleccionadas a un paquete de procurement"
+                />
+              }
+            >
+              <Package className="h-3.5 w-3.5 mr-1" /> Asignar a paquete
+            </PopoverTrigger>
+            <PopoverContent className="w-[280px] p-1" align="start">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground px-2 py-1.5 border-b mb-1">
+                Asignar a paquete
+              </p>
+              {packages.length === 0 ? (
+                <p className="px-2 py-3 text-xs text-muted-foreground">
+                  No hay paquetes creados. Andá a Paquetes para crear uno.
+                </p>
+              ) : (
+                <>
+                  {/* Licitaciones primero — el flow más común */}
+                  {(["licitacion", "directa"] as const).map((typ) => {
+                    const list = packages.filter((p) => p.purchase_type === typ);
+                    if (list.length === 0) return null;
+                    return (
+                      <div key={typ} className="mb-1">
+                        <p className="text-[9px] uppercase tracking-wider text-muted-foreground px-2 pt-1.5">
+                          {typ === "licitacion" ? "Licitaciones" : "Compra directa"}
+                        </p>
+                        {list.map((pkg) => {
+                          const isApproved = pkg.status === "aprobado";
+                          return (
+                            <button
+                              key={pkg.id}
+                              type="button"
+                              disabled={isApproved}
+                              onClick={() => assignSelectedToPackage(pkg.id)}
+                              className={cn(
+                                "w-full text-left flex items-center gap-2 px-2 py-1.5 text-xs rounded transition-colors",
+                                isApproved
+                                  ? "opacity-50 cursor-not-allowed"
+                                  : "hover:bg-muted/50"
+                              )}
+                              title={isApproved
+                                ? "Paquete aprobado — no se puede modificar"
+                                : `Asignar ${selected.size} línea${selected.size === 1 ? "" : "s"} a "${pkg.name}"`}
+                            >
+                              <Package className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="flex-1 truncate">{pkg.name}</span>
+                              {isApproved && (
+                                <span className="text-[9px] uppercase tracking-wider text-emerald-600 font-semibold">
+                                  Aprobado
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </PopoverContent>
+          </Popover>
           <Button
             size="sm"
             variant="ghost"
@@ -1065,7 +1196,7 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
             <Trash2 className="h-3.5 w-3.5 mr-1" /> Eliminar
           </Button>
           {/* Más acciones futuras irán acá: cambiar sector/categoría/subcategoría
-              en bulk, asignar bandera, copiar a portapapeles, etc. */}
+              en bulk, asignar bandera, etc. */}
           <div className="ml-auto flex items-center gap-1">
             <Button
               size="sm"
