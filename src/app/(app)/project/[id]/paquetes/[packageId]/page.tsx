@@ -93,9 +93,15 @@ export default function PackageDetailPage({
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    // Round 1: queries que NO necesitan IDs de otras queries.
+    // Importante: articulo_compositions y procurement_lines son tablas
+    // GLOBALES (sin project_id propio). Si pedimos sin filtro, Supabase
+    // devuelve max 1000 rows por defecto, lo que rompe proyectos grandes.
+    // Por eso primero traemos articulos/packages del proyecto y después
+    // filtramos compositions/procurement_lines por esos IDs.
     const [
-      pkgRes, plRes, qlRes, artsRes, insRes, compsRes,
-      catsRes, subsRes, sectsRes, allPkgRes, allPlRes,
+      pkgRes, plRes, qlRes, artsRes, insRes,
+      catsRes, subsRes, sectsRes, allPkgRes,
     ] = await Promise.all([
       supabase.from("procurement_packages").select("*").eq("id", packageId).single(),
       supabase.from("procurement_lines").select("*").eq("package_id", packageId),
@@ -104,13 +110,10 @@ export default function PackageDetailPage({
         .eq("project_id", projectId).is("deleted_at", null),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("insumos").select("*").eq("project_id", projectId).order("code"),
-      supabase.from("articulo_compositions").select("id, articulo_id, insumo_id"),
       supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
       supabase.from("procurement_packages").select("*").eq("project_id", projectId),
-      // Todas las procurement_lines del proyecto (por compositions de artículos del proyecto)
-      supabase.from("procurement_lines").select("package_id, composition_id, insumo_id"),
     ]);
 
     if (pkgRes.error || !pkgRes.data) {
@@ -122,11 +125,26 @@ export default function PackageDetailPage({
 
     const arts = (artsRes.data ?? []) as Articulo[];
     const insumos = (insRes.data ?? []) as Insumo[];
-    const comps = (compsRes.data ?? []) as { id: string; articulo_id: string; insumo_id: string }[];
     const cats = (catsRes.data ?? []) as EdtCategory[];
     const subs = (subsRes.data ?? []) as EdtSubcategory[];
     const projPkgs = (allPkgRes.data ?? []) as ProcurementPackage[];
     setAllPackages(projPkgs);
+
+    // Round 2: queries que dependen de los IDs del proyecto.
+    // articulo_compositions filtrado por articulo del proyecto;
+    // procurement_lines filtrado por paquete del proyecto. Esto
+    // garantiza que cargamos TODAS las relevantes (sin hit del límite).
+    const artIds = arts.map((a) => a.id);
+    const projPkgIdList = projPkgs.map((p) => p.id);
+    const [compsRes, allPlRes] = await Promise.all([
+      artIds.length > 0
+        ? supabase.from("articulo_compositions").select("id, articulo_id, insumo_id").in("articulo_id", artIds)
+        : Promise.resolve({ data: [] as { id: string; articulo_id: string; insumo_id: string }[] }),
+      projPkgIdList.length > 0
+        ? supabase.from("procurement_lines").select("package_id, composition_id, insumo_id").in("package_id", projPkgIdList)
+        : Promise.resolve({ data: [] as { package_id: string; composition_id: string | null; insumo_id: string }[] }),
+    ]);
+    const comps = (compsRes.data ?? []) as { id: string; articulo_id: string; insumo_id: string }[];
 
     // Set de articulo_ids cuantificados en el proyecto
     const qLines = (qlRes.data ?? []) as Pick<QuantificationLine, "id" | "articulo_id" | "category_id" | "subcategory_id" | "sector_id">[];
