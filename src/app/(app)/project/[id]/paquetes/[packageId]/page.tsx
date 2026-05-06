@@ -11,13 +11,13 @@ import { Input } from "@/components/ui/input";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 import {
   ArrowLeft, Package, Loader2, Truck, ShoppingCart, Lock,
-  PackagePlus, X, Trash2, Search,
+  PackagePlus, X, Trash2, Search, Layers, ChevronDown, ChevronRight, Folder,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatNumber } from "@/lib/utils/formula";
 import type {
-  ProcurementPackage, ProcurementLine, Insumo, Articulo, ArticuloComposition,
-  EdtCategory, EdtSubcategory, Sector, QuantificationLine,
+  ProcurementPackage, ProcurementLine, Insumo, Articulo,
+  EdtCategory, EdtSubcategory, Sector, SectorGroup, QuantificationLine,
 } from "@/lib/types/database";
 
 type TabKey = "insumos" | "asignar";
@@ -80,6 +80,20 @@ export default function PackageDetailPage({
   // Datos para tab "Asignar"
   const [assignableInsumos, setAssignableInsumos] = useState<AssignableInsumo[]>([]);
   const [allPackages, setAllPackages] = useState<ProcurementPackage[]>([]);
+  // Datos extra para vista jerárquica
+  const [sectors, setSectors] = useState<Sector[]>([]);
+  const [sectorGroups, setSectorGroups] = useState<SectorGroup[]>([]);
+  const [allCategories, setAllCategories] = useState<EdtCategory[]>([]);
+  const [allSubcategories, setAllSubcategories] = useState<EdtSubcategory[]>([]);
+  const [allArticulos, setAllArticulos] = useState<Articulo[]>([]);
+  /** Composiciones del proyecto (cargadas en round 2). Las usamos para
+   *  expandir cada articulo cuantificado a sus insumos en la vista
+   *  agrupada. */
+  const [allComps, setAllComps] = useState<{ id: string; articulo_id: string; insumo_id: string }[]>([]);
+  /** Mapa articulo_id → set de quantification_lines que usan ese
+   *  articulo (con sector/categoría/subcategoría). Usado para construir
+   *  los breadcrumbs en la jerarquía. */
+  const [qLinesByArt, setQLinesByArt] = useState<Map<string, { sector_id: string; category_id: string; subcategory_id: string }[]>>(new Map());
 
   // Filtros + selección tab "Asignar"
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -90,6 +104,13 @@ export default function PackageDetailPage({
   const [filterAssigned, setFilterAssigned] = useState<"all" | "unassigned" | "here" | "other">("all");
   const [sort, setSort] = useState<{ key: string; dir: SortDirection }>({ key: "", dir: null });
   const [assigning, setAssigning] = useState(false);
+  /** Modo de vista: lista plana (1 fila por insumo) o agrupada
+   *  jerárquica (Grupo → Sector → Categoría → Subcat → Artículo →
+   *  Insumos). En agrupada, el mismo insumo puede aparecer en varias
+   *  ramas; la selección sigue siendo por insumo (todas las apariciones
+   *  comparten el checkbox). */
+  const [viewMode, setViewMode] = useState<"flat" | "grouped">("flat");
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -101,7 +122,7 @@ export default function PackageDetailPage({
     // filtramos compositions/procurement_lines por esos IDs.
     const [
       pkgRes, plRes, qlRes, artsRes, insRes,
-      catsRes, subsRes, sectsRes, allPkgRes,
+      catsRes, subsRes, sectsRes, sectGroupsRes, allPkgRes,
     ] = await Promise.all([
       supabase.from("procurement_packages").select("*").eq("id", packageId).single(),
       supabase.from("procurement_lines").select("*").eq("package_id", packageId),
@@ -113,6 +134,7 @@ export default function PackageDetailPage({
       supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
+      supabase.from("sector_groups").select("*").eq("project_id", projectId).order("order"),
       supabase.from("procurement_packages").select("*").eq("project_id", projectId),
     ]);
 
@@ -127,8 +149,15 @@ export default function PackageDetailPage({
     const insumos = (insRes.data ?? []) as Insumo[];
     const cats = (catsRes.data ?? []) as EdtCategory[];
     const subs = (subsRes.data ?? []) as EdtSubcategory[];
+    const secs = (sectsRes.data ?? []) as Sector[];
+    const sectGroups = (sectGroupsRes.data ?? []) as SectorGroup[];
     const projPkgs = (allPkgRes.data ?? []) as ProcurementPackage[];
     setAllPackages(projPkgs);
+    setAllArticulos(arts);
+    setAllCategories(cats);
+    setAllSubcategories(subs);
+    setSectors(secs);
+    setSectorGroups(sectGroups);
 
     // Round 2: queries que dependen de los IDs del proyecto.
     // articulo_compositions filtrado por articulo del proyecto;
@@ -145,11 +174,26 @@ export default function PackageDetailPage({
         : Promise.resolve({ data: [] as { package_id: string; composition_id: string | null; insumo_id: string }[] }),
     ]);
     const comps = (compsRes.data ?? []) as { id: string; articulo_id: string; insumo_id: string }[];
+    setAllComps(comps);
 
     // Set de articulo_ids cuantificados en el proyecto
     const qLines = (qlRes.data ?? []) as Pick<QuantificationLine, "id" | "articulo_id" | "category_id" | "subcategory_id" | "sector_id">[];
     const quantifiedArtIds = new Set(qLines.filter((q) => q.articulo_id).map((q) => q.articulo_id!));
     const projPkgIds = new Set(projPkgs.map((p) => p.id));
+
+    // Map articulo_id → quantification_lines del articulo (sector/cat/sub).
+    // Usado por la vista jerárquica para ubicar cada articulo en el árbol.
+    const qByArt = new Map<string, { sector_id: string; category_id: string; subcategory_id: string }[]>();
+    for (const ql of qLines) {
+      if (!ql.articulo_id) continue;
+      if (!qByArt.has(ql.articulo_id)) qByArt.set(ql.articulo_id, []);
+      qByArt.get(ql.articulo_id)!.push({
+        sector_id: ql.sector_id,
+        category_id: ql.category_id,
+        subcategory_id: ql.subcategory_id,
+      });
+    }
+    setQLinesByArt(qByArt);
 
     // Map: composition_id → articulo_id (para ver dónde aparece)
     const compById = new Map<string, { articulo_id: string; insumo_id: string }>();
@@ -382,6 +426,196 @@ export default function PackageDetailPage({
     return { total, unassigned, here, other };
   }, [assignableInsumos]);
 
+  /* ── Vista jerárquica: Grupo → Sector → Cat → Subcat → Artículo → Insumos ──
+     Construimos un árbol a partir de las quantification_lines del proyecto:
+     cada qLine da una combinación (sector, cat, subcat, articulo). Para cada
+     articulo, expandimos a sus composiciones (insumos). El mismo insumo puede
+     aparecer en N nodos distintos del árbol — la selección sigue siendo por
+     insumo_id (deduplicada), así que marcar 1 marca todas sus apariciones.
+
+     Aplicamos los mismos filtros que en la lista plana (búsqueda, tipo, etc),
+     pero al insumo, no al header. Si un grupo queda vacío después del filtro,
+     lo ocultamos. */
+  type GroupedRow =
+    | { kind: "header"; level: 0|1|2|3|4; key: string; label: string; insumoCount: number; collapsed: boolean }
+    | { kind: "insumo"; insumo: AssignableInsumo; key: string };
+
+  const groupedRows = useMemo<GroupedRow[]>(() => {
+    if (viewMode !== "grouped") return [];
+    // Mapa rápido: insumoId → AssignableInsumo (con asignación, filtros aplicados)
+    const insumoFilterPass = new Map<string, AssignableInsumo>();
+    for (const i of filtered) insumoFilterPass.set(i.id, i);
+
+    // Mapa articulo_id → composiciones del articulo (insumo_ids únicos)
+    const compsByArt = new Map<string, Set<string>>();
+    for (const c of allComps) {
+      if (!compsByArt.has(c.articulo_id)) compsByArt.set(c.articulo_id, new Set());
+      compsByArt.get(c.articulo_id)!.add(c.insumo_id);
+    }
+
+    // Lookups de orden
+    const sectorById = new Map(sectors.map((s) => [s.id, s]));
+    const groupById = new Map(sectorGroups.map((g) => [g.id, g]));
+    const catById = new Map(allCategories.map((c) => [c.id, c]));
+    const subById = new Map(allSubcategories.map((s) => [s.id, s]));
+    const artById = new Map(allArticulos.map((a) => [a.id, a]));
+
+    // Estructura: groupId → sectorId → catId → subId → artId → Set(insumoId)
+    type LeafSet = Set<string>;
+    type ArtMap = Map<string, LeafSet>;
+    type SubMap = Map<string, ArtMap>;
+    type CatMap = Map<string, SubMap>;
+    type SectorMap = Map<string, CatMap>;
+    type GroupMap = Map<string, SectorMap>;
+    const tree: GroupMap = new Map();
+
+    const NO_GROUP = "__no_group__";
+
+    // Para cada articulo, agarrar sus quantification_lines (sector/cat/sub) y
+    // expandir sus insumos. Cada combo se inserta en el árbol.
+    for (const [artId, qLineList] of qLinesByArt.entries()) {
+      const insumoIds = compsByArt.get(artId);
+      if (!insumoIds || insumoIds.size === 0) continue;
+      // Para cada qLine de este articulo:
+      for (const ql of qLineList) {
+        const sec = sectorById.get(ql.sector_id);
+        const groupId = sec?.sector_group_id || NO_GROUP;
+        if (!tree.has(groupId)) tree.set(groupId, new Map());
+        const sectMap = tree.get(groupId)!;
+        if (!sectMap.has(ql.sector_id)) sectMap.set(ql.sector_id, new Map());
+        const catMap = sectMap.get(ql.sector_id)!;
+        if (!catMap.has(ql.category_id)) catMap.set(ql.category_id, new Map());
+        const subMap = catMap.get(ql.category_id)!;
+        if (!subMap.has(ql.subcategory_id)) subMap.set(ql.subcategory_id, new Map());
+        const artMap = subMap.get(ql.subcategory_id)!;
+        if (!artMap.has(artId)) artMap.set(artId, new Set());
+        const leafSet = artMap.get(artId)!;
+        for (const insId of insumoIds) {
+          // Sólo insertar si el insumo pasa los filtros
+          if (insumoFilterPass.has(insId)) leafSet.add(insId);
+        }
+      }
+    }
+
+    const rows: GroupedRow[] = [];
+
+    // Iterar respetando el orden de sector_groups, sectors, categories, etc.
+    // Grupos: orden + "__no_group__" al final si tiene contenido.
+    const orderedGroupIds = [
+      ...sectorGroups.map((g) => g.id),
+      NO_GROUP,
+    ].filter((gid) => tree.has(gid));
+
+    for (const gid of orderedGroupIds) {
+      const sectMap = tree.get(gid)!;
+      // Orden de sectores dentro del grupo: respetando sectors[].order
+      const orderedSecIds = sectors.map((s) => s.id).filter((sid) => sectMap.has(sid));
+
+      // Conteo de insumos únicos en este grupo (para el header)
+      const groupInsumos = new Set<string>();
+      for (const cm of sectMap.values()) for (const subM of cm.values()) for (const aM of subM.values()) for (const ls of aM.values()) for (const i of ls) groupInsumos.add(i);
+      if (groupInsumos.size === 0) continue;
+
+      const groupLabel = gid === NO_GROUP ? "Sin grupo" : (groupById.get(gid)?.name ?? "(?)");
+      const groupKey = `g::${gid}`;
+      const groupCollapsed = collapsedGroups.has(groupKey);
+      rows.push({ kind: "header", level: 0, key: groupKey, label: groupLabel, insumoCount: groupInsumos.size, collapsed: groupCollapsed });
+      if (groupCollapsed) continue;
+
+      for (const sid of orderedSecIds) {
+        const catMap = sectMap.get(sid)!;
+        const sec = sectorById.get(sid);
+        const orderedCatIds = allCategories.map((c) => c.id).filter((cid) => catMap.has(cid));
+
+        const sectorInsumos = new Set<string>();
+        for (const subM of catMap.values()) for (const aM of subM.values()) for (const ls of aM.values()) for (const i of ls) sectorInsumos.add(i);
+        if (sectorInsumos.size === 0) continue;
+
+        const sKey = `s::${gid}::${sid}`;
+        const sCollapsed = collapsedGroups.has(sKey);
+        rows.push({ kind: "header", level: 1, key: sKey, label: sec?.name ?? "(?)", insumoCount: sectorInsumos.size, collapsed: sCollapsed });
+        if (sCollapsed) continue;
+
+        for (const cid of orderedCatIds) {
+          const subMap = catMap.get(cid)!;
+          const cat = catById.get(cid);
+          const orderedSubIds = allSubcategories.map((s) => s.id).filter((sid2) => subMap.has(sid2));
+
+          const catInsumos = new Set<string>();
+          for (const aM of subMap.values()) for (const ls of aM.values()) for (const i of ls) catInsumos.add(i);
+          if (catInsumos.size === 0) continue;
+
+          const cKey = `c::${gid}::${sid}::${cid}`;
+          const cCollapsed = collapsedGroups.has(cKey);
+          rows.push({ kind: "header", level: 2, key: cKey, label: cat ? `${cat.code} ${cat.name}` : "(?)", insumoCount: catInsumos.size, collapsed: cCollapsed });
+          if (cCollapsed) continue;
+
+          for (const subId of orderedSubIds) {
+            const artMap = subMap.get(subId)!;
+            const sub = subById.get(subId);
+            // Artículos en orden ascendente por number
+            const orderedArtIds = [...artMap.keys()].sort((a, b) => {
+              const an = artById.get(a)?.number ?? 0;
+              const bn = artById.get(b)?.number ?? 0;
+              return an - bn;
+            });
+
+            const subInsumos = new Set<string>();
+            for (const ls of artMap.values()) for (const i of ls) subInsumos.add(i);
+            if (subInsumos.size === 0) continue;
+
+            const subKey = `sb::${gid}::${sid}::${cid}::${subId}`;
+            const subCollapsed = collapsedGroups.has(subKey);
+            rows.push({ kind: "header", level: 3, key: subKey, label: sub ? `${sub.code} ${sub.name}` : "(?)", insumoCount: subInsumos.size, collapsed: subCollapsed });
+            if (subCollapsed) continue;
+
+            for (const aid of orderedArtIds) {
+              const leafSet = artMap.get(aid)!;
+              if (leafSet.size === 0) continue;
+              const art = artById.get(aid);
+              const aKey = `a::${gid}::${sid}::${cid}::${subId}::${aid}`;
+              const aCollapsed = collapsedGroups.has(aKey);
+              rows.push({
+                kind: "header", level: 4, key: aKey,
+                label: art ? `#${art.number} ${art.description}` : "(?)",
+                insumoCount: leafSet.size,
+                collapsed: aCollapsed,
+              });
+              if (aCollapsed) continue;
+              // Hojas: insumos. Orden por código.
+              const orderedInsumos = [...leafSet]
+                .map((iid) => insumoFilterPass.get(iid)!)
+                .filter(Boolean)
+                .sort((a, b) => a.code - b.code);
+              for (const i of orderedInsumos) {
+                rows.push({ kind: "insumo", insumo: i, key: `${aKey}::i::${i.id}` });
+              }
+            }
+          }
+        }
+      }
+    }
+    return rows;
+  }, [viewMode, filtered, allComps, qLinesByArt, sectors, sectorGroups, allCategories, allSubcategories, allArticulos, collapsedGroups]);
+
+  /* ── Helpers para vista agrupada ── */
+  function toggleGroup(key: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function expandAll() { setCollapsedGroups(new Set()); }
+
+  function collapseAll() {
+    // Colapsamos sólo los headers visibles ahora — más simple iterar groupedRows
+    const allKeys = new Set<string>();
+    for (const r of groupedRows) if (r.kind === "header") allKeys.add(r.key);
+    setCollapsedGroups(allKeys);
+  }
+
   function toggleSelect(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -389,12 +623,21 @@ export default function PackageDetailPage({
       return next;
     });
   }
+  /** Set de insumo IDs únicos visibles según el modo activo. En vista
+   *  agrupada el mismo insumo puede aparecer N veces, pero aún así es
+   *  un único id en el Set. Lo usamos para el select-all. */
+  const visibleInsumoIds = useMemo(() => {
+    if (viewMode === "flat") return new Set(sorted.map((i) => i.id));
+    const ids = new Set<string>();
+    for (const r of groupedRows) if (r.kind === "insumo") ids.add(r.insumo.id);
+    return ids;
+  }, [viewMode, sorted, groupedRows]);
+
   function toggleSelectAll() {
-    const visible = new Set(sorted.map((i) => i.id));
-    if (selected.size === visible.size && visible.size > 0) {
+    if (selected.size === visibleInsumoIds.size && visibleInsumoIds.size > 0) {
       setSelected(new Set());
     } else {
-      setSelected(visible);
+      setSelected(new Set(visibleInsumoIds));
     }
   }
 
@@ -406,6 +649,64 @@ export default function PackageDetailPage({
         return { key: "", dir: null };
       });
     };
+  }
+
+  /** Render de una fila de insumo (hoja). Se reutiliza en ambos modos.
+   *  rowKey distingue cada aparición (en agrupada, el mismo insumo
+   *  aparece varias veces — necesitamos keys únicas), pero el checkbox
+   *  state lee del Set `selected` por insumo.id. */
+  function renderInsumoRow(i: AssignableInsumo, rowKey: string) {
+    const isHere = i.assignment.kind === "all_here";
+    const isOther = i.assignment.kind === "all_other";
+    const isMixed = i.assignment.kind === "mixed";
+    return (
+      <tr
+        key={rowKey}
+        style={{
+          borderBottom: "1px solid #F1F5F9",
+          background: selected.has(i.id) ? "#EFF6FF" : (isHere ? "#ECFDF5" : undefined),
+        }}
+      >
+        <td className="px-1 py-1 text-center">
+          <input
+            type="checkbox"
+            checked={selected.has(i.id)}
+            onChange={() => toggleSelect(i.id)}
+            className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
+          />
+        </td>
+        <td className="px-2 py-1 text-xs font-mono text-muted-foreground">{i.code}</td>
+        <td className="px-2 py-1 truncate" title={i.description}>{i.description}</td>
+        <td className="px-2 py-1 text-center text-xs text-muted-foreground">{i.unit}</td>
+        <td className="px-2 py-1 text-center text-[11px] text-muted-foreground capitalize">{i.type.replace(/_/g, " ")}</td>
+        <td className="px-2 py-1 text-right font-mono text-xs">
+          {i.pu_usd > 0 ? formatNumber(i.pu_usd, 2) : "—"}
+        </td>
+        <td className="px-2 py-1 text-right font-mono text-xs">{i.uses_count}</td>
+        <td className="px-2 py-1 text-xs truncate" title={i.category_labels.join(", ")}>
+          {i.category_labels.length === 0 ? "—" : i.category_labels.length === 1 ? i.category_labels[0] : `${i.category_labels.length} categorías`}
+        </td>
+        <td className="px-2 py-1 text-xs truncate" title={i.subcategory_labels.join(", ")}>
+          {i.subcategory_labels.length === 0 ? "—" : i.subcategory_labels.length === 1 ? i.subcategory_labels[0] : `${i.subcategory_labels.length} subcategorías`}
+        </td>
+        <td className="px-2 py-1">
+          {isHere && <Badge className="text-[10px] bg-emerald-600 text-white">En este paquete</Badge>}
+          {isOther && i.assignment.kind === "all_other" && (
+            <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
+              En "{i.assignment.packageName}"
+            </Badge>
+          )}
+          {isMixed && i.assignment.kind === "mixed" && (
+            <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
+              {i.assignment.details}
+            </Badge>
+          )}
+          {i.assignment.kind === "none" && (
+            <span className="text-[10px] text-muted-foreground italic">Sin asignar</span>
+          )}
+        </td>
+      </tr>
+    );
   }
 
   if (loading) {
@@ -582,6 +883,55 @@ export default function PackageDetailPage({
             </span>
           </div>
 
+          {/* Segunda fila: toggle de vista + botones de expandir/colapsar
+              (sólo en modo agrupado). Misma estética que el segmented
+              control de cuantificación. */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="inline-flex rounded-md border bg-background overflow-hidden">
+              <span className="px-2 py-1.5 text-xs text-muted-foreground border-r inline-flex items-center gap-1">
+                <Layers className="h-3 w-3" /> Vista:
+              </span>
+              {([
+                { v: "flat", label: "Lista" },
+                { v: "grouped", label: "Agrupada (Grupo → Sector → Cat → Subcat → Art → Insumos)" },
+              ] as const).map((opt, i) => (
+                <button
+                  key={opt.v}
+                  type="button"
+                  onClick={() => setViewMode(opt.v)}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-medium transition-colors",
+                    i > 0 && "border-l",
+                    viewMode === opt.v
+                      ? "bg-[#E87722] text-white"
+                      : "text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {viewMode === "grouped" && (
+              <>
+                <Button
+                  variant="ghost" size="sm"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={expandAll}
+                  disabled={collapsedGroups.size === 0}
+                >
+                  <ChevronDown className="h-3 w-3 mr-1" /> Expandir todo
+                </Button>
+                <Button
+                  variant="ghost" size="sm"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={collapseAll}
+                >
+                  <ChevronRight className="h-3 w-3 mr-1" /> Contraer todo
+                </Button>
+              </>
+            )}
+          </div>
+
           {/* Barra contextual bulk */}
           {selected.size > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-[#0A0A0A] text-white shadow-md">
@@ -632,9 +982,10 @@ export default function PackageDetailPage({
                   <th className="px-1 py-2 text-center bg-background">
                     <input
                       type="checkbox"
-                      checked={sorted.length > 0 && selected.size === sorted.length}
+                      checked={visibleInsumoIds.size > 0 && selected.size === visibleInsumoIds.size}
                       onChange={toggleSelectAll}
                       className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
+                      title="Seleccionar/deseleccionar todos los visibles"
                     />
                   </th>
                   <th className="px-2 py-2">
@@ -665,60 +1016,42 @@ export default function PackageDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((i) => {
-                  const isHere = i.assignment.kind === "all_here";
-                  const isOther = i.assignment.kind === "all_other";
-                  const isMixed = i.assignment.kind === "mixed";
-                  return (
-                    <tr
-                      key={i.id}
-                      style={{
-                        borderBottom: "1px solid #F1F5F9",
-                        background: selected.has(i.id) ? "#EFF6FF" : (isHere ? "#ECFDF5" : undefined),
-                      }}
-                    >
-                      <td className="px-1 py-1 text-center">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(i.id)}
-                          onChange={() => toggleSelect(i.id)}
-                          className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
-                        />
-                      </td>
-                      <td className="px-2 py-1 text-xs font-mono text-muted-foreground">{i.code}</td>
-                      <td className="px-2 py-1 truncate" title={i.description}>{i.description}</td>
-                      <td className="px-2 py-1 text-center text-xs text-muted-foreground">{i.unit}</td>
-                      <td className="px-2 py-1 text-center text-[11px] text-muted-foreground capitalize">{i.type.replace(/_/g, " ")}</td>
-                      <td className="px-2 py-1 text-right font-mono text-xs">
-                        {i.pu_usd > 0 ? formatNumber(i.pu_usd, 2) : "—"}
-                      </td>
-                      <td className="px-2 py-1 text-right font-mono text-xs">{i.uses_count}</td>
-                      <td className="px-2 py-1 text-xs truncate" title={i.category_labels.join(", ")}>
-                        {i.category_labels.length === 0 ? "—" : i.category_labels.length === 1 ? i.category_labels[0] : `${i.category_labels.length} categorías`}
-                      </td>
-                      <td className="px-2 py-1 text-xs truncate" title={i.subcategory_labels.join(", ")}>
-                        {i.subcategory_labels.length === 0 ? "—" : i.subcategory_labels.length === 1 ? i.subcategory_labels[0] : `${i.subcategory_labels.length} subcategorías`}
-                      </td>
-                      <td className="px-2 py-1">
-                        {isHere && <Badge className="text-[10px] bg-emerald-600 text-white">En este paquete</Badge>}
-                        {isOther && i.assignment.kind === "all_other" && (
-                          <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
-                            En "{i.assignment.packageName}"
-                          </Badge>
-                        )}
-                        {isMixed && i.assignment.kind === "mixed" && (
-                          <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
-                            {i.assignment.details}
-                          </Badge>
-                        )}
-                        {i.assignment.kind === "none" && (
-                          <span className="text-[10px] text-muted-foreground italic">Sin asignar</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
+                {/* Render por modo. Lista plana: 1 fila por insumo único.
+                    Agrupada: árbol de headers + insumos como hojas (un mismo
+                    insumo puede aparecer varias veces, pero el checkbox es
+                    compartido — la selección es por insumo_id). */}
+                {viewMode === "flat" && sorted.map((i) => renderInsumoRow(i, i.id))}
+                {viewMode === "grouped" && groupedRows.map((row) => {
+                  if (row.kind === "header") {
+                    // Estilos por nivel — degradé de gris oscuro a claro.
+                    // 0=Grupo, 1=Sector, 2=Categoría, 3=Subcategoría, 4=Artículo.
+                    const headerStyles = [
+                      { bg: "#262626", color: "#fff", weight: "font-bold", border: "3px solid #0A0A0A", icon: <Folder className="h-3 w-3" /> },
+                      { bg: "#525252", color: "#fff", weight: "font-bold", border: "2px solid #262626", icon: <Layers className="h-3 w-3" /> },
+                      { bg: "#A3A3A3", color: "#fff", weight: "font-semibold", border: "1px solid #737373", icon: null },
+                      { bg: "#D4D4D4", color: "#0A0A0A", weight: "font-semibold", border: "1px solid #BFBFBF", icon: null },
+                      { bg: "#F5F5F5", color: "#0A0A0A", weight: "font-medium", border: "1px solid #E5E5E5", icon: null },
+                    ][row.level];
+                    return (
+                      <tr key={row.key} style={{ background: headerStyles.bg, color: headerStyles.color, borderTop: headerStyles.border }}>
+                        <td colSpan={10} className={cn("px-2 py-1.5 text-xs", headerStyles.weight)} style={{ paddingLeft: `${8 + row.level * 16}px` }}>
+                          <button
+                            type="button"
+                            onClick={() => toggleGroup(row.key)}
+                            className="flex items-center gap-1.5 hover:opacity-80"
+                          >
+                            {row.collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                            {headerStyles.icon}
+                            <span>{row.label}</span>
+                            <span className="opacity-70 font-mono text-[10px]">({row.insumoCount} insumo{row.insumoCount === 1 ? "" : "s"})</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return renderInsumoRow(row.insumo, row.key);
                 })}
-                {sorted.length === 0 && (
+                {(viewMode === "flat" ? sorted.length === 0 : groupedRows.length === 0) && (
                   <tr>
                     <td colSpan={10} className="px-4 py-12 text-center text-sm text-muted-foreground">
                       {assignableInsumos.length === 0
