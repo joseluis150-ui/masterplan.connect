@@ -7,10 +7,11 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
 import {
   ArrowLeft, Package, Loader2, Truck, ShoppingCart, Lock,
-  PackagePlus, X, ChevronDown, ChevronRight, Layers, Trash2,
+  PackagePlus, X, Trash2, Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatNumber } from "@/lib/utils/formula";
@@ -21,33 +22,39 @@ import type {
 
 type TabKey = "insumos" | "asignar";
 
-/** Línea enriquecida para la tabla de "Asignar líneas". Contiene labels
- *  de articulo/sector/cat/subcat ya resueltos para evitar lookups en
- *  cada render — mismo patrón que cuantificacion/page.tsx. */
-interface AssignableLine {
+/** Insumo enriquecido para el tab "Asignar". Agregamos cuántas
+ *  composiciones tiene en artículos cuantificados (uses_count) y a
+ *  qué paquete está asignado (si está en alguno — un insumo puede
+ *  estar dividido entre composiciones de distintos paquetes pero
+ *  por simplicidad mostramos UNO; si está en varios usamos "multiple"). */
+interface AssignableInsumo {
   id: string;
-  articulo_id: string | null;
-  articulo_desc: string;
-  articulo_unit: string;
-  articulo_pu: number;
-  articulo_number: number | null;
-  quantity: number | null;
-  category_id: string;
-  subcategory_id: string;
-  sector_id: string;
-  /** Si es null → no asignada a ningún paquete. Si es el packageId
-   *  actual → asignada acá. Si es otro id → asignada a otro paquete. */
-  assigned_to_package_id: string | null;
+  code: number;
+  description: string;
+  unit: string;
+  type: string;
+  pu_usd: number;
+  /** Cantidad de articulo_compositions del insumo cuyos artículos
+   *  aparecen en alguna línea de cuantificación. Si es 0, no se puede
+   *  asignar (el insumo no se usa en el proyecto). */
+  uses_count: number;
+  /** Estado de asignación: null = ninguna composición asignada,
+   *  packageId = TODAS las composiciones del insumo están en este paquete,
+   *  "multiple" = está en varios paquetes (caso edge), "partial" = algunas
+   *  asignadas y otras no. */
+  assignment: { kind: "none" } | { kind: "all_here"; packageId: string } | { kind: "all_other"; packageId: string; packageName: string } | { kind: "mixed"; details: string };
+  /** Categorías y subcategorías donde aparece (para filtros).
+   *  Almacenamos labels concatenadas. */
+  category_labels: string[];
+  subcategory_labels: string[];
 }
 
 /**
- * Vista de detalle de un paquete de procurement. Reemplaza la pantalla
- * monolítica anterior con dos tabs:
- *   - "Insumos asignados": tabla read-only con los procurement_lines
- *     del paquete (descripción del insumo, unidad, artículo origen).
- *   - "Asignar líneas": tabla tipo cuantificación read-only con
- *     checkboxes, filtros multi-select por columna, y botón para
- *     asignar las seleccionadas a este paquete vía RPC.
+ * Vista de detalle de un paquete. Tab principal "Insumos asignados"
+ * muestra los insumos del paquete (1 fila por insumo único, agregando
+ * todas sus composiciones). Tab "Asignar insumos" muestra los insumos
+ * disponibles del proyecto con checkboxes, filtros por tipo / categoría
+ * / subcategoría / nombre y botón de asignación bulk.
  */
 export default function PackageDetailPage({
   params,
@@ -62,51 +69,48 @@ export default function PackageDetailPage({
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabKey>("insumos");
 
-  // Datos para tab 1 (Insumos asignados)
-  const [pkgLines, setPkgLines] = useState<(ProcurementLine & {
-    insumo?: Insumo;
-    composition?: ArticuloComposition;
-    articulo?: Articulo;
-  })[]>([]);
+  // Datos para tab "Insumos asignados" — agrupado por insumo
+  const [pkgInsumos, setPkgInsumos] = useState<{
+    insumo: Insumo;
+    composition_ids: string[]; // todas las composiciones del insumo en este paquete
+    procurement_line_ids: string[]; // para poder remover
+    articulos: Articulo[]; // de qué artículos viene
+  }[]>([]);
 
-  // Datos para tab 2 (Asignar líneas)
-  const [allLines, setAllLines] = useState<AssignableLine[]>([]);
-  const [allArticulos, setAllArticulos] = useState<Articulo[]>([]);
-  const [categories, setCategories] = useState<EdtCategory[]>([]);
-  const [subcategories, setSubcategories] = useState<EdtSubcategory[]>([]);
-  const [sectors, setSectors] = useState<Sector[]>([]);
+  // Datos para tab "Asignar"
+  const [assignableInsumos, setAssignableInsumos] = useState<AssignableInsumo[]>([]);
   const [allPackages, setAllPackages] = useState<ProcurementPackage[]>([]);
 
-  // Selección + filtros del tab "Asignar"
+  // Filtros + selección tab "Asignar"
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [filterArticulo, setFilterArticulo] = useState<Set<string>>(new Set());
-  const [filterUnit, setFilterUnit] = useState<Set<string>>(new Set());
+  const [searchText, setSearchText] = useState("");
+  const [filterType, setFilterType] = useState<Set<string>>(new Set());
   const [filterCategory, setFilterCategory] = useState<Set<string>>(new Set());
   const [filterSubcategory, setFilterSubcategory] = useState<Set<string>>(new Set());
-  const [filterSector, setFilterSector] = useState<Set<string>>(new Set());
-  /** "all" | "unassigned" | "assigned_here" | "assigned_other" — útil
-   *  para filtrar rápido las líneas que faltan asignar a este paquete. */
   const [filterAssigned, setFilterAssigned] = useState<"all" | "unassigned" | "here" | "other">("all");
   const [sort, setSort] = useState<{ key: string; dir: SortDirection }>({ key: "", dir: null });
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [assigning, setAssigning] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     const [
-      pkgRes, plRes, qlRes, artsRes, catsRes, subsRes, sectsRes, puRes, allPkgRes,
+      pkgRes, plRes, qlRes, artsRes, insRes, compsRes,
+      catsRes, subsRes, sectsRes, allPkgRes, allPlRes,
     ] = await Promise.all([
       supabase.from("procurement_packages").select("*").eq("id", packageId).single(),
-      supabase.from("procurement_lines")
-        .select("*, insumo:insumos(*), composition:articulo_compositions(*)")
-        .eq("package_id", packageId),
-      supabase.from("quantification_lines").select("*").eq("project_id", projectId).is("deleted_at", null).order("line_number"),
+      supabase.from("procurement_lines").select("*").eq("package_id", packageId),
+      supabase.from("quantification_lines")
+        .select("id, articulo_id, category_id, subcategory_id, sector_id")
+        .eq("project_id", projectId).is("deleted_at", null),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
+      supabase.from("insumos").select("*").eq("project_id", projectId).order("code"),
+      supabase.from("articulo_compositions").select("id, articulo_id, insumo_id"),
       supabase.from("edt_categories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("edt_subcategories").select("*").eq("project_id", projectId).is("deleted_at", null).order("order"),
       supabase.from("sectors").select("*").eq("project_id", projectId).order("order"),
-      supabase.rpc("get_project_articulo_totals", { p_project_id: projectId }),
       supabase.from("procurement_packages").select("*").eq("project_id", projectId),
+      // Todas las procurement_lines del proyecto (por compositions de artículos del proyecto)
+      supabase.from("procurement_lines").select("package_id, composition_id, insumo_id"),
     ]);
 
     if (pkgRes.error || !pkgRes.data) {
@@ -117,95 +121,168 @@ export default function PackageDetailPage({
     setPkg(pkgRes.data as ProcurementPackage);
 
     const arts = (artsRes.data ?? []) as Articulo[];
-    setAllArticulos(arts);
-    setCategories((catsRes.data ?? []) as EdtCategory[]);
-    setSubcategories((subsRes.data ?? []) as EdtSubcategory[]);
-    setSectors((sectsRes.data ?? []) as Sector[]);
-    setAllPackages((allPkgRes.data ?? []) as ProcurementPackage[]);
+    const insumos = (insRes.data ?? []) as Insumo[];
+    const comps = (compsRes.data ?? []) as { id: string; articulo_id: string; insumo_id: string }[];
+    const cats = (catsRes.data ?? []) as EdtCategory[];
+    const subs = (subsRes.data ?? []) as EdtSubcategory[];
+    const projPkgs = (allPkgRes.data ?? []) as ProcurementPackage[];
+    setAllPackages(projPkgs);
 
-    // PU map: articulo_id → costo unitario
-    const pus: Record<string, number> = {};
-    for (const row of (puRes.data ?? []) as { articulo_id: string; pu_costo: number }[]) {
-      pus[row.articulo_id] = Number(row.pu_costo);
+    // Set de articulo_ids cuantificados en el proyecto
+    const qLines = (qlRes.data ?? []) as Pick<QuantificationLine, "id" | "articulo_id" | "category_id" | "subcategory_id" | "sector_id">[];
+    const quantifiedArtIds = new Set(qLines.filter((q) => q.articulo_id).map((q) => q.articulo_id!));
+    const projPkgIds = new Set(projPkgs.map((p) => p.id));
+
+    // Map: composition_id → articulo_id (para ver dónde aparece)
+    const compById = new Map<string, { articulo_id: string; insumo_id: string }>();
+    for (const c of comps) compById.set(c.id, { articulo_id: c.articulo_id, insumo_id: c.insumo_id });
+
+    // Map: insumo_id → set de articulo_ids con composición de ese insumo (sólo
+    // de artículos cuantificados — si el insumo está en una composición de
+    // un artículo que no se usa en el proyecto, no nos sirve)
+    const insumoToArticulos = new Map<string, Set<string>>();
+    const insumoToCompIds = new Map<string, Set<string>>();
+    for (const c of comps) {
+      if (!quantifiedArtIds.has(c.articulo_id)) continue;
+      if (!insumoToArticulos.has(c.insumo_id)) insumoToArticulos.set(c.insumo_id, new Set());
+      insumoToArticulos.get(c.insumo_id)!.add(c.articulo_id);
+      if (!insumoToCompIds.has(c.insumo_id)) insumoToCompIds.set(c.insumo_id, new Set());
+      insumoToCompIds.get(c.insumo_id)!.add(c.id);
     }
 
-    // Para conocer asignaciones de cada articulo a packages — hacemos
-    // una query: composition_id pertenece a articulo_id, y procurement_lines
-    // referencia composition_id. Cargamos TODAS las procurement_lines de
-    // los packages del proyecto para construir el map articulo_id → package_id.
-    const { data: allPlData } = await supabase
-      .from("procurement_lines")
-      .select("package_id, composition_id, insumo_id");
-    const allCompsRes = await supabase
-      .from("articulo_compositions")
-      .select("id, articulo_id")
-      .in("articulo_id", arts.map((a) => a.id).length > 0 ? arts.map((a) => a.id) : ["__none__"]);
-    const compToArticulo = new Map<string, string>();
-    for (const c of (allCompsRes.data ?? []) as { id: string; articulo_id: string }[]) {
-      compToArticulo.set(c.id, c.articulo_id);
+    // Asignaciones globales: composition_id → package_id
+    const compToPkg = new Map<string, string>();
+    for (const pl of (allPlRes.data ?? []) as { package_id: string; composition_id: string | null }[]) {
+      if (!projPkgIds.has(pl.package_id) || !pl.composition_id) continue;
+      compToPkg.set(pl.composition_id, pl.package_id);
     }
-    // articulo_id → package_id (si CUALQUIER comp del articulo está en
-    // un package, marcamos todo el articulo como asignado a ese package)
-    const articuloToPkg = new Map<string, string>();
-    const projectPkgIds = new Set(((allPkgRes.data ?? []) as ProcurementPackage[]).map((p) => p.id));
-    for (const pl of (allPlData ?? []) as { package_id: string; composition_id: string | null }[]) {
-      if (!projectPkgIds.has(pl.package_id) || !pl.composition_id) continue;
-      const artId = compToArticulo.get(pl.composition_id);
-      if (artId && !articuloToPkg.has(artId)) {
-        articuloToPkg.set(artId, pl.package_id);
+
+    // Map: articulo_id → set de category_ids/subcategory_ids donde aparece
+    // (vía quantification_lines)
+    const artToCatIds = new Map<string, Set<string>>();
+    const artToSubIds = new Map<string, Set<string>>();
+    for (const ql of qLines) {
+      if (!ql.articulo_id) continue;
+      if (!artToCatIds.has(ql.articulo_id)) artToCatIds.set(ql.articulo_id, new Set());
+      artToCatIds.get(ql.articulo_id)!.add(ql.category_id);
+      if (!artToSubIds.has(ql.articulo_id)) artToSubIds.set(ql.articulo_id, new Set());
+      artToSubIds.get(ql.articulo_id)!.add(ql.subcategory_id);
+    }
+
+    // Construir AssignableInsumos
+    const result: AssignableInsumo[] = [];
+    for (const ins of insumos) {
+      const compsOfInsumo = insumoToCompIds.get(ins.id) ?? new Set();
+      if (compsOfInsumo.size === 0) continue; // Insumo no se usa en el proyecto
+
+      // ¿Cuáles de esas composiciones están asignadas? ¿A qué paquete?
+      const pkgIdsOfThisInsumo = new Set<string>();
+      let assignedCount = 0;
+      for (const cid of compsOfInsumo) {
+        const pkgId = compToPkg.get(cid);
+        if (pkgId) {
+          pkgIdsOfThisInsumo.add(pkgId);
+          assignedCount++;
+        }
+      }
+      let assignment: AssignableInsumo["assignment"];
+      if (pkgIdsOfThisInsumo.size === 0) {
+        assignment = { kind: "none" };
+      } else if (pkgIdsOfThisInsumo.size === 1) {
+        const onlyPkgId = [...pkgIdsOfThisInsumo][0];
+        if (assignedCount === compsOfInsumo.size) {
+          if (onlyPkgId === packageId) {
+            assignment = { kind: "all_here", packageId: onlyPkgId };
+          } else {
+            const op = projPkgs.find((p) => p.id === onlyPkgId);
+            assignment = { kind: "all_other", packageId: onlyPkgId, packageName: op?.name ?? "?" };
+          }
+        } else {
+          // Algunas asignadas a este pkg, otras sin asignar
+          const op = projPkgs.find((p) => p.id === onlyPkgId);
+          assignment = { kind: "mixed", details: `Parcial en "${op?.name ?? "?"}"` };
+        }
+      } else {
+        assignment = { kind: "mixed", details: "En varios paquetes" };
+      }
+
+      // Categorías y subcategorías donde aparece (vía sus artículos)
+      const catIdSet = new Set<string>();
+      const subIdSet = new Set<string>();
+      for (const artId of (insumoToArticulos.get(ins.id) ?? new Set())) {
+        for (const cid of (artToCatIds.get(artId) ?? new Set())) catIdSet.add(cid);
+        for (const sid of (artToSubIds.get(artId) ?? new Set())) subIdSet.add(sid);
+      }
+      const category_labels = [...catIdSet].map((cid) => {
+        const c = cats.find((c) => c.id === cid);
+        return c ? `${c.code} ${c.name}` : "(?)";
+      });
+      const subcategory_labels = [...subIdSet].map((sid) => {
+        const s = subs.find((s) => s.id === sid);
+        return s ? `${s.code} ${s.name}` : "(?)";
+      });
+
+      result.push({
+        id: ins.id,
+        code: ins.code,
+        description: ins.description,
+        unit: ins.unit,
+        type: ins.type,
+        pu_usd: Number(ins.pu_usd ?? 0),
+        uses_count: compsOfInsumo.size,
+        assignment,
+        category_labels,
+        subcategory_labels,
+      });
+    }
+    // sort by code asc default
+    result.sort((a, b) => a.code - b.code);
+    setAssignableInsumos(result);
+
+    // Construir pkgInsumos: agrupar las procurement_lines del paquete por insumo
+    const pkgLines = (plRes.data ?? []) as ProcurementLine[];
+    const grouped = new Map<string, {
+      composition_ids: string[];
+      procurement_line_ids: string[];
+      articulo_ids: Set<string>;
+    }>();
+    for (const pl of pkgLines) {
+      if (!grouped.has(pl.insumo_id)) grouped.set(pl.insumo_id, {
+        composition_ids: [], procurement_line_ids: [], articulo_ids: new Set(),
+      });
+      const g = grouped.get(pl.insumo_id)!;
+      g.procurement_line_ids.push(pl.id);
+      if (pl.composition_id) {
+        g.composition_ids.push(pl.composition_id);
+        const comp = compById.get(pl.composition_id);
+        if (comp) g.articulo_ids.add(comp.articulo_id);
       }
     }
-
-    // Enriquecer lineas para tab "Asignar"
-    const enriched: AssignableLine[] = ((qlRes.data ?? []) as QuantificationLine[]).map((line) => {
-      const art = arts.find((a) => a.id === line.articulo_id);
-      return {
-        id: line.id,
-        articulo_id: line.articulo_id,
-        articulo_desc: art?.description ?? "",
-        articulo_unit: art?.unit ?? "",
-        articulo_pu: line.articulo_id ? (pus[line.articulo_id] ?? 0) : 0,
-        articulo_number: art?.number ?? null,
-        quantity: line.quantity,
-        category_id: line.category_id,
-        subcategory_id: line.subcategory_id,
-        sector_id: line.sector_id,
-        assigned_to_package_id: line.articulo_id
-          ? (articuloToPkg.get(line.articulo_id) ?? null)
-          : null,
-      };
-    });
-    setAllLines(enriched);
-
-    // procurement_lines del paquete actual con join a articulo (vía composition)
-    const pkgLinesRaw = (plRes.data ?? []) as (ProcurementLine & {
-      insumo?: Insumo;
-      composition?: ArticuloComposition;
-    })[];
-    const enrichedPkgLines = pkgLinesRaw.map((pl) => ({
-      ...pl,
-      articulo: pl.composition?.articulo_id
-        ? arts.find((a) => a.id === pl.composition!.articulo_id)
-        : undefined,
-    }));
-    setPkgLines(enrichedPkgLines);
+    const pkgInsumosList = [...grouped.entries()].map(([insId, g]) => ({
+      insumo: insumos.find((i) => i.id === insId)!,
+      composition_ids: g.composition_ids,
+      procurement_line_ids: g.procurement_line_ids,
+      articulos: [...g.articulo_ids].map((aid) => arts.find((a) => a.id === aid)).filter(Boolean) as Articulo[],
+    })).filter((g) => g.insumo);
+    pkgInsumosList.sort((a, b) => a.insumo.code - b.insumo.code);
+    setPkgInsumos(pkgInsumosList);
 
     setLoading(false);
   }, [projectId, packageId, supabase, router]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  /* ── Asignar líneas seleccionadas al paquete actual ── */
-  async function assignSelectedLines() {
+  /* ── Asignar insumos seleccionados al paquete ── */
+  async function assignSelectedInsumos() {
     if (selected.size === 0) return;
     if (pkg?.status === "aprobado") {
       toast.error("Paquete aprobado — no se puede modificar");
       return;
     }
     setAssigning(true);
-    const { data, error } = await supabase.rpc("assign_lines_to_package", {
+    const { data, error } = await supabase.rpc("assign_insumos_to_package", {
       p_project_id: projectId,
-      p_line_ids: Array.from(selected),
+      p_insumo_ids: Array.from(selected),
       p_package_id: packageId,
     });
     setAssigning(false);
@@ -214,16 +291,16 @@ export default function PackageDetailPage({
       assigned: number;
       already_in_package: number;
       conflicts: number;
-      skipped_no_articulo: number;
+      skipped_no_usage: number;
       conflict_packages: { name: string; count: number }[];
     };
-    if (r.assigned > 0) toast.success(`${r.assigned} insumo${r.assigned === 1 ? "" : "s"} asignado${r.assigned === 1 ? "" : "s"}`);
+    if (r.assigned > 0) toast.success(`${r.assigned} composición${r.assigned === 1 ? "" : "es"} asignada${r.assigned === 1 ? "" : "s"}`);
     if (r.already_in_package > 0) toast.info(`${r.already_in_package} ya estaban en este paquete`);
     if (r.conflicts > 0 && r.conflict_packages.length > 0) {
       const breakdown = r.conflict_packages.map((p) => `"${p.name}" (${p.count})`).join(", ");
       toast.warning(`${r.conflicts} ya en otros: ${breakdown}`, { duration: 6000 });
     }
-    if (r.skipped_no_articulo > 0) toast.info(`${r.skipped_no_articulo} línea${r.skipped_no_articulo === 1 ? "" : "s"} sin artículo (skip)`);
+    if (r.skipped_no_usage > 0) toast.info(`${r.skipped_no_usage} insumo${r.skipped_no_usage === 1 ? "" : "s"} sin uso en el proyecto (skip)`);
     if (r.assigned === 0 && r.already_in_package === 0 && r.conflicts === 0) {
       toast.info("Nada que asignar");
     }
@@ -231,145 +308,61 @@ export default function PackageDetailPage({
     await loadData();
   }
 
-  /* ── Quitar una línea de procurement (insumo) del paquete ── */
-  async function removePkgLine(plId: string) {
+  /* ── Quitar todas las composiciones de un insumo del paquete ── */
+  async function removeInsumoFromPackage(plIds: string[], insumoDesc: string) {
     if (pkg?.status === "aprobado") return;
-    if (!confirm("¿Quitar este insumo del paquete?")) return;
-    const { error } = await supabase.from("procurement_lines").delete().eq("id", plId);
+    if (!confirm(`¿Quitar "${insumoDesc}" del paquete? (${plIds.length} composición${plIds.length === 1 ? "" : "es"})`)) return;
+    const { error } = await supabase.from("procurement_lines").delete().in("id", plIds);
     if (error) { toast.error(error.message); return; }
     toast.success("Insumo removido del paquete");
     await loadData();
   }
 
-  /* ── Filtros y derivados para tab "Asignar" ── */
+  /* ── Filtros para tab "Asignar" ── */
   const filtered = useMemo(() => {
-    return allLines.filter((l) => {
-      const artLabel = l.articulo_desc || "(Sin artículo)";
-      const unitLabel = l.articulo_unit || "(Vacío)";
-      const cat = categories.find((c) => c.id === l.category_id);
-      const catLabel = cat ? `${cat.code} ${cat.name}` : "(Vacío)";
-      const sub = subcategories.find((s) => s.id === l.subcategory_id);
-      const subLabel = sub ? `${sub.code} ${sub.name}` : "(Vacío)";
-      const sec = sectors.find((s) => s.id === l.sector_id);
-      const secLabel = sec?.name ?? "(Vacío)";
-
-      if (filterArticulo.size > 0 && !filterArticulo.has(artLabel)) return false;
-      if (filterUnit.size > 0 && !filterUnit.has(unitLabel)) return false;
-      if (filterCategory.size > 0 && !filterCategory.has(catLabel)) return false;
-      if (filterSubcategory.size > 0 && !filterSubcategory.has(subLabel)) return false;
-      if (filterSector.size > 0 && !filterSector.has(secLabel)) return false;
+    const text = searchText.trim().toLowerCase();
+    return assignableInsumos.filter((i) => {
+      if (text && !i.description.toLowerCase().includes(text) && !String(i.code).includes(text)) return false;
+      if (filterType.size > 0 && !filterType.has(i.type)) return false;
+      if (filterCategory.size > 0 && !i.category_labels.some((l) => filterCategory.has(l))) return false;
+      if (filterSubcategory.size > 0 && !i.subcategory_labels.some((l) => filterSubcategory.has(l))) return false;
       if (filterAssigned !== "all") {
-        if (filterAssigned === "unassigned" && l.assigned_to_package_id !== null) return false;
-        if (filterAssigned === "here" && l.assigned_to_package_id !== packageId) return false;
-        if (filterAssigned === "other" && (l.assigned_to_package_id === null || l.assigned_to_package_id === packageId)) return false;
+        const k = i.assignment.kind;
+        if (filterAssigned === "unassigned" && k !== "none") return false;
+        if (filterAssigned === "here" && !(k === "all_here" || (k === "mixed" && i.assignment.details.includes("Parcial")))) return false;
+        if (filterAssigned === "other" && k !== "all_other") return false;
       }
       return true;
     });
-  }, [allLines, categories, subcategories, sectors, filterArticulo, filterUnit, filterCategory, filterSubcategory, filterSector, filterAssigned, packageId]);
+  }, [assignableInsumos, searchText, filterType, filterCategory, filterSubcategory, filterAssigned]);
 
   const sorted = useMemo(() => {
     if (!sort.dir) return filtered;
     const mult = sort.dir === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => {
       switch (sort.key) {
-        case "articulo": return mult * a.articulo_desc.localeCompare(b.articulo_desc, "es");
-        case "unit": return mult * a.articulo_unit.localeCompare(b.articulo_unit, "es");
-        case "pu": return mult * (a.articulo_pu - b.articulo_pu);
-        case "quantity": return mult * ((Number(a.quantity) || 0) - (Number(b.quantity) || 0));
-        case "total": return mult * (((Number(a.quantity) || 0) * a.articulo_pu) - ((Number(b.quantity) || 0) * b.articulo_pu));
+        case "code": return mult * (a.code - b.code);
+        case "description": return mult * a.description.localeCompare(b.description, "es");
+        case "unit": return mult * a.unit.localeCompare(b.unit, "es");
+        case "type": return mult * a.type.localeCompare(b.type, "es");
+        case "pu": return mult * (a.pu_usd - b.pu_usd);
+        case "uses": return mult * (a.uses_count - b.uses_count);
         default: return 0;
       }
     });
   }, [filtered, sort]);
 
-  // Únicos para los ColumnFilter
-  const uniqueArticulos = useMemo(() => Array.from(new Set(allLines.map((l) => l.articulo_desc || "(Sin artículo)"))), [allLines]);
-  const uniqueUnits = useMemo(() => Array.from(new Set(allLines.map((l) => l.articulo_unit || "(Vacío)"))), [allLines]);
-  const uniqueCategories = useMemo(() => Array.from(new Set(allLines.map((l) => {
-    const c = categories.find((c) => c.id === l.category_id);
-    return c ? `${c.code} ${c.name}` : "(Vacío)";
-  }))), [allLines, categories]);
-  const uniqueSubcategories = useMemo(() => Array.from(new Set(allLines.map((l) => {
-    const s = subcategories.find((s) => s.id === l.subcategory_id);
-    return s ? `${s.code} ${s.name}` : "(Vacío)";
-  }))), [allLines, subcategories]);
-  const uniqueSectors = useMemo(() => Array.from(new Set(allLines.map((l) => {
-    const s = sectors.find((s) => s.id === l.sector_id);
-    return s?.name ?? "(Vacío)";
-  }))), [allLines, sectors]);
+  const uniqueTypes = useMemo(() => Array.from(new Set(assignableInsumos.map((i) => i.type))).sort(), [assignableInsumos]);
+  const uniqueCategories = useMemo(() => Array.from(new Set(assignableInsumos.flatMap((i) => i.category_labels))).sort(), [assignableInsumos]);
+  const uniqueSubcategories = useMemo(() => Array.from(new Set(assignableInsumos.flatMap((i) => i.subcategory_labels))).sort(), [assignableInsumos]);
 
-  // Conteos para los filter chips de "Asignación"
-  const counts = useMemo(() => ({
-    total: allLines.length,
-    unassigned: allLines.filter((l) => l.assigned_to_package_id === null).length,
-    here: allLines.filter((l) => l.assigned_to_package_id === packageId).length,
-    other: allLines.filter((l) => l.assigned_to_package_id !== null && l.assigned_to_package_id !== packageId).length,
-  }), [allLines, packageId]);
-
-  // Agrupar visualmente por sector → categoría → subcategoría (mismo
-  // patrón que cuantificacion). Las líneas dentro del último nivel
-  // respetan el sort actual.
-  type GroupRow =
-    | { kind: "header"; level: number; key: string; label: string; count: number; collapsed: boolean }
-    | { kind: "line"; line: AssignableLine };
-
-  const groupedRows: GroupRow[] = useMemo(() => {
-    const rows: GroupRow[] = [];
-    const bySector = new Map<string, AssignableLine[]>();
-    for (const l of sorted) {
-      const k = l.sector_id;
-      if (!bySector.has(k)) bySector.set(k, []);
-      bySector.get(k)!.push(l);
-    }
-    // Iterar respetando orden de sectors
-    const sectorOrdered = sectors.map((s) => s.id).filter((id) => bySector.has(id));
-    for (const secId of sectorOrdered) {
-      const sec = sectors.find((s) => s.id === secId);
-      const lines = bySector.get(secId)!;
-      const secKey = `sec::${secId}`;
-      const secCollapsed = collapsedGroups.has(secKey);
-      rows.push({ kind: "header", level: 0, key: secKey, label: sec?.name ?? "(Sin sector)", count: lines.length, collapsed: secCollapsed });
-      if (secCollapsed) continue;
-
-      // Por categoría
-      const byCat = new Map<string, AssignableLine[]>();
-      for (const l of lines) {
-        if (!byCat.has(l.category_id)) byCat.set(l.category_id, []);
-        byCat.get(l.category_id)!.push(l);
-      }
-      const catOrdered = categories.map((c) => c.id).filter((id) => byCat.has(id));
-      for (const catId of catOrdered) {
-        const cat = categories.find((c) => c.id === catId);
-        const catLines = byCat.get(catId)!;
-        const catKey = `cat::${secId}::${catId}`;
-        const catCollapsed = collapsedGroups.has(catKey);
-        rows.push({ kind: "header", level: 1, key: catKey, label: cat ? `${cat.code} ${cat.name}` : "(Sin categoría)", count: catLines.length, collapsed: catCollapsed });
-        if (catCollapsed) continue;
-
-        // Por subcategoría
-        const bySub = new Map<string, AssignableLine[]>();
-        for (const l of catLines) {
-          if (!bySub.has(l.subcategory_id)) bySub.set(l.subcategory_id, []);
-          bySub.get(l.subcategory_id)!.push(l);
-        }
-        const subOrdered = subcategories.map((s) => s.id).filter((id) => bySub.has(id));
-        for (const subId of subOrdered) {
-          const sub = subcategories.find((s) => s.id === subId);
-          const subLines = bySub.get(subId)!;
-          const subKey = `sub::${secId}::${catId}::${subId}`;
-          const subCollapsed = collapsedGroups.has(subKey);
-          rows.push({ kind: "header", level: 2, key: subKey, label: sub ? `${sub.code} ${sub.name}` : "(Sin subcategoría)", count: subLines.length, collapsed: subCollapsed });
-          if (subCollapsed) continue;
-          for (const l of subLines) rows.push({ kind: "line", line: l });
-        }
-      }
-    }
-    return rows;
-  }, [sorted, sectors, categories, subcategories, collapsedGroups]);
-
-  const visibleLineIds = useMemo(() =>
-    new Set(groupedRows.filter((r) => r.kind === "line").map((r) => (r as { kind: "line"; line: AssignableLine }).line.id))
-  , [groupedRows]);
+  const counts = useMemo(() => {
+    const total = assignableInsumos.length;
+    const unassigned = assignableInsumos.filter((i) => i.assignment.kind === "none").length;
+    const here = assignableInsumos.filter((i) => i.assignment.kind === "all_here" || (i.assignment.kind === "mixed" && i.assignment.details.includes("Parcial"))).length;
+    const other = assignableInsumos.filter((i) => i.assignment.kind === "all_other").length;
+    return { total, unassigned, here, other };
+  }, [assignableInsumos]);
 
   function toggleSelect(id: string) {
     setSelected((prev) => {
@@ -378,21 +371,13 @@ export default function PackageDetailPage({
       return next;
     });
   }
-
   function toggleSelectAll() {
-    if (selected.size === visibleLineIds.size && visibleLineIds.size > 0) {
+    const visible = new Set(sorted.map((i) => i.id));
+    if (selected.size === visible.size && visible.size > 0) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(visibleLineIds));
+      setSelected(visible);
     }
-  }
-
-  function toggleGroup(key: string) {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
   }
 
   function handleSort(key: string) {
@@ -408,14 +393,13 @@ export default function PackageDetailPage({
   if (loading) {
     return <div className="p-6"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
-
   if (!pkg) return null;
 
   const isApproved = pkg.status === "aprobado";
 
   return (
     <div className="p-6 space-y-4">
-      {/* Header con breadcrumb / volver y datos del paquete */}
+      {/* Header */}
       <div className="flex items-start gap-3">
         <Button variant="outline" size="sm" onClick={() => router.push(`/project/${projectId}/paquetes`)}>
           <ArrowLeft className="h-4 w-4 mr-1" /> Paquetes
@@ -438,7 +422,7 @@ export default function PackageDetailPage({
               <Badge variant="outline" className="text-xs text-muted-foreground">Borrador</Badge>
             )}
             <Badge variant="outline" className="text-xs">
-              <Package className="h-3 w-3 mr-0.5" /> {pkgLines.length} insumo{pkgLines.length === 1 ? "" : "s"}
+              <Package className="h-3 w-3 mr-0.5" /> {pkgInsumos.length} insumo{pkgInsumos.length === 1 ? "" : "s"}
             </Badge>
           </div>
         </div>
@@ -447,8 +431,8 @@ export default function PackageDetailPage({
       {/* Tabs */}
       <div className="flex gap-1 border-b">
         {[
-          { key: "insumos" as const, label: "Insumos asignados", count: pkgLines.length },
-          { key: "asignar" as const, label: "Asignar líneas", count: counts.total },
+          { key: "insumos" as const, label: "Insumos asignados", count: pkgInsumos.length },
+          { key: "asignar" as const, label: "Asignar insumos", count: counts.total },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -467,10 +451,10 @@ export default function PackageDetailPage({
         ))}
       </div>
 
-      {/* Tab 1: Insumos asignados */}
+      {/* Tab: Insumos asignados */}
       {activeTab === "insumos" && (
         <div>
-          {pkgLines.length === 0 ? (
+          {pkgInsumos.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center space-y-3">
                 <Package className="h-10 w-10 mx-auto text-muted-foreground/40" />
@@ -478,7 +462,7 @@ export default function PackageDetailPage({
                   Este paquete aún no tiene insumos asignados.
                 </p>
                 <Button onClick={() => setActiveTab("asignar")} className="bg-[#E87722] hover:bg-[#E87722]/90 text-white">
-                  <PackagePlus className="h-4 w-4 mr-2" /> Asignar líneas
+                  <PackagePlus className="h-4 w-4 mr-2" /> Asignar insumos
                 </Button>
               </CardContent>
             </Card>
@@ -489,29 +473,36 @@ export default function PackageDetailPage({
                   <tr>
                     <th className="px-2 py-2 text-left text-[11px] uppercase tracking-wider font-semibold w-16">#</th>
                     <th className="px-2 py-2 text-left text-[11px] uppercase tracking-wider font-semibold">Insumo</th>
-                    <th className="px-2 py-2 text-center text-[11px] uppercase tracking-wider font-semibold w-24">Unidad</th>
-                    <th className="px-2 py-2 text-left text-[11px] uppercase tracking-wider font-semibold">Artículo origen</th>
+                    <th className="px-2 py-2 text-center text-[11px] uppercase tracking-wider font-semibold w-20">Unidad</th>
+                    <th className="px-2 py-2 text-center text-[11px] uppercase tracking-wider font-semibold w-28">Tipo</th>
                     <th className="px-2 py-2 text-right text-[11px] uppercase tracking-wider font-semibold w-24">PU USD</th>
+                    <th className="px-2 py-2 text-left text-[11px] uppercase tracking-wider font-semibold">Aparece en (artículos)</th>
                     {!isApproved && <th className="w-12"></th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {pkgLines.map((pl) => (
-                    <tr key={pl.id} className="border-b hover:bg-muted/30">
-                      <td className="px-2 py-1.5 text-xs font-mono text-muted-foreground">{pl.insumo?.code ?? "—"}</td>
-                      <td className="px-2 py-1.5">{pl.insumo?.description ?? "(insumo no encontrado)"}</td>
-                      <td className="px-2 py-1.5 text-center text-xs text-muted-foreground">{pl.insumo?.unit ?? ""}</td>
-                      <td className="px-2 py-1.5 text-xs">
-                        {pl.articulo
-                          ? <span><span className="font-mono text-muted-foreground">#{pl.articulo.number}</span> {pl.articulo.description}</span>
-                          : <span className="text-muted-foreground italic">—</span>}
-                      </td>
+                  {pkgInsumos.map((g) => (
+                    <tr key={g.insumo.id} className="border-b hover:bg-muted/30">
+                      <td className="px-2 py-1.5 text-xs font-mono text-muted-foreground">{g.insumo.code}</td>
+                      <td className="px-2 py-1.5">{g.insumo.description}</td>
+                      <td className="px-2 py-1.5 text-center text-xs text-muted-foreground">{g.insumo.unit}</td>
+                      <td className="px-2 py-1.5 text-center text-[11px] text-muted-foreground capitalize">{g.insumo.type.replace(/_/g, " ")}</td>
                       <td className="px-2 py-1.5 text-right font-mono text-xs">
-                        {pl.insumo?.pu_usd ? formatNumber(Number(pl.insumo.pu_usd), 2) : "—"}
+                        {g.insumo.pu_usd ? formatNumber(Number(g.insumo.pu_usd), 2) : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-xs text-muted-foreground">
+                        {g.articulos.length === 0 ? <span className="italic">—</span> :
+                          <span className="line-clamp-1" title={g.articulos.map((a) => `#${a.number} ${a.description}`).join(", ")}>
+                            {g.articulos.length === 1
+                              ? `#${g.articulos[0].number} ${g.articulos[0].description}`
+                              : `${g.articulos.length} artículos`}
+                          </span>}
                       </td>
                       {!isApproved && (
                         <td className="px-2 py-1.5 text-center">
-                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removePkgLine(pl.id)} title="Quitar del paquete">
+                          <Button variant="ghost" size="icon" className="h-6 w-6"
+                            onClick={() => removeInsumoFromPackage(g.procurement_line_ids, g.insumo.description)}
+                            title="Quitar insumo del paquete">
                             <Trash2 className="h-3 w-3 text-destructive" />
                           </Button>
                         </td>
@@ -525,14 +516,22 @@ export default function PackageDetailPage({
         </div>
       )}
 
-      {/* Tab 2: Asignar líneas — tabla cuantificación read-only con
-          checkboxes, filtros multi-select y botón asignar */}
+      {/* Tab: Asignar insumos */}
       {activeTab === "asignar" && (
         <div className="space-y-3">
-          {/* Toolbar: chips de asignación + barra de bulk + limpiar */}
+          {/* Buscador + chips de asignación */}
           <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="Buscar por código o descripción..."
+                className="pl-8 h-8 w-72 text-sm"
+              />
+            </div>
             {([
-              { v: "all", label: "Todas", count: counts.total },
+              { v: "all", label: "Todos", count: counts.total },
               { v: "unassigned", label: "Sin asignar", count: counts.unassigned },
               { v: "here", label: "En este paquete", count: counts.here },
               { v: "other", label: "En otros paquetes", count: counts.other },
@@ -551,41 +550,33 @@ export default function PackageDetailPage({
                 {opt.label} <span className="ml-1 font-mono text-[10px] opacity-70">{opt.count}</span>
               </button>
             ))}
-            {(filterArticulo.size + filterUnit.size + filterCategory.size + filterSubcategory.size + filterSector.size > 0) && (
+            {(filterType.size + filterCategory.size + filterSubcategory.size > 0) && (
               <Button
-                variant="ghost"
-                size="sm"
+                variant="ghost" size="sm"
                 className="text-xs text-destructive hover:text-destructive"
-                onClick={() => {
-                  setFilterArticulo(new Set()); setFilterUnit(new Set());
-                  setFilterCategory(new Set()); setFilterSubcategory(new Set());
-                  setFilterSector(new Set());
-                }}
+                onClick={() => { setFilterType(new Set()); setFilterCategory(new Set()); setFilterSubcategory(new Set()); }}
               >
                 <X className="h-3 w-3 mr-1" /> Limpiar filtros de columna
               </Button>
             )}
             <span className="ml-auto text-xs text-muted-foreground">
-              {filtered.length} línea{filtered.length === 1 ? "" : "s"} visible{filtered.length === 1 ? "" : "s"}
+              {filtered.length} insumo{filtered.length === 1 ? "" : "s"} visible{filtered.length === 1 ? "" : "s"}
             </span>
           </div>
 
-          {/* Barra contextual de bulk: aparece cuando hay líneas seleccionadas */}
+          {/* Barra contextual bulk */}
           {selected.size > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-[#0A0A0A] text-white shadow-md">
               <span className="text-sm font-medium">
-                {selected.size} línea{selected.size === 1 ? "" : "s"} seleccionada{selected.size === 1 ? "" : "s"}
+                {selected.size} insumo{selected.size === 1 ? "" : "s"} seleccionado{selected.size === 1 ? "" : "s"}
               </span>
               <span className="h-4 w-px bg-white/20 mx-1" />
               <Button
-                size="sm"
-                variant="ghost"
-                onClick={assignSelectedLines}
+                size="sm" variant="ghost"
+                onClick={assignSelectedInsumos}
                 disabled={assigning || isApproved}
                 className="text-xs h-7 text-white hover:bg-white/10 hover:text-white"
-                title={isApproved
-                  ? "Paquete aprobado — no se puede modificar"
-                  : `Asignar ${selected.size} a "${pkg.name}"`}
+                title={isApproved ? "Paquete aprobado" : `Asignar ${selected.size} a "${pkg.name}"`}
               >
                 {assigning
                   ? <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />Asignando...</>
@@ -593,8 +584,7 @@ export default function PackageDetailPage({
               </Button>
               <div className="ml-auto flex items-center gap-1">
                 <Button
-                  size="sm"
-                  variant="ghost"
+                  size="sm" variant="ghost"
                   onClick={() => setSelected(new Set())}
                   className="text-xs h-7 text-white/70 hover:bg-white/10 hover:text-white"
                 >
@@ -604,140 +594,118 @@ export default function PackageDetailPage({
             </div>
           )}
 
-          {/* Tabla read-only tipo cuantificación */}
+          {/* Tabla de insumos */}
           <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
             <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
               <colgroup>
                 <col style={{ width: "32px" }} />
-                <col style={{ width: "40px" }} />
-                <col style={{ width: "260px" }} />
                 <col style={{ width: "60px" }} />
-                <col style={{ width: "100px" }} />
-                <col style={{ width: "100px" }} />
-                <col style={{ width: "115px" }} />
-                <col style={{ width: "115px" }} />
-                <col style={{ width: "100px" }} />
-                <col style={{ width: "120px" }} />
+                <col style={{ width: "300px" }} />
+                <col style={{ width: "70px" }} />
+                <col style={{ width: "110px" }} />
+                <col style={{ width: "90px" }} />
+                <col style={{ width: "70px" }} />
+                <col style={{ width: "180px" }} />
+                <col style={{ width: "180px" }} />
+                <col style={{ width: "150px" }} />
               </colgroup>
               <thead className="sticky top-0 z-30 bg-background shadow-sm">
                 <tr>
                   <th className="px-1 py-2 text-center bg-background">
                     <input
                       type="checkbox"
-                      checked={visibleLineIds.size > 0 && selected.size === visibleLineIds.size}
+                      checked={sorted.length > 0 && selected.size === sorted.length}
                       onChange={toggleSelectAll}
                       className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
                     />
                   </th>
-                  <th className="px-2 py-2 text-left uppercase text-[11px] font-semibold tracking-wider">#</th>
                   <th className="px-2 py-2">
-                    <ColumnFilter label="Artículo" values={uniqueArticulos} activeValues={filterArticulo} onChange={setFilterArticulo} sortDirection={sort.key === "articulo" ? sort.dir : null} onSort={handleSort("articulo")} />
+                    <ColumnFilter label="Código" values={[]} activeValues={new Set()} onChange={() => {}} sortDirection={sort.key === "code" ? sort.dir : null} onSort={handleSort("code")} />
                   </th>
                   <th className="px-2 py-2">
-                    <ColumnFilter label="Und" values={uniqueUnits} activeValues={filterUnit} onChange={setFilterUnit} align="center" sortDirection={sort.key === "unit" ? sort.dir : null} onSort={handleSort("unit")} />
+                    <ColumnFilter label="Descripción" values={[]} activeValues={new Set()} onChange={() => {}} sortDirection={sort.key === "description" ? sort.dir : null} onSort={handleSort("description")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Und" values={[]} activeValues={new Set()} onChange={() => {}} align="center" sortDirection={sort.key === "unit" ? sort.dir : null} onSort={handleSort("unit")} />
+                  </th>
+                  <th className="px-2 py-2">
+                    <ColumnFilter label="Tipo" values={uniqueTypes} activeValues={filterType} onChange={setFilterType} align="center" sortDirection={sort.key === "type" ? sort.dir : null} onSort={handleSort("type")} />
                   </th>
                   <th className="px-2 py-2">
                     <ColumnFilter label="PU USD" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "pu" ? sort.dir : null} onSort={handleSort("pu")} />
                   </th>
                   <th className="px-2 py-2">
-                    <ColumnFilter label="Cantidad" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "quantity" ? sort.dir : null} onSort={handleSort("quantity")} />
+                    <ColumnFilter label="Usos" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "uses" ? sort.dir : null} onSort={handleSort("uses")} />
                   </th>
                   <th className="px-2 py-2">
-                    <ColumnFilter label="Categoría" values={uniqueCategories} activeValues={filterCategory} onChange={setFilterCategory} sortDirection={null} onSort={() => {}} />
+                    <ColumnFilter label="Categorías" values={uniqueCategories} activeValues={filterCategory} onChange={setFilterCategory} sortDirection={null} onSort={() => {}} />
                   </th>
                   <th className="px-2 py-2">
-                    <ColumnFilter label="Subcat." values={uniqueSubcategories} activeValues={filterSubcategory} onChange={setFilterSubcategory} sortDirection={null} onSort={() => {}} />
-                  </th>
-                  <th className="px-2 py-2">
-                    <ColumnFilter label="Sector" values={uniqueSectors} activeValues={filterSector} onChange={setFilterSector} sortDirection={null} onSort={() => {}} />
+                    <ColumnFilter label="Subcategorías" values={uniqueSubcategories} activeValues={filterSubcategory} onChange={setFilterSubcategory} sortDirection={null} onSort={() => {}} />
                   </th>
                   <th className="px-2 py-2 text-left uppercase text-[11px] font-semibold tracking-wider">Asignación</th>
                 </tr>
               </thead>
               <tbody>
-                {groupedRows.map((row) => {
-                  if (row.kind === "header") {
-                    const headerStyles = [
-                      { bg: "#404040", color: "#fff", weight: "font-bold", border: "3px solid #0A0A0A" },
-                      { bg: "#A3A3A3", color: "#fff", weight: "font-semibold", border: "1px solid #737373" },
-                      { bg: "#E5E5E5", color: "#0A0A0A", weight: "font-semibold", border: "1px solid #BFBFBF" },
-                    ][row.level] ?? { bg: "#F5F5F5", color: "#0A0A0A", weight: "font-medium", border: "1px solid #D4D4D4" };
-                    return (
-                      <tr key={row.key} style={{ background: headerStyles.bg, color: headerStyles.color, borderTop: headerStyles.border }}>
-                        <td colSpan={10} className={cn("px-2 py-1.5 text-xs", headerStyles.weight)}>
-                          <button
-                            type="button"
-                            onClick={() => toggleGroup(row.key)}
-                            className="flex items-center gap-1.5 hover:opacity-80"
-                          >
-                            {row.collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                            {row.level === 0 && <Layers className="h-3 w-3" />}
-                            <span>{row.label}</span>
-                            <span className="opacity-70 font-mono text-[10px]">({row.count})</span>
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  }
-                  // line row
-                  const l = row.line;
-                  const isHere = l.assigned_to_package_id === packageId;
-                  const otherPkg = l.assigned_to_package_id && l.assigned_to_package_id !== packageId
-                    ? allPackages.find((p) => p.id === l.assigned_to_package_id)
-                    : null;
+                {sorted.map((i) => {
+                  const isHere = i.assignment.kind === "all_here";
+                  const isOther = i.assignment.kind === "all_other";
+                  const isMixed = i.assignment.kind === "mixed";
                   return (
                     <tr
-                      key={l.id}
-                      style={{ borderBottom: "1px solid #F1F5F9", background: selected.has(l.id) ? "#EFF6FF" : (isHere ? "#ECFDF5" : undefined) }}
+                      key={i.id}
+                      style={{
+                        borderBottom: "1px solid #F1F5F9",
+                        background: selected.has(i.id) ? "#EFF6FF" : (isHere ? "#ECFDF5" : undefined),
+                      }}
                     >
                       <td className="px-1 py-1 text-center">
                         <input
                           type="checkbox"
-                          checked={selected.has(l.id)}
-                          onChange={() => toggleSelect(l.id)}
+                          checked={selected.has(i.id)}
+                          onChange={() => toggleSelect(i.id)}
                           className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
                         />
                       </td>
-                      <td className="px-2 py-1 text-xs font-mono text-muted-foreground">
-                        {l.articulo_number ?? ""}
-                      </td>
-                      <td className="px-2 py-1 truncate" title={l.articulo_desc}>
-                        {l.articulo_desc || <span className="text-muted-foreground italic">(Sin artículo)</span>}
-                      </td>
-                      <td className="px-2 py-1 text-center text-xs text-muted-foreground">{l.articulo_unit}</td>
+                      <td className="px-2 py-1 text-xs font-mono text-muted-foreground">{i.code}</td>
+                      <td className="px-2 py-1 truncate" title={i.description}>{i.description}</td>
+                      <td className="px-2 py-1 text-center text-xs text-muted-foreground">{i.unit}</td>
+                      <td className="px-2 py-1 text-center text-[11px] text-muted-foreground capitalize">{i.type.replace(/_/g, " ")}</td>
                       <td className="px-2 py-1 text-right font-mono text-xs">
-                        {l.articulo_pu > 0 ? formatNumber(l.articulo_pu, 2) : "—"}
+                        {i.pu_usd > 0 ? formatNumber(i.pu_usd, 2) : "—"}
                       </td>
-                      <td className="px-2 py-1 text-right font-mono text-xs">
-                        {l.quantity != null ? formatNumber(Number(l.quantity), 2) : "—"}
+                      <td className="px-2 py-1 text-right font-mono text-xs">{i.uses_count}</td>
+                      <td className="px-2 py-1 text-xs truncate" title={i.category_labels.join(", ")}>
+                        {i.category_labels.length === 0 ? "—" : i.category_labels.length === 1 ? i.category_labels[0] : `${i.category_labels.length} categorías`}
                       </td>
-                      <td className="px-2 py-1 text-xs truncate">
-                        {(() => { const c = categories.find((c) => c.id === l.category_id); return c ? `${c.code} ${c.name}` : ""; })()}
-                      </td>
-                      <td className="px-2 py-1 text-xs truncate">
-                        {(() => { const s = subcategories.find((s) => s.id === l.subcategory_id); return s ? `${s.code} ${s.name}` : ""; })()}
-                      </td>
-                      <td className="px-2 py-1 text-xs truncate">
-                        {sectors.find((s) => s.id === l.sector_id)?.name ?? ""}
+                      <td className="px-2 py-1 text-xs truncate" title={i.subcategory_labels.join(", ")}>
+                        {i.subcategory_labels.length === 0 ? "—" : i.subcategory_labels.length === 1 ? i.subcategory_labels[0] : `${i.subcategory_labels.length} subcategorías`}
                       </td>
                       <td className="px-2 py-1">
-                        {isHere ? (
-                          <Badge className="text-[10px] bg-emerald-600 text-white">En este paquete</Badge>
-                        ) : otherPkg ? (
-                          <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50" title={`En "${otherPkg.name}"`}>
-                            En "{otherPkg.name}"
+                        {isHere && <Badge className="text-[10px] bg-emerald-600 text-white">En este paquete</Badge>}
+                        {isOther && i.assignment.kind === "all_other" && (
+                          <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
+                            En "{i.assignment.packageName}"
                           </Badge>
-                        ) : (
+                        )}
+                        {isMixed && i.assignment.kind === "mixed" && (
+                          <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
+                            {i.assignment.details}
+                          </Badge>
+                        )}
+                        {i.assignment.kind === "none" && (
                           <span className="text-[10px] text-muted-foreground italic">Sin asignar</span>
                         )}
                       </td>
                     </tr>
                   );
                 })}
-                {groupedRows.length === 0 && (
+                {sorted.length === 0 && (
                   <tr>
                     <td colSpan={10} className="px-4 py-12 text-center text-sm text-muted-foreground">
-                      No hay líneas que coincidan con los filtros.
+                      {assignableInsumos.length === 0
+                        ? "No hay insumos disponibles. Asegurate de tener artículos cuantificados con composiciones."
+                        : "No hay insumos que coincidan con los filtros."}
                     </td>
                   </tr>
                 )}
