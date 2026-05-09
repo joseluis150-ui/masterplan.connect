@@ -268,20 +268,14 @@ export default function ModeloNegocioPage({ params }: { params: Promise<{ id: st
         {activeTab === "costos" && activeInput && (
           <CostsTab
             input={activeInput}
-            onChange={async () => {
-              const updated = await loadScenarioInput(supabase, model, activeInput.scenario);
-              setActiveInput(updated);
-            }}
+            setInput={setActiveInput}
             canEdit={canEdit}
           />
         )}
         {activeTab === "ingresos" && activeInput && (
           <RevenuesTab
             input={activeInput}
-            onChange={async () => {
-              const updated = await loadScenarioInput(supabase, model, activeInput.scenario);
-              setActiveInput(updated);
-            }}
+            setInput={setActiveInput}
             canEdit={canEdit}
           />
         )}

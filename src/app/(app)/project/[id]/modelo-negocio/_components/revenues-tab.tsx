@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,16 +12,38 @@ import {
   createSalesPhase, createSellableUnit, deleteSalesPhase, deleteSellableUnit,
   updateSalesPhase, updateSellableUnit,
 } from "../_lib/api";
-import { formatNumber, formatPct } from "../_lib/formatters";
 import type { Currency, SalesPhase, ScenarioInput, SellableUnit } from "../_lib/types";
+import { NumericInput } from "./numeric-input";
 
 const CURRENCIES: Currency[] = ["USD", "PYG", "GTQ"];
 
+type SetInput = React.Dispatch<React.SetStateAction<ScenarioInput | null>>;
+
+/* ─── Helpers de mutación local ───────────────────────────────────── */
+
+function patchUnit(setInput: SetInput, id: string, patch: Partial<SellableUnit>) {
+  setInput((prev) => prev ? {
+    ...prev,
+    units: prev.units.map((u) => u.id === id ? { ...u, ...patch } : u),
+  } : prev);
+}
+function patchPhase(setInput: SetInput, unitId: string, phaseId: string, patch: Partial<SalesPhase>) {
+  setInput((prev) => prev ? {
+    ...prev,
+    units: prev.units.map((u) => u.id !== unitId ? u : {
+      ...u,
+      salesPhases: (u.salesPhases ?? []).map((p) => p.id === phaseId ? { ...p, ...patch } : p),
+    }),
+  } : prev);
+}
+
+/* ─── Tab ─────────────────────────────────────────────────────────── */
+
 export function RevenuesTab({
-  input, onChange, canEdit,
+  input, setInput, canEdit,
 }: {
   input: ScenarioInput;
-  onChange: () => Promise<void>;
+  setInput: SetInput;
   canEdit: boolean;
 }) {
   return (
@@ -37,7 +58,7 @@ export function RevenuesTab({
           </div>
         </CardHeader>
         <CardContent className="pt-0">
-          <UnitsTable input={input} onChange={onChange} canEdit={canEdit} />
+          <UnitsTable input={input} setInput={setInput} canEdit={canEdit} />
         </CardContent>
       </Card>
     </div>
@@ -45,62 +66,83 @@ export function RevenuesTab({
 }
 
 function UnitsTable({
-  input, onChange, canEdit,
+  input, setInput, canEdit,
 }: {
   input: ScenarioInput;
-  onChange: () => Promise<void>;
+  setInput: SetInput;
   canEdit: boolean;
 }) {
   const supabase = createClient();
-  const [drafts, setDrafts] = useState<Record<string, SellableUnit>>({});
-  const [phaseDrafts, setPhaseDrafts] = useState<Record<string, SalesPhase>>({});
 
-  const get = (u: SellableUnit) => drafts[u.id] ?? u;
-  const getP = (p: SalesPhase) => phaseDrafts[p.id] ?? p;
-
-  function setUnit(u: SellableUnit, p: Partial<SellableUnit>) {
-    setDrafts({ ...drafts, [u.id]: { ...get(u), ...p } });
+  /* ─── Unit operations ─── */
+  async function commitUnit(id: string, patch: Partial<SellableUnit>) {
+    patchUnit(setInput, id, patch);
+    try {
+      await updateSellableUnit(supabase, id, patch);
+    } catch (e) {
+      toast.error(`No se pudo guardar: ${(e as Error).message}`);
+    }
   }
-  function setPhase(p: SalesPhase, patch: Partial<SalesPhase>) {
-    setPhaseDrafts({ ...phaseDrafts, [p.id]: { ...getP(p), ...patch } });
-  }
-
-  async function commitUnit(u: SellableUnit) {
-    const next = drafts[u.id]; if (!next) return;
-    await updateSellableUnit(supabase, u.id, next);
-    setDrafts((d) => { const n = { ...d }; delete n[u.id]; return n; });
-    await onChange();
-  }
-  async function commitPhase(p: SalesPhase) {
-    const next = phaseDrafts[p.id]; if (!next) return;
-    await updateSalesPhase(supabase, p.id, next);
-    setPhaseDrafts((d) => { const n = { ...d }; delete n[p.id]; return n; });
-    await onChange();
-  }
-
   async function addUnit() {
-    await createSellableUnit(supabase, input.scenario.id, input.units.length);
-    await onChange();
+    try {
+      const created = await createSellableUnit(supabase, input.scenario.id, input.units.length);
+      setInput((prev) => prev ? { ...prev, units: [...prev.units, { ...created, salesPhases: [] }] } : prev);
+    } catch (e) {
+      toast.error(`No se pudo crear: ${(e as Error).message}`);
+    }
   }
   async function delUnit(id: string) {
     if (!confirm("¿Eliminar esta unidad y todas sus fases?")) return;
-    await deleteSellableUnit(supabase, id);
-    await onChange();
+    try {
+      await deleteSellableUnit(supabase, id);
+      setInput((prev) => prev ? { ...prev, units: prev.units.filter((u) => u.id !== id) } : prev);
+    } catch (e) {
+      toast.error(`No se pudo eliminar: ${(e as Error).message}`);
+    }
+  }
+
+  /* ─── Phase operations ─── */
+  async function commitPhase(unitId: string, phaseId: string, patch: Partial<SalesPhase>) {
+    patchPhase(setInput, unitId, phaseId, patch);
+    try {
+      await updateSalesPhase(supabase, phaseId, patch);
+    } catch (e) {
+      toast.error(`No se pudo guardar: ${(e as Error).message}`);
+    }
   }
   async function addPhase(unitId: string, currentCount: number) {
-    await createSalesPhase(supabase, unitId, currentCount);
-    await onChange();
+    try {
+      const created = await createSalesPhase(supabase, unitId, currentCount);
+      setInput((prev) => prev ? {
+        ...prev,
+        units: prev.units.map((u) => u.id !== unitId ? u : {
+          ...u,
+          salesPhases: [...(u.salesPhases ?? []), created],
+        }),
+      } : prev);
+    } catch (e) {
+      toast.error(`No se pudo crear: ${(e as Error).message}`);
+    }
   }
-  async function delPhase(id: string) {
+  async function delPhase(unitId: string, phaseId: string) {
     if (!confirm("¿Eliminar esta fase?")) return;
-    await deleteSalesPhase(supabase, id);
-    await onChange();
+    try {
+      await deleteSalesPhase(supabase, phaseId);
+      setInput((prev) => prev ? {
+        ...prev,
+        units: prev.units.map((u) => u.id !== unitId ? u : {
+          ...u,
+          salesPhases: (u.salesPhases ?? []).filter((p) => p.id !== phaseId),
+        }),
+      } : prev);
+    } catch (e) {
+      toast.error(`No se pudo eliminar: ${(e as Error).message}`);
+    }
   }
 
   return (
     <div className="space-y-3">
       {input.units.map((u) => {
-        const d = get(u);
         const phases = u.salesPhases ?? [];
         return (
           <Card key={u.id} className="bg-muted/20">
@@ -108,28 +150,34 @@ function UnitsTable({
               <div className="grid grid-cols-12 gap-2 items-end">
                 <div className="col-span-4 space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">Nombre</label>
-                  <Input value={d.unitName}
-                    onChange={(e) => setUnit(u, { unitName: e.target.value })}
-                    onBlur={() => commitUnit(u)} disabled={!canEdit} className="h-8 text-sm" />
+                  <Input defaultValue={u.unitName}
+                    onBlur={(e) => { if (e.target.value !== u.unitName) commitUnit(u.id, { unitName: e.target.value }); }}
+                    disabled={!canEdit} className="h-8 text-sm" />
                 </div>
                 <div className="col-span-3 space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">Tipo</label>
-                  <Input value={d.unitType ?? ""}
-                    onChange={(e) => setUnit(u, { unitType: e.target.value || null })}
-                    onBlur={() => commitUnit(u)} disabled={!canEdit} className="h-8 text-sm"
-                    placeholder="Depto, local, etc." />
+                  <Input defaultValue={u.unitType ?? ""}
+                    onBlur={(e) => { const v = e.target.value || null; if (v !== u.unitType) commitUnit(u.id, { unitType: v }); }}
+                    disabled={!canEdit} className="h-8 text-sm" placeholder="Depto, local, etc." />
                 </div>
                 <div className="col-span-2 space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">m²</label>
-                  <Input type="number" min={0} step="0.01" value={d.surfaceM2 ?? ""}
-                    onChange={(e) => setUnit(u, { surfaceM2: e.target.value === "" ? null : Number(e.target.value) })}
-                    onBlur={() => commitUnit(u)} disabled={!canEdit} className="h-8 text-sm tabular-nums" />
+                  <NumericInput
+                    value={u.surfaceM2}
+                    onCommit={(v) => commitUnit(u.id, { surfaceM2: v })}
+                    min={0} disabled={!canEdit}
+                    className="h-8 text-sm tabular-nums"
+                    placeholder="—"
+                  />
                 </div>
                 <div className="col-span-2 space-y-1">
                   <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">Cantidad</label>
-                  <Input type="number" min={1} value={d.quantity}
-                    onChange={(e) => setUnit(u, { quantity: Math.max(1, Number(e.target.value) || 1) })}
-                    onBlur={() => commitUnit(u)} disabled={!canEdit} className="h-8 text-sm tabular-nums" />
+                  <NumericInput
+                    value={u.quantity}
+                    onCommit={(v) => commitUnit(u.id, { quantity: Math.max(1, v ?? 1) })}
+                    required min={1} disabled={!canEdit}
+                    className="h-8 text-sm tabular-nums"
+                  />
                 </div>
                 <div className="col-span-1 flex justify-end">
                   {canEdit && (
@@ -176,77 +224,75 @@ function UnitsTable({
                       </thead>
                       <tbody>
                         {phases.map((p) => {
-                          const pd = getP(p);
-                          const sumPct = pd.downPaymentPct + pd.installmentsPct + pd.finalPaymentPct;
+                          const sumPct = p.downPaymentPct + p.installmentsPct + p.finalPaymentPct;
                           const valid = Math.abs(sumPct - 1) < 0.001;
                           return (
                             <tr key={p.id} className={cn("border-t hover:bg-muted/30", !valid && "bg-amber-50")}>
                               <td className="px-1.5 py-1">
-                                <Input value={pd.phaseName}
-                                  onChange={(e) => setPhase(p, { phaseName: e.target.value })}
-                                  onBlur={() => commitPhase(p)} disabled={!canEdit} className="h-7 text-xs" />
+                                <Input defaultValue={p.phaseName}
+                                  onBlur={(e) => { if (e.target.value !== p.phaseName) commitPhase(u.id, p.id, { phaseName: e.target.value }); }}
+                                  disabled={!canEdit} className="h-7 text-xs" />
                               </td>
                               <td className="px-1.5 py-1">
-                                <Input type="number" min={1} value={pd.unitsToSell}
-                                  onChange={(e) => setPhase(p, { unitsToSell: Math.max(1, Number(e.target.value) || 1) })}
-                                  onBlur={() => commitPhase(p)} disabled={!canEdit}
+                                <NumericInput value={p.unitsToSell}
+                                  onCommit={(v) => commitPhase(u.id, p.id, { unitsToSell: Math.max(1, v ?? 1) })}
+                                  required min={1} disabled={!canEdit}
                                   className="h-7 text-xs text-center tabular-nums" />
                               </td>
                               <td className="px-1.5 py-1">
-                                <Input type="number" min={0} step="0.01" value={pd.pricePerUnit}
-                                  onChange={(e) => setPhase(p, { pricePerUnit: Number(e.target.value) || 0 })}
-                                  onBlur={() => commitPhase(p)} disabled={!canEdit}
+                                <NumericInput value={p.pricePerUnit}
+                                  onCommit={(v) => commitPhase(u.id, p.id, { pricePerUnit: v ?? 0 })}
+                                  required min={0} disabled={!canEdit}
                                   className="h-7 text-xs text-right tabular-nums" />
                               </td>
                               <td className="px-1.5 py-1">
-                                <Select value={pd.currency} onValueChange={(v) => { setPhase(p, { currency: v as Currency }); commitPhase({ ...p, ...pd, currency: v as Currency }); }}>
-                                  <SelectTrigger disabled={!canEdit} className="h-7 text-[11px]">{pd.currency}</SelectTrigger>
+                                <Select value={p.currency} onValueChange={(v) => v && commitPhase(u.id, p.id, { currency: v as Currency })}>
+                                  <SelectTrigger disabled={!canEdit} className="h-7 text-[11px]">{p.currency}</SelectTrigger>
                                   <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                                 </Select>
                               </td>
                               <td className="px-1.5 py-1">
-                                <Input type="number" min={0} value={pd.salePeriodStart}
-                                  onChange={(e) => setPhase(p, { salePeriodStart: Math.max(0, Number(e.target.value) || 0) })}
-                                  onBlur={() => commitPhase(p)} disabled={!canEdit}
+                                <NumericInput value={p.salePeriodStart}
+                                  onCommit={(v) => commitPhase(u.id, p.id, { salePeriodStart: Math.max(0, v ?? 0) })}
+                                  required min={0} disabled={!canEdit}
                                   className="h-7 text-xs text-center tabular-nums" />
                               </td>
                               <td className="px-1.5 py-1">
-                                <Input type="number" min={pd.salePeriodStart} value={pd.salePeriodEnd}
-                                  onChange={(e) => setPhase(p, { salePeriodEnd: Math.max(pd.salePeriodStart, Number(e.target.value) || pd.salePeriodStart) })}
-                                  onBlur={() => commitPhase(p)} disabled={!canEdit}
+                                <NumericInput value={p.salePeriodEnd}
+                                  onCommit={(v) => commitPhase(u.id, p.id, { salePeriodEnd: Math.max(p.salePeriodStart, v ?? p.salePeriodStart) })}
+                                  required min={p.salePeriodStart} disabled={!canEdit}
                                   className="h-7 text-xs text-center tabular-nums" />
                               </td>
                               <td className="px-1.5 py-1">
-                                <Input type="number" min={0} max={100} step="0.01"
-                                  value={pd.downPaymentPct * 100}
-                                  onChange={(e) => setPhase(p, { downPaymentPct: (Number(e.target.value) || 0) / 100 })}
-                                  onBlur={() => commitPhase(p)} disabled={!canEdit}
+                                <NumericInput value={p.downPaymentPct}
+                                  onCommit={(v) => commitPhase(u.id, p.id, { downPaymentPct: v ?? 0 })}
+                                  required displayMultiplier={100} min={0} max={100}
+                                  disabled={!canEdit}
                                   className="h-7 text-xs text-center tabular-nums" />
                               </td>
                               <td className="px-1.5 py-1">
-                                <Input type="number" min={0}
-                                  value={pd.installmentsCount}
-                                  onChange={(e) => setPhase(p, { installmentsCount: Math.max(0, Number(e.target.value) || 0) })}
-                                  onBlur={() => commitPhase(p)} disabled={!canEdit}
+                                <NumericInput value={p.installmentsCount}
+                                  onCommit={(v) => commitPhase(u.id, p.id, { installmentsCount: Math.max(0, v ?? 0) })}
+                                  required min={0} disabled={!canEdit}
                                   className="h-7 text-xs text-center tabular-nums" />
                               </td>
                               <td className="px-1.5 py-1">
-                                <Input type="number" min={0} max={100} step="0.01"
-                                  value={pd.installmentsPct * 100}
-                                  onChange={(e) => setPhase(p, { installmentsPct: (Number(e.target.value) || 0) / 100 })}
-                                  onBlur={() => commitPhase(p)} disabled={!canEdit}
+                                <NumericInput value={p.installmentsPct}
+                                  onCommit={(v) => commitPhase(u.id, p.id, { installmentsPct: v ?? 0 })}
+                                  required displayMultiplier={100} min={0} max={100}
+                                  disabled={!canEdit}
                                   className="h-7 text-xs text-center tabular-nums" />
                               </td>
                               <td className="px-1.5 py-1">
-                                <Input type="number" min={0} max={100} step="0.01"
-                                  value={pd.finalPaymentPct * 100}
-                                  onChange={(e) => setPhase(p, { finalPaymentPct: (Number(e.target.value) || 0) / 100 })}
-                                  onBlur={() => commitPhase(p)} disabled={!canEdit}
+                                <NumericInput value={p.finalPaymentPct}
+                                  onCommit={(v) => commitPhase(u.id, p.id, { finalPaymentPct: v ?? 0 })}
+                                  required displayMultiplier={100} min={0} max={100}
+                                  disabled={!canEdit}
                                   className="h-7 text-xs text-center tabular-nums" />
                               </td>
                               <td className="px-1.5 py-1 text-center">
                                 {canEdit && (
-                                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => delPhase(p.id)}>
+                                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => delPhase(u.id, p.id)}>
                                     <Trash2 className="h-3 w-3 text-destructive" />
                                   </Button>
                                 )}

@@ -19,6 +19,7 @@ import type {
   CalculationBasis, ConstructionCategory, Currency, DistributionCurve,
   ExpenseType, LandCost, OtherExpense, PaymentStructure, ScenarioInput, TimingType,
 } from "../_lib/types";
+import { NumericInput } from "./numeric-input";
 
 const CURRENCIES: Currency[] = ["USD", "PYG", "GTQ"];
 const CURVES: { value: DistributionCurve; label: string }[] = [
@@ -52,11 +53,17 @@ const TIMINGS: { value: TimingType; label: string }[] = [
   { value: "on_event", label: "Sobre evento (venta)" },
 ];
 
+/**
+ * Tab Costos. Refactor para que NO recargue todo el escenario al editar:
+ * cada cambio se persiste en DB y se aplica localmente al state del padre
+ * vía `setInput`. Esto evita el "parpadeo" / pérdida de foco que sucedía
+ * antes con el `await onChange()` que hacía un loadScenarioInput entero.
+ */
 export function CostsTab({
-  input, onChange, canEdit,
+  input, setInput, canEdit,
 }: {
   input: ScenarioInput;
-  onChange: () => Promise<void>;
+  setInput: React.Dispatch<React.SetStateAction<ScenarioInput | null>>;
   canEdit: boolean;
 }) {
   const [openLand, setOpenLand] = useState(true);
@@ -73,7 +80,7 @@ export function CostsTab({
         open={openLand}
         onToggle={() => setOpenLand(!openLand)}
       >
-        <LandTable lands={input.land} scenarioId={input.scenario.id} onChange={onChange} canEdit={canEdit} />
+        <LandTable lands={input.land} scenarioId={input.scenario.id} setInput={setInput} canEdit={canEdit} />
       </Section>
 
       <Section
@@ -84,7 +91,7 @@ export function CostsTab({
         open={openConstr}
         onToggle={() => setOpenConstr(!openConstr)}
       >
-        <ConstructionTable cats={input.construction} scenarioId={input.scenario.id} onChange={onChange} canEdit={canEdit} />
+        <ConstructionTable cats={input.construction} scenarioId={input.scenario.id} setInput={setInput} canEdit={canEdit} />
       </Section>
 
       <Section
@@ -96,7 +103,7 @@ export function CostsTab({
         open={openOthers}
         onToggle={() => setOpenOthers(!openOthers)}
       >
-        <OthersTable items={input.otherExpenses} scenarioId={input.scenario.id} onChange={onChange} canEdit={canEdit} />
+        <OthersTable items={input.otherExpenses} scenarioId={input.scenario.id} setInput={setInput} canEdit={canEdit} />
       </Section>
     </div>
   );
@@ -126,7 +133,7 @@ function Section({
             <CardTitle className="text-base">{title}</CardTitle>
           </div>
           <div className="text-xs text-muted-foreground font-mono">
-            {totalLabel ?? "Total"}: {currencyHint} {formatNumber(total, currencyHint === "USD" ? 0 : 0)}
+            {totalLabel ?? "Total"}: {currencyHint} {formatNumber(total, 0)}
           </div>
         </div>
       </CardHeader>
@@ -135,38 +142,60 @@ function Section({
   );
 }
 
+/* ─── Helpers de mutación local ───────────────────────────────────── */
+
+type SetInput = React.Dispatch<React.SetStateAction<ScenarioInput | null>>;
+
+function patchLandLocally(setInput: SetInput, id: string, patch: Partial<LandCost>) {
+  setInput((prev) => prev ? { ...prev, land: prev.land.map((l) => l.id === id ? { ...l, ...patch } : l) } : prev);
+}
+function patchConstrLocally(setInput: SetInput, id: string, patch: Partial<ConstructionCategory>) {
+  setInput((prev) => prev ? { ...prev, construction: prev.construction.map((c) => c.id === id ? { ...c, ...patch } : c) } : prev);
+}
+function patchOtherLocally(setInput: SetInput, id: string, patch: Partial<OtherExpense>) {
+  setInput((prev) => prev ? { ...prev, otherExpenses: prev.otherExpenses.map((e) => e.id === id ? { ...e, ...patch } : e) } : prev);
+}
+
 /* ─── Tabla Tierra ────────────────────────────────────────────────── */
 
 function LandTable({
-  lands, scenarioId, onChange, canEdit,
+  lands, scenarioId, setInput, canEdit,
 }: {
   lands: LandCost[];
   scenarioId: string;
-  onChange: () => Promise<void>;
+  setInput: SetInput;
   canEdit: boolean;
 }) {
   const supabase = createClient();
-  const [drafts, setDrafts] = useState<Record<string, LandCost>>({});
 
-  const get = (l: LandCost) => drafts[l.id] ?? l;
-  function set(l: LandCost, p: Partial<LandCost>) {
-    setDrafts({ ...drafts, [l.id]: { ...get(l), ...p } });
+  /** Persiste el patch a DB y actualiza el state local del padre.
+   *  Lo hace con un toast silencioso para no inundar al usuario; sólo
+   *  mostramos toast si hay error. */
+  async function commit(id: string, patch: Partial<LandCost>) {
+    patchLandLocally(setInput, id, patch);
+    try {
+      await updateLandCost(supabase, id, patch);
+    } catch (e) {
+      toast.error(`No se pudo guardar: ${(e as Error).message}`);
+    }
   }
-  async function commit(l: LandCost) {
-    const next = drafts[l.id];
-    if (!next) return;
-    await updateLandCost(supabase, l.id, next);
-    setDrafts((d) => { const n = { ...d }; delete n[l.id]; return n; });
-    await onChange();
-  }
+
   async function add() {
-    await createLandCost(supabase, scenarioId, lands.length);
-    await onChange();
+    try {
+      const newLand = await createLandCost(supabase, scenarioId, lands.length);
+      setInput((prev) => prev ? { ...prev, land: [...prev.land, newLand] } : prev);
+    } catch (e) {
+      toast.error(`No se pudo crear: ${(e as Error).message}`);
+    }
   }
   async function del(id: string) {
     if (!confirm("¿Eliminar esta línea?")) return;
-    await deleteLandCost(supabase, id);
-    await onChange();
+    try {
+      await deleteLandCost(supabase, id);
+      setInput((prev) => prev ? { ...prev, land: prev.land.filter((l) => l.id !== id) } : prev);
+    } catch (e) {
+      toast.error(`No se pudo eliminar: ${(e as Error).message}`);
+    }
   }
 
   return (
@@ -196,90 +225,89 @@ function LandTable({
             </tr>
           </thead>
           <tbody>
-            {lands.map((l) => {
-              const d = get(l);
-              return (
-                <tr key={l.id} className="border-t hover:bg-muted/30">
-                  <td className="px-2 py-1">
-                    <Input
-                      value={d.description}
-                      onChange={(e) => set(l, { description: e.target.value })}
-                      onBlur={() => commit(l)}
-                      disabled={!canEdit}
-                      className="h-8 text-sm"
-                    />
-                  </td>
-                  <td className="px-2 py-1">
-                    <Input
-                      type="number" min={0} step="0.01"
-                      value={d.totalAmount}
-                      onChange={(e) => set(l, { totalAmount: Number(e.target.value) || 0 })}
-                      onBlur={() => commit(l)}
-                      disabled={!canEdit}
-                      className="h-8 text-sm text-right tabular-nums"
-                    />
-                  </td>
-                  <td className="px-2 py-1">
-                    <Select value={d.currency} onValueChange={(v) => { set(l, { currency: v as Currency }); commit({ ...l, ...d, currency: v as Currency }); }}>
-                      <SelectTrigger disabled={!canEdit} className="h-8 text-xs">{d.currency}</SelectTrigger>
-                      <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </td>
-                  <td className="px-2 py-1">
-                    <Select
-                      value={d.paymentStructure}
-                      onValueChange={(v) => { set(l, { paymentStructure: v as PaymentStructure }); commit({ ...l, ...d, paymentStructure: v as PaymentStructure }); }}
-                    >
-                      <SelectTrigger disabled={!canEdit} className="h-8 text-xs">
-                        {d.paymentStructure === "lump_sum" ? "Único pago" : "Cuotas"}
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="lump_sum">Único pago</SelectItem>
-                        <SelectItem value="installments">Cuotas</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </td>
-                  <td className="px-2 py-1">
-                    <Input type="number" min={0}
-                      value={d.paymentStartPeriod}
-                      onChange={(e) => set(l, { paymentStartPeriod: Math.max(0, Number(e.target.value) || 0) })}
-                      onBlur={() => commit(l)}
+            {lands.map((l) => (
+              <tr key={l.id} className="border-t hover:bg-muted/30">
+                <td className="px-2 py-1">
+                  <Input
+                    defaultValue={l.description}
+                    onBlur={(e) => { if (e.target.value !== l.description) commit(l.id, { description: e.target.value }); }}
+                    disabled={!canEdit}
+                    className="h-8 text-sm"
+                  />
+                </td>
+                <td className="px-2 py-1">
+                  <NumericInput
+                    value={l.totalAmount}
+                    onCommit={(v) => commit(l.id, { totalAmount: v ?? 0 })}
+                    required
+                    min={0}
+                    disabled={!canEdit}
+                    className="h-8 text-sm text-right tabular-nums"
+                  />
+                </td>
+                <td className="px-2 py-1">
+                  <Select value={l.currency} onValueChange={(v) => v && commit(l.id, { currency: v as Currency })}>
+                    <SelectTrigger disabled={!canEdit} className="h-8 text-xs">{l.currency}</SelectTrigger>
+                    <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                  </Select>
+                </td>
+                <td className="px-2 py-1">
+                  <Select
+                    value={l.paymentStructure}
+                    onValueChange={(v) => v && commit(l.id, { paymentStructure: v as PaymentStructure })}
+                  >
+                    <SelectTrigger disabled={!canEdit} className="h-8 text-xs">
+                      {l.paymentStructure === "lump_sum" ? "Único pago" : "Cuotas"}
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="lump_sum">Único pago</SelectItem>
+                      <SelectItem value="installments">Cuotas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </td>
+                <td className="px-2 py-1">
+                  <NumericInput
+                    value={l.paymentStartPeriod}
+                    onCommit={(v) => commit(l.id, { paymentStartPeriod: Math.max(0, v ?? 0) })}
+                    required
+                    min={0}
+                    disabled={!canEdit}
+                    className="h-8 text-sm text-center tabular-nums"
+                  />
+                </td>
+                <td className="px-2 py-1">
+                  {l.paymentStructure === "installments" ? (
+                    <NumericInput
+                      value={l.installmentsCount}
+                      onCommit={(v) => commit(l.id, { installmentsCount: v == null ? null : Math.max(1, v) })}
+                      min={1}
                       disabled={!canEdit}
                       className="h-8 text-sm text-center tabular-nums"
+                      placeholder="—"
                     />
-                  </td>
-                  <td className="px-2 py-1">
-                    {d.paymentStructure === "installments" ? (
-                      <Input type="number" min={1}
-                        value={d.installmentsCount ?? ""}
-                        onChange={(e) => set(l, { installmentsCount: e.target.value === "" ? null : Math.max(1, Number(e.target.value)) })}
-                        onBlur={() => commit(l)}
-                        disabled={!canEdit}
-                        className="h-8 text-sm text-center tabular-nums"
-                      />
-                    ) : <span className="text-xs text-muted-foreground/50">—</span>}
-                  </td>
-                  <td className="px-2 py-1">
-                    {d.paymentStructure === "installments" ? (
-                      <Input type="number" min={1}
-                        value={d.installmentFrequencyPeriods ?? ""}
-                        onChange={(e) => set(l, { installmentFrequencyPeriods: e.target.value === "" ? null : Math.max(1, Number(e.target.value)) })}
-                        onBlur={() => commit(l)}
-                        disabled={!canEdit}
-                        className="h-8 text-sm text-center tabular-nums"
-                      />
-                    ) : <span className="text-xs text-muted-foreground/50">—</span>}
-                  </td>
-                  <td className="px-2 py-1 text-center">
-                    {canEdit && (
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => del(l.id)}>
-                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+                  ) : <span className="text-xs text-muted-foreground/50">—</span>}
+                </td>
+                <td className="px-2 py-1">
+                  {l.paymentStructure === "installments" ? (
+                    <NumericInput
+                      value={l.installmentFrequencyPeriods}
+                      onCommit={(v) => commit(l.id, { installmentFrequencyPeriods: v == null ? null : Math.max(1, v) })}
+                      min={1}
+                      disabled={!canEdit}
+                      className="h-8 text-sm text-center tabular-nums"
+                      placeholder="—"
+                    />
+                  ) : <span className="text-xs text-muted-foreground/50">—</span>}
+                </td>
+                <td className="px-2 py-1 text-center">
+                  {canEdit && (
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => del(l.id)}>
+                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
             {lands.length === 0 && (
               <tr><td colSpan={8} className="text-center text-xs text-muted-foreground py-4">Sin terrenos cargados</td></tr>
             )}
@@ -298,33 +326,39 @@ function LandTable({
 /* ─── Tabla Construcción ──────────────────────────────────────────── */
 
 function ConstructionTable({
-  cats, scenarioId, onChange, canEdit,
+  cats, scenarioId, setInput, canEdit,
 }: {
   cats: ConstructionCategory[];
   scenarioId: string;
-  onChange: () => Promise<void>;
+  setInput: SetInput;
   canEdit: boolean;
 }) {
   const supabase = createClient();
-  const [drafts, setDrafts] = useState<Record<string, ConstructionCategory>>({});
-  const get = (c: ConstructionCategory) => drafts[c.id] ?? c;
-  function set(c: ConstructionCategory, p: Partial<ConstructionCategory>) {
-    setDrafts({ ...drafts, [c.id]: { ...get(c), ...p } });
-  }
-  async function commit(c: ConstructionCategory) {
-    const next = drafts[c.id]; if (!next) return;
-    await updateConstructionCategory(supabase, c.id, next);
-    setDrafts((d) => { const n = { ...d }; delete n[c.id]; return n; });
-    await onChange();
+
+  async function commit(id: string, patch: Partial<ConstructionCategory>) {
+    patchConstrLocally(setInput, id, patch);
+    try {
+      await updateConstructionCategory(supabase, id, patch);
+    } catch (e) {
+      toast.error(`No se pudo guardar: ${(e as Error).message}`);
+    }
   }
   async function add() {
-    await createConstructionCategory(supabase, scenarioId, cats.length);
-    await onChange();
+    try {
+      const created = await createConstructionCategory(supabase, scenarioId, cats.length);
+      setInput((prev) => prev ? { ...prev, construction: [...prev.construction, created] } : prev);
+    } catch (e) {
+      toast.error(`No se pudo crear: ${(e as Error).message}`);
+    }
   }
   async function del(id: string) {
     if (!confirm("¿Eliminar este rubro?")) return;
-    await deleteConstructionCategory(supabase, id);
-    await onChange();
+    try {
+      await deleteConstructionCategory(supabase, id);
+      setInput((prev) => prev ? { ...prev, construction: prev.construction.filter((c) => c.id !== id) } : prev);
+    } catch (e) {
+      toast.error(`No se pudo eliminar: ${(e as Error).message}`);
+    }
   }
 
   return (
@@ -354,57 +388,63 @@ function ConstructionTable({
             </tr>
           </thead>
           <tbody>
-            {cats.map((c) => {
-              const d = get(c);
-              return (
-                <tr key={c.id} className="border-t hover:bg-muted/30">
-                  <td className="px-2 py-1">
-                    <Input value={d.categoryName}
-                      onChange={(e) => set(c, { categoryName: e.target.value })}
-                      onBlur={() => commit(c)} disabled={!canEdit} className="h-8 text-sm" />
-                  </td>
-                  <td className="px-2 py-1">
-                    <Input type="number" min={0} step="0.01" value={d.totalAmount}
-                      onChange={(e) => set(c, { totalAmount: Number(e.target.value) || 0 })}
-                      onBlur={() => commit(c)} disabled={!canEdit} className="h-8 text-sm text-right tabular-nums" />
-                  </td>
-                  <td className="px-2 py-1">
-                    <Select value={d.currency} onValueChange={(v) => { set(c, { currency: v as Currency }); commit({ ...c, ...d, currency: v as Currency }); }}>
-                      <SelectTrigger disabled={!canEdit} className="h-8 text-xs">{d.currency}</SelectTrigger>
-                      <SelectContent>{CURRENCIES.map((cu) => <SelectItem key={cu} value={cu}>{cu}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </td>
-                  <td className="px-2 py-1">
-                    <Input type="number" min={0} value={d.startPeriod}
-                      onChange={(e) => set(c, { startPeriod: Math.max(0, Number(e.target.value) || 0) })}
-                      onBlur={() => commit(c)} disabled={!canEdit} className="h-8 text-sm text-center tabular-nums" />
-                  </td>
-                  <td className="px-2 py-1">
-                    <Input type="number" min={1} value={d.durationPeriods}
-                      onChange={(e) => set(c, { durationPeriods: Math.max(1, Number(e.target.value) || 1) })}
-                      onBlur={() => commit(c)} disabled={!canEdit} className="h-8 text-sm text-center tabular-nums" />
-                  </td>
-                  <td className="px-2 py-1">
-                    <Select value={d.distributionCurve} onValueChange={(v) => { set(c, { distributionCurve: v as DistributionCurve }); commit({ ...c, ...d, distributionCurve: v as DistributionCurve }); }}>
-                      <SelectTrigger disabled={!canEdit} className="h-8 text-xs">
-                        {CURVES.find((cv) => cv.value === d.distributionCurve)?.label}
-                      </SelectTrigger>
-                      <SelectContent>{CURVES.map((cv) => <SelectItem key={cv.value} value={cv.value}>{cv.label}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </td>
-                  <td className="px-2 py-1 text-right text-xs tabular-nums text-muted-foreground">
-                    {d.currency} {formatNumber(d.totalAmount, 0)}
-                  </td>
-                  <td className="px-2 py-1 text-center">
-                    {canEdit && (
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => del(c.id)}>
-                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            {cats.map((c) => (
+              <tr key={c.id} className="border-t hover:bg-muted/30">
+                <td className="px-2 py-1">
+                  <Input defaultValue={c.categoryName}
+                    onBlur={(e) => { if (e.target.value !== c.categoryName) commit(c.id, { categoryName: e.target.value }); }}
+                    disabled={!canEdit} className="h-8 text-sm" />
+                </td>
+                <td className="px-2 py-1">
+                  <NumericInput
+                    value={c.totalAmount}
+                    onCommit={(v) => commit(c.id, { totalAmount: v ?? 0 })}
+                    required min={0} disabled={!canEdit}
+                    className="h-8 text-sm text-right tabular-nums"
+                  />
+                </td>
+                <td className="px-2 py-1">
+                  <Select value={c.currency} onValueChange={(v) => v && commit(c.id, { currency: v as Currency })}>
+                    <SelectTrigger disabled={!canEdit} className="h-8 text-xs">{c.currency}</SelectTrigger>
+                    <SelectContent>{CURRENCIES.map((cu) => <SelectItem key={cu} value={cu}>{cu}</SelectItem>)}</SelectContent>
+                  </Select>
+                </td>
+                <td className="px-2 py-1">
+                  <NumericInput
+                    value={c.startPeriod}
+                    onCommit={(v) => commit(c.id, { startPeriod: Math.max(0, v ?? 0) })}
+                    required min={0} disabled={!canEdit}
+                    className="h-8 text-sm text-center tabular-nums"
+                  />
+                </td>
+                <td className="px-2 py-1">
+                  <NumericInput
+                    value={c.durationPeriods}
+                    onCommit={(v) => commit(c.id, { durationPeriods: Math.max(1, v ?? 1) })}
+                    required min={1} disabled={!canEdit}
+                    className="h-8 text-sm text-center tabular-nums"
+                  />
+                </td>
+                <td className="px-2 py-1">
+                  <Select value={c.distributionCurve} onValueChange={(v) => v && commit(c.id, { distributionCurve: v as DistributionCurve })}>
+                    <SelectTrigger disabled={!canEdit} className="h-8 text-xs">
+                      {CURVES.find((cv) => cv.value === c.distributionCurve)?.label}
+                    </SelectTrigger>
+                    <SelectContent>{CURVES.map((cv) => <SelectItem key={cv.value} value={cv.value}>{cv.label}</SelectItem>)}</SelectContent>
+                  </Select>
+                </td>
+                <td className="px-2 py-1 text-right text-xs tabular-nums text-muted-foreground">
+                  {c.currency} {formatNumber(c.totalAmount, 0)}
+                </td>
+                <td className="px-2 py-1 text-center">
+                  {canEdit && (
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => del(c.id)}>
+                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
             {cats.length === 0 && (
               <tr><td colSpan={8} className="text-center text-xs text-muted-foreground py-4">Sin rubros de construcción</td></tr>
             )}
@@ -423,50 +463,55 @@ function ConstructionTable({
 /* ─── Tabla Otros Gastos ──────────────────────────────────────────── */
 
 function OthersTable({
-  items, scenarioId, onChange, canEdit,
+  items, scenarioId, setInput, canEdit,
 }: {
   items: OtherExpense[];
   scenarioId: string;
-  onChange: () => Promise<void>;
+  setInput: SetInput;
   canEdit: boolean;
 }) {
   const supabase = createClient();
-  const [drafts, setDrafts] = useState<Record<string, OtherExpense>>({});
-  const get = (e: OtherExpense) => drafts[e.id] ?? e;
-  function set(e: OtherExpense, p: Partial<OtherExpense>) {
-    setDrafts({ ...drafts, [e.id]: { ...get(e), ...p } });
-  }
-  async function commit(e: OtherExpense) {
-    const next = drafts[e.id]; if (!next) return;
-    await updateOtherExpense(supabase, e.id, next);
-    setDrafts((d) => { const n = { ...d }; delete n[e.id]; return n; });
-    await onChange();
-  }
-  /** Cambio de calculationBasis: limpia el campo no usado (fixedAmount o
-   *  percentage) e inicializa el otro en 0 si está vacío. Evita valores
-   *  residuales raros al cambiar entre "monto fijo" y "% de algo". */
-  async function changeBasis(e: OtherExpense, basis: CalculationBasis) {
-    const cur = get(e);
-    const next: OtherExpense = { ...cur, calculationBasis: basis };
-    if (basis === "fixed_amount") {
-      next.percentage = null;
-      if (next.fixedAmount == null) next.fixedAmount = 0;
-    } else {
-      next.fixedAmount = null;
-      if (next.percentage == null) next.percentage = 0;
+
+  async function commit(id: string, patch: Partial<OtherExpense>) {
+    patchOtherLocally(setInput, id, patch);
+    try {
+      await updateOtherExpense(supabase, id, patch);
+    } catch (e) {
+      toast.error(`No se pudo guardar: ${(e as Error).message}`);
     }
-    await updateOtherExpense(supabase, e.id, next);
-    setDrafts((d) => { const n = { ...d }; delete n[e.id]; return n; });
-    await onChange();
   }
+
+  /** Cambio de calculationBasis: limpia el campo no usado (fixedAmount o
+   *  percentage) e inicializa el otro en 0 si está vacío. */
+  async function changeBasis(item: OtherExpense, basis: CalculationBasis) {
+    if (basis === item.calculationBasis) return;
+    const patch: Partial<OtherExpense> = { calculationBasis: basis };
+    if (basis === "fixed_amount") {
+      patch.percentage = null;
+      if (item.fixedAmount == null) patch.fixedAmount = 0;
+    } else {
+      patch.fixedAmount = null;
+      if (item.percentage == null) patch.percentage = 0;
+    }
+    await commit(item.id, patch);
+  }
+
   async function add() {
-    await createOtherExpense(supabase, scenarioId, items.length);
-    await onChange();
+    try {
+      const created = await createOtherExpense(supabase, scenarioId, items.length);
+      setInput((prev) => prev ? { ...prev, otherExpenses: [...prev.otherExpenses, created] } : prev);
+    } catch (e) {
+      toast.error(`No se pudo crear: ${(e as Error).message}`);
+    }
   }
   async function del(id: string) {
     if (!confirm("¿Eliminar este gasto?")) return;
-    await deleteOtherExpense(supabase, id);
-    await onChange();
+    try {
+      await deleteOtherExpense(supabase, id);
+      setInput((prev) => prev ? { ...prev, otherExpenses: prev.otherExpenses.filter((e) => e.id !== id) } : prev);
+    } catch (e) {
+      toast.error(`No se pudo eliminar: ${(e as Error).message}`);
+    }
   }
 
   return (
@@ -499,35 +544,29 @@ function OthersTable({
           </thead>
           <tbody>
             {items.map((e) => {
-              const d = get(e);
-              const isPct = d.calculationBasis !== "fixed_amount";
+              const isPct = e.calculationBasis !== "fixed_amount";
               return (
                 <tr key={e.id} className="border-t hover:bg-muted/30">
                   <td className="px-2 py-1">
-                    <Input value={d.description}
-                      onChange={(ev) => set(e, { description: ev.target.value })}
-                      onBlur={() => commit(e)} disabled={!canEdit} className="h-8 text-sm" />
+                    <Input defaultValue={e.description}
+                      onBlur={(ev) => { if (ev.target.value !== e.description) commit(e.id, { description: ev.target.value }); }}
+                      disabled={!canEdit} className="h-8 text-sm" />
                   </td>
                   <td className="px-2 py-1">
-                    <Select value={d.expenseType} onValueChange={(v) => { set(e, { expenseType: v as ExpenseType }); commit({ ...e, ...d, expenseType: v as ExpenseType }); }}>
+                    <Select value={e.expenseType} onValueChange={(v) => v && commit(e.id, { expenseType: v as ExpenseType })}>
                       <SelectTrigger disabled={!canEdit} className="h-8 text-xs">
-                        {EXPENSE_TYPES.find((t) => t.value === d.expenseType)?.label}
+                        {EXPENSE_TYPES.find((t) => t.value === e.expenseType)?.label}
                       </SelectTrigger>
                       <SelectContent>{EXPENSE_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
                     </Select>
                   </td>
                   <td className="px-2 py-1">
                     <Select
-                      value={d.calculationBasis}
-                      onValueChange={(v) => {
-                        if (!v || v === d.calculationBasis) return;
-                        // Limpia el campo no usado y persiste — evita valores
-                        // residuales al alternar entre monto fijo y %.
-                        changeBasis(e, v as CalculationBasis);
-                      }}
+                      value={e.calculationBasis}
+                      onValueChange={(v) => v && changeBasis(e, v as CalculationBasis)}
                     >
                       <SelectTrigger disabled={!canEdit} className="h-8 text-xs">
-                        {BASIS.find((b) => b.value === d.calculationBasis)?.label}
+                        {BASIS.find((b) => b.value === e.calculationBasis)?.label}
                       </SelectTrigger>
                       <SelectContent>{BASIS.map((b) => <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>)}</SelectContent>
                     </Select>
@@ -535,58 +574,62 @@ function OthersTable({
                   <td className="px-2 py-1">
                     {isPct ? (
                       <div className="relative">
-                        <Input type="number" min={0} step="0.01" max={100}
-                          value={d.percentage == null ? "" : d.percentage * 100}
-                          onChange={(ev) => set(e, { percentage: ev.target.value === "" ? 0 : (Number(ev.target.value) || 0) / 100 })}
-                          onBlur={() => commit(e)} disabled={!canEdit}
+                        <NumericInput
+                          value={e.percentage}
+                          onCommit={(v) => commit(e.id, { percentage: v })}
+                          displayMultiplier={100}
+                          min={0} max={100}
+                          disabled={!canEdit}
                           className="h-8 text-sm text-right tabular-nums pr-6"
-                          placeholder="0"
                         />
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground pointer-events-none">%</span>
                       </div>
                     ) : (
-                      <Input type="number" min={0} step="0.01"
-                        value={d.fixedAmount ?? 0}
-                        onChange={(ev) => set(e, { fixedAmount: Number(ev.target.value) || 0 })}
-                        onBlur={() => commit(e)} disabled={!canEdit}
+                      <NumericInput
+                        value={e.fixedAmount}
+                        onCommit={(v) => commit(e.id, { fixedAmount: v })}
+                        min={0}
+                        disabled={!canEdit}
                         className="h-8 text-sm text-right tabular-nums"
                       />
                     )}
                   </td>
                   <td className="px-2 py-1">
                     {isPct ? (
-                      // Cuando el valor es %, la moneda se hereda de la base
-                      // (sales/construction/land) — no aplica selector.
                       <span className="text-[11px] text-muted-foreground/60 italic">—</span>
                     ) : (
-                      <Select value={d.currency ?? "USD"} onValueChange={(v) => { set(e, { currency: v as Currency }); commit({ ...e, ...d, currency: v as Currency }); }}>
-                        <SelectTrigger disabled={!canEdit} className="h-8 text-xs">{d.currency ?? "USD"}</SelectTrigger>
+                      <Select value={e.currency ?? "USD"} onValueChange={(v) => v && commit(e.id, { currency: v as Currency })}>
+                        <SelectTrigger disabled={!canEdit} className="h-8 text-xs">{e.currency ?? "USD"}</SelectTrigger>
                         <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                       </Select>
                     )}
                   </td>
                   <td className="px-2 py-1">
-                    <Select value={d.timingType} onValueChange={(v) => { set(e, { timingType: v as TimingType }); commit({ ...e, ...d, timingType: v as TimingType }); }}>
+                    <Select value={e.timingType} onValueChange={(v) => v && commit(e.id, { timingType: v as TimingType })}>
                       <SelectTrigger disabled={!canEdit} className="h-8 text-xs">
-                        {TIMINGS.find((t) => t.value === d.timingType)?.label}
+                        {TIMINGS.find((t) => t.value === e.timingType)?.label}
                       </SelectTrigger>
                       <SelectContent>{TIMINGS.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
                     </Select>
                   </td>
                   <td className="px-2 py-1">
-                    <Input type="number" min={0}
-                      value={d.periodStart ?? ""}
-                      onChange={(ev) => set(e, { periodStart: ev.target.value === "" ? null : Math.max(0, Number(ev.target.value)) })}
-                      onBlur={() => commit(e)} disabled={!canEdit}
+                    <NumericInput
+                      value={e.periodStart}
+                      onCommit={(v) => commit(e.id, { periodStart: v == null ? null : Math.max(0, v) })}
+                      min={0}
+                      disabled={!canEdit}
                       className="h-8 text-sm text-center tabular-nums"
+                      placeholder="—"
                     />
                   </td>
                   <td className="px-2 py-1">
-                    <Input type="number" min={0}
-                      value={d.periodEnd ?? ""}
-                      onChange={(ev) => set(e, { periodEnd: ev.target.value === "" ? null : Math.max(0, Number(ev.target.value)) })}
-                      onBlur={() => commit(e)} disabled={!canEdit}
+                    <NumericInput
+                      value={e.periodEnd}
+                      onCommit={(v) => commit(e.id, { periodEnd: v == null ? null : Math.max(0, v) })}
+                      min={0}
+                      disabled={!canEdit}
                       className="h-8 text-sm text-center tabular-nums"
+                      placeholder="—"
                     />
                   </td>
                   <td className="px-2 py-1 text-center">
