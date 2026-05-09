@@ -278,7 +278,13 @@ export default function ModeloNegocioPage({ params }: { params: Promise<{ id: st
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {activeTab === "config" && (
-          <ConfigurationTab model={model} onUpdate={async () => { await reload(); }} canEdit={canEdit} />
+          <ConfigurationTab
+            model={model}
+            // Aplicar el patch local — sin reload. Reload completo dispararia
+            // setLoading(true) y desmontaria toda la pagina con cada save.
+            onModelUpdate={(p) => setModel((prev) => prev ? { ...prev, ...p } : prev)}
+            canEdit={canEdit}
+          />
         )}
         {activeTab === "costos" && activeInput && (
           <CostsTab

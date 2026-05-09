@@ -20,10 +20,13 @@ import type { BusinessModel } from "../_lib/types";
  * confirmación.
  */
 export function ConfigurationTab({
-  model, onUpdate, canEdit,
+  model, onModelUpdate, canEdit,
 }: {
   model: BusinessModel;
-  onUpdate: () => Promise<void>;
+  /** Aplica el patch al state local del padre — NO dispara reload del
+   *  modelo desde DB. Crítico para no desmontar la pestaña con cada
+   *  save y mantener el foco del input que estabas editando. */
+  onModelUpdate: (patch: Partial<BusinessModel>) => void;
   canEdit: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
@@ -32,7 +35,10 @@ export function ConfigurationTab({
   const lastSavedRef = useRef<string>(JSON.stringify(model));
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sincronizar cuando el modelo del padre cambia (ej. tras crearlo)
+  // Sincronizar cuando el modelo del padre cambia de identidad (ej. tras
+  // crearlo desde el empty state). Si sólo cambian campos del mismo modelo,
+  // no pisamos el draft (eso causaría perder lo que el usuario está
+  // tipeando ahora mismo).
   useEffect(() => { setDraft(model); lastSavedRef.current = JSON.stringify(model); }, [model.id]);
 
   function patch<K extends keyof BusinessModel>(key: K, value: BusinessModel[K]) {
@@ -48,21 +54,24 @@ export function ConfigurationTab({
     const snap = JSON.stringify(next);
     if (snap === lastSavedRef.current) return;
     setSaving(true);
+    const dbPatch = {
+      name: next.name,
+      description: next.description,
+      granularity: next.granularity,
+      startDate: next.startDate,
+      horizonPeriods: next.horizonPeriods,
+      reportingCurrency: next.reportingCurrency,
+      baseExchangeRate: next.baseExchangeRate,
+      annualDevaluation: next.annualDevaluation,
+      discountRate: next.discountRate,
+      status: next.status,
+    };
     try {
-      await updateBusinessModel(supabase, next.id, {
-        name: next.name,
-        description: next.description,
-        granularity: next.granularity,
-        startDate: next.startDate,
-        horizonPeriods: next.horizonPeriods,
-        reportingCurrency: next.reportingCurrency,
-        baseExchangeRate: next.baseExchangeRate,
-        annualDevaluation: next.annualDevaluation,
-        discountRate: next.discountRate,
-        status: next.status,
-      });
+      await updateBusinessModel(supabase, next.id, dbPatch);
       lastSavedRef.current = snap;
-      await onUpdate();
+      // Aplicar el patch al state del padre — sin reload. Mantiene el
+      // foco del input + el resto del state (escenarios, etc).
+      onModelUpdate(dbPatch);
     } catch (e) {
       toast.error(`Error al guardar: ${(e as Error).message}`);
     }
