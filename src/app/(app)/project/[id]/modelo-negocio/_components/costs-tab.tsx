@@ -442,6 +442,23 @@ function OthersTable({
     setDrafts((d) => { const n = { ...d }; delete n[e.id]; return n; });
     await onChange();
   }
+  /** Cambio de calculationBasis: limpia el campo no usado (fixedAmount o
+   *  percentage) e inicializa el otro en 0 si está vacío. Evita valores
+   *  residuales raros al cambiar entre "monto fijo" y "% de algo". */
+  async function changeBasis(e: OtherExpense, basis: CalculationBasis) {
+    const cur = get(e);
+    const next: OtherExpense = { ...cur, calculationBasis: basis };
+    if (basis === "fixed_amount") {
+      next.percentage = null;
+      if (next.fixedAmount == null) next.fixedAmount = 0;
+    } else {
+      next.fixedAmount = null;
+      if (next.percentage == null) next.percentage = 0;
+    }
+    await updateOtherExpense(supabase, e.id, next);
+    setDrafts((d) => { const n = { ...d }; delete n[e.id]; return n; });
+    await onChange();
+  }
   async function add() {
     await createOtherExpense(supabase, scenarioId, items.length);
     await onChange();
@@ -472,7 +489,7 @@ function OthersTable({
               <th className="text-left px-2 py-1.5 font-semibold">Concepto</th>
               <th className="text-center px-2 py-1.5 font-semibold">Tipo</th>
               <th className="text-center px-2 py-1.5 font-semibold">Base</th>
-              <th className="text-right px-2 py-1.5 font-semibold">Valor</th>
+              <th className="text-right px-2 py-1.5 font-semibold">Valor / %</th>
               <th className="text-center px-2 py-1.5 font-semibold">Mon</th>
               <th className="text-center px-2 py-1.5 font-semibold">Timing</th>
               <th className="text-center px-2 py-1.5 font-semibold">Inicio</th>
@@ -500,7 +517,15 @@ function OthersTable({
                     </Select>
                   </td>
                   <td className="px-2 py-1">
-                    <Select value={d.calculationBasis} onValueChange={(v) => { set(e, { calculationBasis: v as CalculationBasis }); commit({ ...e, ...d, calculationBasis: v as CalculationBasis }); }}>
+                    <Select
+                      value={d.calculationBasis}
+                      onValueChange={(v) => {
+                        if (!v || v === d.calculationBasis) return;
+                        // Limpia el campo no usado y persiste — evita valores
+                        // residuales al alternar entre monto fijo y %.
+                        changeBasis(e, v as CalculationBasis);
+                      }}
+                    >
                       <SelectTrigger disabled={!canEdit} className="h-8 text-xs">
                         {BASIS.find((b) => b.value === d.calculationBasis)?.label}
                       </SelectTrigger>
@@ -509,13 +534,16 @@ function OthersTable({
                   </td>
                   <td className="px-2 py-1">
                     {isPct ? (
-                      <Input type="number" min={0} step="0.01" max={100}
-                        value={(d.percentage ?? 0) * 100}
-                        onChange={(ev) => set(e, { percentage: (Number(ev.target.value) || 0) / 100 })}
-                        onBlur={() => commit(e)} disabled={!canEdit}
-                        className="h-8 text-sm text-right tabular-nums"
-                        placeholder="%"
-                      />
+                      <div className="relative">
+                        <Input type="number" min={0} step="0.01" max={100}
+                          value={d.percentage == null ? "" : d.percentage * 100}
+                          onChange={(ev) => set(e, { percentage: ev.target.value === "" ? 0 : (Number(ev.target.value) || 0) / 100 })}
+                          onBlur={() => commit(e)} disabled={!canEdit}
+                          className="h-8 text-sm text-right tabular-nums pr-6"
+                          placeholder="0"
+                        />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground pointer-events-none">%</span>
+                      </div>
                     ) : (
                       <Input type="number" min={0} step="0.01"
                         value={d.fixedAmount ?? 0}
@@ -526,10 +554,16 @@ function OthersTable({
                     )}
                   </td>
                   <td className="px-2 py-1">
-                    <Select value={d.currency ?? "USD"} onValueChange={(v) => { set(e, { currency: v as Currency }); commit({ ...e, ...d, currency: v as Currency }); }}>
-                      <SelectTrigger disabled={!canEdit} className="h-8 text-xs">{d.currency ?? "USD"}</SelectTrigger>
-                      <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                    </Select>
+                    {isPct ? (
+                      // Cuando el valor es %, la moneda se hereda de la base
+                      // (sales/construction/land) — no aplica selector.
+                      <span className="text-[11px] text-muted-foreground/60 italic">—</span>
+                    ) : (
+                      <Select value={d.currency ?? "USD"} onValueChange={(v) => { set(e, { currency: v as Currency }); commit({ ...e, ...d, currency: v as Currency }); }}>
+                        <SelectTrigger disabled={!canEdit} className="h-8 text-xs">{d.currency ?? "USD"}</SelectTrigger>
+                        <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                      </Select>
+                    )}
                   </td>
                   <td className="px-2 py-1">
                     <Select value={d.timingType} onValueChange={(v) => { set(e, { timingType: v as TimingType }); commit({ ...e, ...d, timingType: v as TimingType }); }}>
