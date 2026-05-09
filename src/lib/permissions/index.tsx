@@ -31,6 +31,7 @@ export type PermissionId =
   | "proveedores.read" | "proveedores.write"
   | "consultas.read"
   | "presupuesto.approve"
+  | "modelo_negocio.read" | "modelo_negocio.write"
   | "members.read" | "members.invite" | "members.remove";
 
 export type RoleSlug =

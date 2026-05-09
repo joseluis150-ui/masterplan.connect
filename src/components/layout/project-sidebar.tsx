@@ -19,6 +19,7 @@ import {
   ShoppingCart,
   FileText,
   Inbox,
+  TrendingUp,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Project } from "@/lib/types/database";
@@ -66,6 +67,7 @@ export function ProjectSidebar({ project, projectId, pendingApprovals = 0 }: Pro
     "oc.read", "solicitudes.read", "recepciones.read",
     "facturacion.read", "proveedores.read", "pagos.read"
   );
+  const canSeeBusinessModel = useAnyPermission("modelo_negocio.read", "modelo_negocio.write");
   const canSeePlanning = useAnyPermission(
     "edt.read", "insumos.read", "articulos.read",
     "cuantificacion.read", "cronograma.read", "paquetes.read", "consultas.read"
@@ -202,6 +204,9 @@ export function ProjectSidebar({ project, projectId, pendingApprovals = 0 }: Pro
 
           {project.compras_enabled && canSeeCompras &&
             renderNavLink({ label: "Compras", href: "compras", icon: ShoppingCart })}
+
+          {project.business_model_enabled && canSeeBusinessModel &&
+            renderNavLink({ label: "Modelo de negocio", href: "modelo-negocio", icon: TrendingUp })}
         </nav>
       </ScrollArea>
 

@@ -20,7 +20,7 @@ import type { Project, Sector, SectorType, ExchangeRateVersion, SectorGroup } fr
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MembersSection } from "./_components/members-section";
-import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon, ChevronUp, ChevronDown, Copy, Loader2 } from "lucide-react";
+import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon, ChevronUp, ChevronDown, Copy, Loader2, TrendingUp } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
@@ -545,22 +545,43 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
           <CardDescription>Activa o desactiva módulos adicionales del proyecto</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between p-4 border rounded-lg">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <ShoppingCart className="h-5 w-5 text-primary" />
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <ShoppingCart className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Módulo de Compras</p>
+                  <p className="text-xs text-muted-foreground">
+                    Solicitudes de compra, órdenes, albaranes, facturas y pagos
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-medium">Módulo de Compras</p>
-                <p className="text-xs text-muted-foreground">
-                  Solicitudes de compra, órdenes, albaranes, facturas y pagos
-                </p>
-              </div>
+              <Switch
+                checked={project.compras_enabled}
+                onCheckedChange={(checked) => updateProject({ compras_enabled: checked })}
+              />
             </div>
-            <Switch
-              checked={project.compras_enabled}
-              onCheckedChange={(checked) => updateProject({ compras_enabled: checked })}
-            />
+            {/* Módulo Modelo de Negocio — independiente del resto, plan
+                financiero del proyecto. Mismo patrón de activación que Compras. */}
+            <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <TrendingUp className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Módulo de Modelo de Negocio</p>
+                  <p className="text-xs text-muted-foreground">
+                    Plan financiero: costos de tierra, construcción, ingresos, escenarios y KPIs
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={project.business_model_enabled}
+                onCheckedChange={(checked) => updateProject({ business_model_enabled: checked })}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>

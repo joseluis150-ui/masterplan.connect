@@ -29,6 +29,10 @@ export interface Project {
   proration_criteria: ProrationCriteria;
   current_version: number;
   compras_enabled: boolean;
+  /** Flag para activar/desactivar el módulo "Modelo de Negocio" — plan
+   *  financiero del proyecto (costos de tierra, construcción, otros gastos,
+   *  ingresos proyectados, escenarios y KPIs). Mismo patrón que compras_enabled. */
+  business_model_enabled: boolean;
   number_format: "es" | "en";
   created_by: string | null;
   created_at: string;
