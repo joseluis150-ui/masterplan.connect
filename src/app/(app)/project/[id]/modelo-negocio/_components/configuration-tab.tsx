@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,7 +26,7 @@ export function ConfigurationTab({
   onUpdate: () => Promise<void>;
   canEdit: boolean;
 }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const [draft, setDraft] = useState<BusinessModel>(model);
   const [saving, setSaving] = useState(false);
   const lastSavedRef = useRef<string>(JSON.stringify(model));

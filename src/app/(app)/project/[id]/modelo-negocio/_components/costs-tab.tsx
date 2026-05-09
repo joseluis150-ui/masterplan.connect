@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -66,9 +66,13 @@ export function CostsTab({
   setInput: React.Dispatch<React.SetStateAction<ScenarioInput | null>>;
   canEdit: boolean;
 }) {
-  const [openLand, setOpenLand] = useState(true);
-  const [openConstr, setOpenConstr] = useState(true);
-  const [openOthers, setOpenOthers] = useState(true);
+  // Persistimos el estado de las secciones colapsables en localStorage
+  // para que sobreviva tanto remontajes del tab como cambios de
+  // escenario / proyecto. Antes vivía en useState y se perdía al
+  // desmontar el componente.
+  const [openLand, setOpenLand] = usePersistedBool("bm:costs:openLand", true);
+  const [openConstr, setOpenConstr] = usePersistedBool("bm:costs:openConstr", true);
+  const [openOthers, setOpenOthers] = usePersistedBool("bm:costs:openOthers", true);
 
   return (
     <div className="p-4 space-y-3">
@@ -107,6 +111,24 @@ export function CostsTab({
       </Section>
     </div>
   );
+}
+
+/** Mini-hook para persistir el state colapsable en localStorage. Si no
+ *  está en window (SSR) o el JSON falla, cae al default. */
+function usePersistedBool(key: string, defaultValue: boolean): [boolean, (v: boolean) => void] {
+  const [value, _setValue] = useState<boolean>(() => {
+    if (typeof window === "undefined") return defaultValue;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw === null) return defaultValue;
+      return raw === "true";
+    } catch { return defaultValue; }
+  });
+  const setValue = (v: boolean) => {
+    _setValue(v);
+    try { window.localStorage.setItem(key, String(v)); } catch { /* ignore */ }
+  };
+  return [value, setValue];
 }
 
 /* ─── Section wrapper ─────────────────────────────────────────────── */
@@ -166,7 +188,7 @@ function LandTable({
   setInput: SetInput;
   canEdit: boolean;
 }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   /** Persiste el patch a DB y actualiza el state local del padre.
    *  Lo hace con un toast silencioso para no inundar al usuario; sólo
@@ -333,7 +355,7 @@ function ConstructionTable({
   setInput: SetInput;
   canEdit: boolean;
 }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   async function commit(id: string, patch: Partial<ConstructionCategory>) {
     patchConstrLocally(setInput, id, patch);
@@ -470,7 +492,7 @@ function OthersTable({
   setInput: SetInput;
   canEdit: boolean;
 }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   async function commit(id: string, patch: Partial<OtherExpense>) {
     patchOtherLocally(setInput, id, patch);

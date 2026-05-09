@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -72,7 +73,7 @@ function UnitsTable({
   setInput: SetInput;
   canEdit: boolean;
 }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   /* ─── Unit operations ─── */
   async function commitUnit(id: string, patch: Partial<SellableUnit>) {

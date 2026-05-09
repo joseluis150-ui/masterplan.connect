@@ -38,7 +38,12 @@ const TABS: { key: TabKey; label: string; icon: typeof SettingsIcon }[] = [
 
 export default function ModeloNegocioPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: projectId } = use(params);
-  const supabase = createClient();
+  // CRÍTICO: memoizar el client. Sin esto, createClient() devuelve una
+  // instancia nueva en cada render → cualquier useEffect con `supabase`
+  // como dep se dispara en bucle → recargas de datos que pisan los
+  // drafts del usuario (ceros que vuelven, foco perdido, secciones que
+  // se cierran solas).
+  const supabase = useMemo(() => createClient(), []);
   const canEdit = usePermission("modelo_negocio.write");
 
   const [loading, setLoading] = useState(true);
@@ -80,6 +85,10 @@ export default function ModeloNegocioPage({ params }: { params: Promise<{ id: st
   useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [projectId]);
 
   /* ─── Carga del input del escenario activo ──────────────────────── */
+  // Deps minimas: ID del modelo + ID del escenario activo. NO depender
+  // de `scenarios` (array entero) ni de `supabase` (memoized arriba).
+  // Si dependieramos del array, cualquier rename/duplicate dispararia
+  // un reload completo que pisa los drafts del usuario en costos/ingresos.
   useEffect(() => {
     if (!model || !activeScenarioId) { setActiveInput(null); return; }
     const scenario = scenarios.find((s) => s.id === activeScenarioId);
@@ -90,7 +99,8 @@ export default function ModeloNegocioPage({ params }: { params: Promise<{ id: st
       if (!cancelled) setActiveInput(input);
     })();
     return () => { cancelled = true; };
-  }, [model, activeScenarioId, scenarios, supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model?.id, activeScenarioId]);
 
   /* ─── Cálculos del escenario activo ─────────────────────────────── */
   const activeResult = useMemo<ScenarioCalculationResult | null>(() => {
@@ -101,6 +111,10 @@ export default function ModeloNegocioPage({ params }: { params: Promise<{ id: st
   }, [activeInput]);
 
   /* ─── Cuando se abre Comparativa, cargar todos los inputs ───────── */
+  // Sólo dependemos del activeTab + IDs del modelo + cantidad de
+  // escenarios (signature estable) — no del array entero. Eso evita
+  // re-fetches en bucle.
+  const scenarioIdsKey = scenarios.map((s) => s.id).join(",");
   useEffect(() => {
     if (activeTab !== "comparativa" || !model) return;
     let cancelled = false;
@@ -113,7 +127,8 @@ export default function ModeloNegocioPage({ params }: { params: Promise<{ id: st
       if (!cancelled) setAllInputs(m);
     })();
     return () => { cancelled = true; };
-  }, [activeTab, model, scenarios, supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, model?.id, scenarioIdsKey]);
 
   const allResults = useMemo<ScenarioCalculationResult[]>(() => {
     const out: ScenarioCalculationResult[] = [];
