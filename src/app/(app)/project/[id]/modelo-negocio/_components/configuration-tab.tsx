@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { updateBusinessModel } from "../_lib/api";
 import { formatHorizonLabel } from "../_lib/formatters";
 import type { BusinessModel } from "../_lib/types";
+import { NumericInput } from "./numeric-input";
 
 /**
  * Tab Configuración. Form con autoguardado (debounce 800ms) tras cambio
@@ -47,6 +48,17 @@ export function ConfigurationTab({
     setDraft(next);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => save(next), 800);
+  }
+
+  /** Para campos numéricos: el NumericInput sólo emite onCommit en blur,
+   *  así que ya no hace falta debounce — guardamos inmediato. Esto evita
+   *  que el botón "Guardar ahora" parezca destellar entre clicks. */
+  function patchAndSave<K extends keyof BusinessModel>(key: K, value: BusinessModel[K]) {
+    if (!canEdit) return;
+    const next = { ...draft, [key]: value };
+    setDraft(next);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    void save(next);
   }
 
   async function save(next: BusinessModel) {
@@ -137,12 +149,17 @@ export function ConfigurationTab({
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Horizonte (períodos) *</Label>
-              <Input
-                type="number"
+              <NumericInput
+                value={draft.horizonPeriods}
+                onCommit={(v) => {
+                  // v puede venir null si el usuario borró todo. NumericInput
+                  // ya hace clamp con min/max — pero por seguridad clamp igual.
+                  const safe = v == null ? 1 : Math.max(1, Math.min(120, v));
+                  patchAndSave("horizonPeriods", safe);
+                }}
+                required
                 min={1}
                 max={120}
-                value={draft.horizonPeriods}
-                onChange={(e) => patch("horizonPeriods", Math.max(1, Math.min(120, Number(e.target.value) || 1)))}
                 disabled={!canEdit}
               />
               <p className="text-[10px] text-muted-foreground">
@@ -167,12 +184,10 @@ export function ConfigurationTab({
             </div>
             <div className="space-y-1">
               <Label className="text-xs">TC base (local/USD)</Label>
-              <Input
-                type="number"
-                step="0.01"
+              <NumericInput
+                value={draft.baseExchangeRate}
+                onCommit={(v) => patchAndSave("baseExchangeRate", v)}
                 min={0}
-                value={draft.baseExchangeRate ?? ""}
-                onChange={(e) => patch("baseExchangeRate", e.target.value === "" ? null : Number(e.target.value))}
                 disabled={!canEdit}
                 placeholder="Ej. 7400"
               />
@@ -182,11 +197,11 @@ export function ConfigurationTab({
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Devaluación anual (%)</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={draft.annualDevaluation * 100}
-                onChange={(e) => patch("annualDevaluation", (Number(e.target.value) || 0) / 100)}
+              <NumericInput
+                value={draft.annualDevaluation}
+                onCommit={(v) => patchAndSave("annualDevaluation", v ?? 0)}
+                required
+                displayMultiplier={100}
                 disabled={!canEdit}
               />
               <p className="text-[10px] text-muted-foreground">
@@ -195,11 +210,11 @@ export function ConfigurationTab({
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Tasa de descuento para VAN (%)</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={draft.discountRate * 100}
-                onChange={(e) => patch("discountRate", (Number(e.target.value) || 0) / 100)}
+              <NumericInput
+                value={draft.discountRate}
+                onCommit={(v) => patchAndSave("discountRate", v ?? 0)}
+                required
+                displayMultiplier={100}
                 disabled={!canEdit}
               />
               <p className="text-[10px] text-muted-foreground">Tasa anual</p>
