@@ -19,8 +19,21 @@ import type {
   ProcurementPackage, ProcurementLine, Insumo, Articulo,
   EdtCategory, EdtSubcategory, Sector, SectorGroup, QuantificationLine,
 } from "@/lib/types/database";
+import { InsumoCompositionDialog, type CompositionDetail } from "./_components/insumo-composition-dialog";
 
 type TabKey = "insumos" | "asignar";
+
+/** Composición de artículo + insumo con cantidades. Shape completo de
+ *  `articulo_compositions` que necesitamos para el cálculo de cantidad
+ *  total proyectada y para el modal de selección por composición. */
+interface CompFull {
+  id: string;
+  articulo_id: string;
+  insumo_id: string;
+  quantity: number;
+  waste_pct: number;
+  margin_pct: number;
+}
 
 /** Insumo enriquecido para el tab "Asignar". Agregamos cuántas
  *  composiciones tiene en artículos cuantificados (uses_count) y a
@@ -38,6 +51,11 @@ interface AssignableInsumo {
    *  aparecen en alguna línea de cuantificación. Si es 0, no se puede
    *  asignar (el insumo no se usa en el proyecto). */
   uses_count: number;
+  /** Cantidad total proyectada del insumo: suma sobre todas las
+   *  quantification_lines del proyecto de (qty_line × qty_composición
+   *  × (1+waste_pct/100) × (1+margin_pct/100)). Es lo que realmente se
+   *  necesita comprar en el proyecto entero. */
+  total_quantity: number;
   /** Estado de asignación: null = ninguna composición asignada,
    *  packageId = TODAS las composiciones del insumo están en este paquete,
    *  "multiple" = está en varios paquetes (caso edge), "partial" = algunas
@@ -86,14 +104,19 @@ export default function PackageDetailPage({
   const [allCategories, setAllCategories] = useState<EdtCategory[]>([]);
   const [allSubcategories, setAllSubcategories] = useState<EdtSubcategory[]>([]);
   const [allArticulos, setAllArticulos] = useState<Articulo[]>([]);
+  const [allInsumos, setAllInsumos] = useState<Insumo[]>([]);
   /** Composiciones del proyecto (cargadas en round 2). Las usamos para
    *  expandir cada articulo cuantificado a sus insumos en la vista
    *  agrupada. */
   const [allComps, setAllComps] = useState<{ id: string; articulo_id: string; insumo_id: string }[]>([]);
+  /** Composiciones con quantity/waste/margin. Usado en el modal de
+   *  detalle (selección granular por composición) y en el cálculo de
+   *  `total_quantity` por insumo. */
+  const [allCompsFull, setAllCompsFull] = useState<CompFull[]>([]);
   /** Mapa articulo_id → set de quantification_lines que usan ese
    *  articulo (con sector/categoría/subcategoría). Usado para construir
    *  los breadcrumbs en la jerarquía. */
-  const [qLinesByArt, setQLinesByArt] = useState<Map<string, { sector_id: string; category_id: string; subcategory_id: string }[]>>(new Map());
+  const [qLinesByArt, setQLinesByArt] = useState<Map<string, { sector_id: string; category_id: string; subcategory_id: string; quantity: number }[]>>(new Map());
 
   // Filtros + selección tab "Asignar"
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -111,6 +134,11 @@ export default function PackageDetailPage({
    *  comparten el checkbox). */
   const [viewMode, setViewMode] = useState<"flat" | "grouped">("flat");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  /** Insumo cuyo modal de detalle está abierto. Null = modal cerrado. */
+  const [detailInsumoId, setDetailInsumoId] = useState<string | null>(null);
+  /** Mapa global composition_id → paquete donde está asignada (id + name).
+   *  Lo necesita el modal de detalle para pintar bloqueos/badges. */
+  const [globalCompToPkg, setGlobalCompToPkg] = useState<Map<string, { packageId: string; packageName: string }>>(new Map());
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -126,8 +154,10 @@ export default function PackageDetailPage({
     ] = await Promise.all([
       supabase.from("procurement_packages").select("*").eq("id", packageId).single(),
       supabase.from("procurement_lines").select("*").eq("package_id", packageId),
+      // Traer también `quantity` de las quantification_lines — la usamos
+      // para calcular cantidad total proyectada de cada insumo.
       supabase.from("quantification_lines")
-        .select("id, articulo_id, category_id, subcategory_id, sector_id")
+        .select("id, articulo_id, category_id, subcategory_id, sector_id, quantity")
         .eq("project_id", projectId).is("deleted_at", null),
       supabase.from("articulos").select("*").eq("project_id", projectId).order("number"),
       supabase.from("insumos").select("*").eq("project_id", projectId).order("code"),
@@ -154,6 +184,7 @@ export default function PackageDetailPage({
     const projPkgs = (allPkgRes.data ?? []) as ProcurementPackage[];
     setAllPackages(projPkgs);
     setAllArticulos(arts);
+    setAllInsumos(insumos);
     setAllCategories(cats);
     setAllSubcategories(subs);
     setSectors(secs);
@@ -167,23 +198,32 @@ export default function PackageDetailPage({
     const projPkgIdList = projPkgs.map((p) => p.id);
     const [compsRes, allPlRes] = await Promise.all([
       artIds.length > 0
-        ? supabase.from("articulo_compositions").select("id, articulo_id, insumo_id").in("articulo_id", artIds)
-        : Promise.resolve({ data: [] as { id: string; articulo_id: string; insumo_id: string }[] }),
+        // Necesitamos quantity / waste_pct / margin_pct para calcular
+        // la cantidad total proyectada por insumo.
+        ? supabase.from("articulo_compositions")
+            .select("id, articulo_id, insumo_id, quantity, waste_pct, margin_pct")
+            .in("articulo_id", artIds)
+        : Promise.resolve({ data: [] as CompFull[] }),
       projPkgIdList.length > 0
         ? supabase.from("procurement_lines").select("package_id, composition_id, insumo_id").in("package_id", projPkgIdList)
         : Promise.resolve({ data: [] as { package_id: string; composition_id: string | null; insumo_id: string }[] }),
     ]);
-    const comps = (compsRes.data ?? []) as { id: string; articulo_id: string; insumo_id: string }[];
+    const compsFull = (compsRes.data ?? []) as CompFull[];
+    // Mantenemos el shape simple para el árbol agrupado (que no necesita
+    // quantities). El shape completo se guarda en allCompsFull.
+    const comps = compsFull.map((c) => ({ id: c.id, articulo_id: c.articulo_id, insumo_id: c.insumo_id }));
     setAllComps(comps);
+    setAllCompsFull(compsFull);
 
     // Set de articulo_ids cuantificados en el proyecto
-    const qLines = (qlRes.data ?? []) as Pick<QuantificationLine, "id" | "articulo_id" | "category_id" | "subcategory_id" | "sector_id">[];
+    const qLines = (qlRes.data ?? []) as Pick<QuantificationLine, "id" | "articulo_id" | "category_id" | "subcategory_id" | "sector_id" | "quantity">[];
     const quantifiedArtIds = new Set(qLines.filter((q) => q.articulo_id).map((q) => q.articulo_id!));
     const projPkgIds = new Set(projPkgs.map((p) => p.id));
 
-    // Map articulo_id → quantification_lines del articulo (sector/cat/sub).
-    // Usado por la vista jerárquica para ubicar cada articulo en el árbol.
-    const qByArt = new Map<string, { sector_id: string; category_id: string; subcategory_id: string }[]>();
+    // Map articulo_id → quantification_lines del articulo (sector/cat/sub/qty).
+    // Usado tanto por la vista jerárquica como por el cálculo de cantidad
+    // total del insumo.
+    const qByArt = new Map<string, { sector_id: string; category_id: string; subcategory_id: string; quantity: number }[]>();
     for (const ql of qLines) {
       if (!ql.articulo_id) continue;
       if (!qByArt.has(ql.articulo_id)) qByArt.set(ql.articulo_id, []);
@@ -191,6 +231,7 @@ export default function PackageDetailPage({
         sector_id: ql.sector_id,
         category_id: ql.category_id,
         subcategory_id: ql.subcategory_id,
+        quantity: Number(ql.quantity ?? 0),
       });
     }
     setQLinesByArt(qByArt);
@@ -214,10 +255,17 @@ export default function PackageDetailPage({
 
     // Asignaciones globales: composition_id → package_id
     const compToPkg = new Map<string, string>();
+    const compToPkgDetailed = new Map<string, { packageId: string; packageName: string }>();
     for (const pl of (allPlRes.data ?? []) as { package_id: string; composition_id: string | null }[]) {
       if (!projPkgIds.has(pl.package_id) || !pl.composition_id) continue;
       compToPkg.set(pl.composition_id, pl.package_id);
+      const pkg2 = projPkgs.find((p) => p.id === pl.package_id);
+      compToPkgDetailed.set(pl.composition_id, {
+        packageId: pl.package_id,
+        packageName: pkg2?.name ?? "(?)",
+      });
     }
+    setGlobalCompToPkg(compToPkgDetailed);
 
     // Map: articulo_id → set de category_ids/subcategory_ids donde aparece
     // (vía quantification_lines)
@@ -229,6 +277,29 @@ export default function PackageDetailPage({
       artToCatIds.get(ql.articulo_id)!.add(ql.category_id);
       if (!artToSubIds.has(ql.articulo_id)) artToSubIds.set(ql.articulo_id, new Set());
       artToSubIds.get(ql.articulo_id)!.add(ql.subcategory_id);
+    }
+
+    // Map composition_id → CompFull (para lookup rápido en cálculos)
+    const compFullById = new Map<string, CompFull>();
+    for (const c of compsFull) compFullById.set(c.id, c);
+
+    /** Calcula la cantidad total proyectada de un insumo en TODO el proyecto:
+     *  Σ por cada composición del insumo: Σ por cada qline del articulo:
+     *    qty_qline × qty_composición × (1 + waste/100) × (1 + margin/100). */
+    function computeTotalQuantity(insumoId: string): number {
+      const compIds = insumoToCompIds.get(insumoId) ?? new Set<string>();
+      let total = 0;
+      for (const compId of compIds) {
+        const comp = compFullById.get(compId);
+        if (!comp) continue;
+        const qlines = qByArt.get(comp.articulo_id) ?? [];
+        const wasteFactor = 1 + Number(comp.waste_pct ?? 0) / 100;
+        const marginFactor = 1 + Number(comp.margin_pct ?? 0) / 100;
+        for (const ql of qlines) {
+          total += ql.quantity * Number(comp.quantity ?? 0) * wasteFactor * marginFactor;
+        }
+      }
+      return total;
     }
 
     // Construir AssignableInsumos
@@ -292,6 +363,7 @@ export default function PackageDetailPage({
         type: ins.type,
         pu_usd: Number(ins.pu_usd ?? 0),
         uses_count: compsOfInsumo.size,
+        total_quantity: computeTotalQuantity(ins.id),
         assignment,
         category_labels,
         subcategory_labels,
@@ -409,6 +481,7 @@ export default function PackageDetailPage({
         case "type": return mult * a.type.localeCompare(b.type, "es");
         case "pu": return mult * (a.pu_usd - b.pu_usd);
         case "uses": return mult * (a.uses_count - b.uses_count);
+        case "qty": return mult * (a.total_quantity - b.total_quantity);
         default: return 0;
       }
     });
@@ -659,12 +732,23 @@ export default function PackageDetailPage({
     const isHere = i.assignment.kind === "all_here";
     const isOther = i.assignment.kind === "all_other";
     const isMixed = i.assignment.kind === "mixed";
+    // En modo lista plana, click en la fila abre el modal de detalle
+    // (selección granular por composición). En modo agrupado se usa el
+    // checkbox directamente sobre cada composición y NO se abre modal.
+    const clickable = viewMode === "flat";
     return (
       <tr
         key={rowKey}
         style={{
           borderBottom: "1px solid #F1F5F9",
           background: selected.has(i.id) ? "#EFF6FF" : (isHere ? "#ECFDF5" : undefined),
+          cursor: clickable ? "pointer" : undefined,
+        }}
+        onClick={(e) => {
+          if (!clickable) return;
+          // No abrir el modal si el click fue sobre el checkbox
+          if ((e.target as HTMLElement).closest("input[type='checkbox']")) return;
+          setDetailInsumoId(i.id);
         }}
       >
         <td className="px-1 py-1 text-center">
@@ -672,6 +756,7 @@ export default function PackageDetailPage({
             type="checkbox"
             checked={selected.has(i.id)}
             onChange={() => toggleSelect(i.id)}
+            onClick={(e) => e.stopPropagation()}
             className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
           />
         </td>
@@ -683,6 +768,9 @@ export default function PackageDetailPage({
           {i.pu_usd > 0 ? formatNumber(i.pu_usd, 2) : "—"}
         </td>
         <td className="px-2 py-1 text-right font-mono text-xs">{i.uses_count}</td>
+        <td className="px-2 py-1 text-right font-mono text-xs" title={`${formatNumber(i.total_quantity, 4)} ${i.unit}`}>
+          {i.total_quantity > 0 ? formatNumber(i.total_quantity, 2) : "—"}
+        </td>
         <td className="px-2 py-1 text-xs truncate" title={i.category_labels.join(", ")}>
           {i.category_labels.length === 0 ? "—" : i.category_labels.length === 1 ? i.category_labels[0] : `${i.category_labels.length} categorías`}
         </td>
@@ -708,6 +796,67 @@ export default function PackageDetailPage({
       </tr>
     );
   }
+
+  /** Construye las compositions detalladas para el modal del insumo activo.
+   *  Se calcula con useMemo para no recomputar en cada render. */
+  const detailCompositions = useMemo<CompositionDetail[]>(() => {
+    if (!detailInsumoId) return [];
+    const result: CompositionDetail[] = [];
+    // Encontrar todas las composiciones del insumo
+    const compsOfInsumo = allCompsFull.filter((c) => c.insumo_id === detailInsumoId);
+
+    // Mapas de lookup
+    const artById = new Map(allArticulos.map((a) => [a.id, a]));
+    const secById = new Map(sectors.map((s) => [s.id, s]));
+    const catById = new Map(allCategories.map((c) => [c.id, c]));
+    const subById = new Map(allSubcategories.map((s) => [s.id, s]));
+
+    // Asignaciones globales: composition_id → { package_id, name }
+    const compToPkg = new Map<string, { packageId: string; packageName: string }>();
+    // Re-construimos desde allComps... pero necesitamos las procurement_lines
+    // para conocer el package_id. Las cargamos de assignableInsumos.assignment?
+    // Mejor: tomamos del estado allPlByCompId que ya tenemos en loadData...
+    // Como no lo guardamos como state, lo reconstruimos via assignableInsumos.
+    // Solución simple: para cada composición, miramos si la encontramos en
+    // alguno de los assignableInsumos.assignment con kind != none. Pero eso
+    // sería ambiguo. Mejor mantener compToPkg como state directo.
+    // PARCHE: leemos del state nuevo `globalCompToPkg`.
+    for (const [cid, info] of globalCompToPkg.entries()) compToPkg.set(cid, info);
+
+    for (const comp of compsOfInsumo) {
+      const qlines = qLinesByArt.get(comp.articulo_id) ?? [];
+      if (qlines.length === 0) continue; // El artículo no está cuantificado en el proyecto
+
+      const wasteFactor = 1 + Number(comp.waste_pct ?? 0) / 100;
+      const marginFactor = 1 + Number(comp.margin_pct ?? 0) / 100;
+      const compQty = Number(comp.quantity ?? 0);
+
+      let totalQ = 0;
+      const used_in: CompositionDetail["used_in"] = [];
+      for (const ql of qlines) {
+        const partial = ql.quantity * compQty * wasteFactor * marginFactor;
+        totalQ += partial;
+        used_in.push({
+          sector: secById.get(ql.sector_id) ?? null,
+          category: catById.get(ql.category_id) ?? null,
+          subcategory: subById.get(ql.subcategory_id) ?? null,
+          quantity: partial,
+        });
+      }
+
+      result.push({
+        composition_id: comp.id,
+        articulo: artById.get(comp.articulo_id) ?? null,
+        total_quantity: totalQ,
+        used_in,
+        assigned_to: compToPkg.get(comp.id) ?? null,
+      });
+    }
+    // Ordenar por código de artículo
+    result.sort((a, b) => (a.articulo?.number ?? 0) - (b.articulo?.number ?? 0));
+    return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailInsumoId, allCompsFull, allArticulos, sectors, allCategories, allSubcategories, qLinesByArt]);
 
   if (loading) {
     return <div className="p-6"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
@@ -968,14 +1117,15 @@ export default function PackageDetailPage({
               <colgroup>
                 <col style={{ width: "32px" }} />
                 <col style={{ width: "60px" }} />
-                <col style={{ width: "300px" }} />
-                <col style={{ width: "70px" }} />
-                <col style={{ width: "110px" }} />
-                <col style={{ width: "90px" }} />
-                <col style={{ width: "70px" }} />
-                <col style={{ width: "180px" }} />
-                <col style={{ width: "180px" }} />
-                <col style={{ width: "150px" }} />
+                <col style={{ width: "280px" }} />
+                <col style={{ width: "60px" }} />
+                <col style={{ width: "100px" }} />
+                <col style={{ width: "80px" }} />
+                <col style={{ width: "60px" }} />
+                <col style={{ width: "100px" }} />
+                <col style={{ width: "160px" }} />
+                <col style={{ width: "160px" }} />
+                <col style={{ width: "140px" }} />
               </colgroup>
               <thead className="sticky top-0 z-30 bg-background shadow-sm">
                 <tr>
@@ -1007,6 +1157,9 @@ export default function PackageDetailPage({
                     <ColumnFilter label="Usos" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "uses" ? sort.dir : null} onSort={handleSort("uses")} />
                   </th>
                   <th className="px-2 py-2">
+                    <ColumnFilter label="Cant. total" values={[]} activeValues={new Set()} onChange={() => {}} align="right" sortDirection={sort.key === "qty" ? sort.dir : null} onSort={handleSort("qty")} />
+                  </th>
+                  <th className="px-2 py-2">
                     <ColumnFilter label="Categorías" values={uniqueCategories} activeValues={filterCategory} onChange={setFilterCategory} sortDirection={null} onSort={() => {}} />
                   </th>
                   <th className="px-2 py-2">
@@ -1034,7 +1187,7 @@ export default function PackageDetailPage({
                     ][row.level];
                     return (
                       <tr key={row.key} style={{ background: headerStyles.bg, color: headerStyles.color, borderTop: headerStyles.border }}>
-                        <td colSpan={10} className={cn("px-2 py-1.5 text-xs", headerStyles.weight)} style={{ paddingLeft: `${8 + row.level * 16}px` }}>
+                        <td colSpan={11} className={cn("px-2 py-1.5 text-xs", headerStyles.weight)} style={{ paddingLeft: `${8 + row.level * 16}px` }}>
                           <button
                             type="button"
                             onClick={() => toggleGroup(row.key)}
@@ -1053,7 +1206,7 @@ export default function PackageDetailPage({
                 })}
                 {(viewMode === "flat" ? sorted.length === 0 : groupedRows.length === 0) && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                    <td colSpan={11} className="px-4 py-12 text-center text-sm text-muted-foreground">
                       {assignableInsumos.length === 0
                         ? "No hay insumos disponibles. Asegurate de tener artículos cuantificados con composiciones."
                         : "No hay insumos que coincidan con los filtros."}
@@ -1065,6 +1218,24 @@ export default function PackageDetailPage({
           </div>
         </div>
       )}
+
+      {/* Modal de detalle del insumo (selección granular por composición).
+          Sólo se monta cuando hay un insumo activo. Pasa todas las
+          composiciones del insumo con sus ubicaciones en el proyecto. */}
+      <InsumoCompositionDialog
+        open={detailInsumoId != null}
+        onClose={() => setDetailInsumoId(null)}
+        insumo={detailInsumoId ? (allInsumos.find((i) => i.id === detailInsumoId) ?? null) : null}
+        compositions={detailCompositions}
+        currentPackage={pkg}
+        supabase={supabase}
+        projectId={projectId}
+        onApplied={async () => {
+          // Recargar datos tras aplicar cambios — actualiza assignments
+          // en la lista plana, agrupada y "Insumos asignados".
+          await loadData();
+        }}
+      />
     </div>
   );
 }
