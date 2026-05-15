@@ -429,7 +429,12 @@ export default function PackageDetailPage({
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  /* ── Asignar insumos seleccionados al paquete ── */
+  /* ── Asignar selección al paquete ─────────────────────────────────
+   *  En vista plana: `selected` contiene insumo_ids → asigna TODAS las
+   *    composiciones de cada insumo seleccionado (comportamiento bulk).
+   *  En vista agrupada: `selected` contiene entryKeys (`qline::comp`) →
+   *    asigna SÓLO esos pares específicos (granularidad por línea).
+   * ───────────────────────────────────────────────────────────────── */
   async function assignSelectedInsumos() {
     if (selected.size === 0) return;
     if (pkg?.status === "aprobado") {
@@ -437,32 +442,59 @@ export default function PackageDetailPage({
       return;
     }
     setAssigning(true);
-    const { data, error } = await supabase.rpc("assign_insumos_to_package", {
-      p_project_id: projectId,
-      p_insumo_ids: Array.from(selected),
-      p_package_id: packageId,
-    });
+
+    try {
+      if (viewMode === "grouped") {
+        // Granular: convertir entryKeys a pairs {qline_id, comp_id}
+        const pairs = Array.from(selected).map((key) => {
+          const [qline_id, comp_id] = key.split("::");
+          return { qline_id, comp_id };
+        });
+        const { data, error } = await supabase.rpc("assign_qline_compositions_to_package", {
+          p_project_id: projectId,
+          p_pairs: pairs,
+          p_package_id: packageId,
+        });
+        if (error) throw error;
+        const r = (data ?? {}) as { assigned: number; already_in_package: number; conflicts: number; conflict_packages: { name: string; count: number }[] };
+        if (r.assigned > 0) toast.success(`${r.assigned} línea${r.assigned === 1 ? "" : "s"} asignada${r.assigned === 1 ? "" : "s"}`);
+        if (r.already_in_package > 0) toast.info(`${r.already_in_package} ya estaban en este paquete`);
+        if (r.conflicts > 0 && r.conflict_packages.length > 0) {
+          const breakdown = r.conflict_packages.map((p) => `"${p.name}" (${p.count})`).join(", ");
+          toast.warning(`${r.conflicts} ya en otros: ${breakdown}`, { duration: 6000 });
+        }
+        if (r.assigned === 0 && r.already_in_package === 0 && r.conflicts === 0) {
+          toast.info("Nada que asignar");
+        }
+      } else {
+        // Vista plana: bulk por insumo (asigna todas las composiciones de cada uno)
+        const { data, error } = await supabase.rpc("assign_insumos_to_package", {
+          p_project_id: projectId,
+          p_insumo_ids: Array.from(selected),
+          p_package_id: packageId,
+        });
+        if (error) throw error;
+        const r = (data ?? {}) as {
+          assigned: number; already_in_package: number; conflicts: number;
+          skipped_no_usage: number; conflict_packages: { name: string; count: number }[];
+        };
+        if (r.assigned > 0) toast.success(`${r.assigned} composición${r.assigned === 1 ? "" : "es"} asignada${r.assigned === 1 ? "" : "s"}`);
+        if (r.already_in_package > 0) toast.info(`${r.already_in_package} ya estaban en este paquete`);
+        if (r.conflicts > 0 && r.conflict_packages.length > 0) {
+          const breakdown = r.conflict_packages.map((p) => `"${p.name}" (${p.count})`).join(", ");
+          toast.warning(`${r.conflicts} ya en otros: ${breakdown}`, { duration: 6000 });
+        }
+        if (r.skipped_no_usage > 0) toast.info(`${r.skipped_no_usage} insumo${r.skipped_no_usage === 1 ? "" : "s"} sin uso en el proyecto (skip)`);
+        if (r.assigned === 0 && r.already_in_package === 0 && r.conflicts === 0) {
+          toast.info("Nada que asignar");
+        }
+      }
+      setSelected(new Set());
+      await loadData();
+    } catch (e) {
+      toast.error(`Error: ${(e as Error).message}`);
+    }
     setAssigning(false);
-    if (error) { toast.error(`Error: ${error.message}`); return; }
-    const r = (data ?? {}) as {
-      assigned: number;
-      already_in_package: number;
-      conflicts: number;
-      skipped_no_usage: number;
-      conflict_packages: { name: string; count: number }[];
-    };
-    if (r.assigned > 0) toast.success(`${r.assigned} composición${r.assigned === 1 ? "" : "es"} asignada${r.assigned === 1 ? "" : "s"}`);
-    if (r.already_in_package > 0) toast.info(`${r.already_in_package} ya estaban en este paquete`);
-    if (r.conflicts > 0 && r.conflict_packages.length > 0) {
-      const breakdown = r.conflict_packages.map((p) => `"${p.name}" (${p.count})`).join(", ");
-      toast.warning(`${r.conflicts} ya en otros: ${breakdown}`, { duration: 6000 });
-    }
-    if (r.skipped_no_usage > 0) toast.info(`${r.skipped_no_usage} insumo${r.skipped_no_usage === 1 ? "" : "s"} sin uso en el proyecto (skip)`);
-    if (r.assigned === 0 && r.already_in_package === 0 && r.conflicts === 0) {
-      toast.info("Nada que asignar");
-    }
-    setSelected(new Set());
-    await loadData();
   }
 
   /* ── Quitar todas las composiciones de un insumo del paquete ── */
@@ -534,7 +566,10 @@ export default function PackageDetailPage({
      lo ocultamos. */
   type GroupedRow =
     | { kind: "header"; level: 0|1|2|3|4; key: string; label: string; insumoCount: number; collapsed: boolean }
-    | { kind: "insumo"; insumo: AssignableInsumo; key: string };
+    /** Hoja: una entry única (qline + composición + insumo). La key es
+     *  `${qline_id}::${comp_id}` para que cada aparición del insumo en
+     *  un artículo distinto sea seleccionable independientemente. */
+    | { kind: "entry"; key: string; entryKey: string; qline_id: string; comp_id: string; insumo: AssignableInsumo; quantity: number; assignedTo: { packageId: string; packageName: string } | null };
 
   const groupedRows = useMemo<GroupedRow[]>(() => {
     if (viewMode !== "grouped") return [];
@@ -542,11 +577,11 @@ export default function PackageDetailPage({
     const insumoFilterPass = new Map<string, AssignableInsumo>();
     for (const i of filtered) insumoFilterPass.set(i.id, i);
 
-    // Mapa articulo_id → composiciones del articulo (insumo_ids únicos)
-    const compsByArt = new Map<string, Set<string>>();
-    for (const c of allComps) {
-      if (!compsByArt.has(c.articulo_id)) compsByArt.set(c.articulo_id, new Set());
-      compsByArt.get(c.articulo_id)!.add(c.insumo_id);
+    // Mapa articulo_id → composiciones COMPLETAS (con qty/waste/margin) del articulo
+    const compsByArt = new Map<string, CompFull[]>();
+    for (const c of allCompsFull) {
+      if (!compsByArt.has(c.articulo_id)) compsByArt.set(c.articulo_id, []);
+      compsByArt.get(c.articulo_id)!.push(c);
     }
 
     // Lookups de orden
@@ -556,9 +591,11 @@ export default function PackageDetailPage({
     const subById = new Map(allSubcategories.map((s) => [s.id, s]));
     const artById = new Map(allArticulos.map((a) => [a.id, a]));
 
-    // Estructura: groupId → sectorId → catId → subId → artId → Set(insumoId)
-    type LeafSet = Set<string>;
-    type ArtMap = Map<string, LeafSet>;
+    /** Cada hoja del árbol es una entry (qline + composición). */
+    type LeafEntry = { qline_id: string; comp: CompFull; insumo: AssignableInsumo; quantity: number };
+    /** Map artId → array de entries (una por par (qline, comp) en ese articulo
+     *  bajo este sector/cat/subcat). */
+    type ArtMap = Map<string, LeafEntry[]>;
     type SubMap = Map<string, ArtMap>;
     type CatMap = Map<string, SubMap>;
     type SectorMap = Map<string, CatMap>;
@@ -567,12 +604,11 @@ export default function PackageDetailPage({
 
     const NO_GROUP = "__no_group__";
 
-    // Para cada articulo, agarrar sus quantification_lines (sector/cat/sub) y
-    // expandir sus insumos. Cada combo se inserta en el árbol.
+    // Para cada articulo cuantificado, iterar sus qlines × sus composiciones.
+    // Cada combinación (qline, comp) genera una entry hoja independiente.
     for (const [artId, qLineList] of qLinesByArt.entries()) {
-      const insumoIds = compsByArt.get(artId);
-      if (!insumoIds || insumoIds.size === 0) continue;
-      // Para cada qLine de este articulo:
+      const comps = compsByArt.get(artId);
+      if (!comps || comps.length === 0) continue;
       for (const ql of qLineList) {
         const sec = sectorById.get(ql.sector_id);
         const groupId = sec?.sector_group_id || NO_GROUP;
@@ -584,11 +620,20 @@ export default function PackageDetailPage({
         const subMap = catMap.get(ql.category_id)!;
         if (!subMap.has(ql.subcategory_id)) subMap.set(ql.subcategory_id, new Map());
         const artMap = subMap.get(ql.subcategory_id)!;
-        if (!artMap.has(artId)) artMap.set(artId, new Set());
-        const leafSet = artMap.get(artId)!;
-        for (const insId of insumoIds) {
-          // Sólo insertar si el insumo pasa los filtros
-          if (insumoFilterPass.has(insId)) leafSet.add(insId);
+        if (!artMap.has(artId)) artMap.set(artId, []);
+        const leafList = artMap.get(artId)!;
+        for (const comp of comps) {
+          const insumo = insumoFilterPass.get(comp.insumo_id);
+          if (!insumo) continue; // filtros aplicados
+          const wasteFactor = 1 + Number(comp.waste_pct ?? 0) / 100;
+          const marginFactor = 1 + Number(comp.margin_pct ?? 0) / 100;
+          const qty = ql.quantity * Number(comp.quantity ?? 0) * wasteFactor * marginFactor;
+          leafList.push({
+            qline_id: ql.qline_id,
+            comp,
+            insumo,
+            quantity: qty,
+          });
         }
       }
     }
@@ -602,20 +647,40 @@ export default function PackageDetailPage({
       NO_GROUP,
     ].filter((gid) => tree.has(gid));
 
+    // Helper para contar entries dentro de cualquier subárbol
+    const countLeafEntries = (sm: SectorMap): number => {
+      let n = 0;
+      for (const cm of sm.values()) for (const subM of cm.values()) for (const aL of subM.values()) for (const list of aL.values()) n += list.length;
+      return n;
+    };
+    const countLeafEntriesCat = (cm: CatMap): number => {
+      let n = 0;
+      for (const subM of cm.values()) for (const aL of subM.values()) for (const list of aL.values()) n += list.length;
+      return n;
+    };
+    const countLeafEntriesSub = (subM: SubMap): number => {
+      let n = 0;
+      for (const aL of subM.values()) for (const list of aL.values()) n += list.length;
+      return n;
+    };
+    const countLeafEntriesArt = (aL: ArtMap): number => {
+      let n = 0;
+      for (const list of aL.values()) n += list.length;
+      return n;
+    };
+
     for (const gid of orderedGroupIds) {
       const sectMap = tree.get(gid)!;
       // Orden de sectores dentro del grupo: respetando sectors[].order
       const orderedSecIds = sectors.map((s) => s.id).filter((sid) => sectMap.has(sid));
 
-      // Conteo de insumos únicos en este grupo (para el header)
-      const groupInsumos = new Set<string>();
-      for (const cm of sectMap.values()) for (const subM of cm.values()) for (const aM of subM.values()) for (const ls of aM.values()) for (const i of ls) groupInsumos.add(i);
-      if (groupInsumos.size === 0) continue;
+      const groupCount = countLeafEntries(sectMap);
+      if (groupCount === 0) continue;
 
       const groupLabel = gid === NO_GROUP ? "Sin grupo" : (groupById.get(gid)?.name ?? "(?)");
       const groupKey = `g::${gid}`;
       const groupCollapsed = collapsedGroups.has(groupKey);
-      rows.push({ kind: "header", level: 0, key: groupKey, label: groupLabel, insumoCount: groupInsumos.size, collapsed: groupCollapsed });
+      rows.push({ kind: "header", level: 0, key: groupKey, label: groupLabel, insumoCount: groupCount, collapsed: groupCollapsed });
       if (groupCollapsed) continue;
 
       for (const sid of orderedSecIds) {
@@ -623,13 +688,12 @@ export default function PackageDetailPage({
         const sec = sectorById.get(sid);
         const orderedCatIds = allCategories.map((c) => c.id).filter((cid) => catMap.has(cid));
 
-        const sectorInsumos = new Set<string>();
-        for (const subM of catMap.values()) for (const aM of subM.values()) for (const ls of aM.values()) for (const i of ls) sectorInsumos.add(i);
-        if (sectorInsumos.size === 0) continue;
+        const sectorCount = countLeafEntriesCat(catMap);
+        if (sectorCount === 0) continue;
 
         const sKey = `s::${gid}::${sid}`;
         const sCollapsed = collapsedGroups.has(sKey);
-        rows.push({ kind: "header", level: 1, key: sKey, label: sec?.name ?? "(?)", insumoCount: sectorInsumos.size, collapsed: sCollapsed });
+        rows.push({ kind: "header", level: 1, key: sKey, label: sec?.name ?? "(?)", insumoCount: sectorCount, collapsed: sCollapsed });
         if (sCollapsed) continue;
 
         for (const cid of orderedCatIds) {
@@ -637,13 +701,12 @@ export default function PackageDetailPage({
           const cat = catById.get(cid);
           const orderedSubIds = allSubcategories.map((s) => s.id).filter((sid2) => subMap.has(sid2));
 
-          const catInsumos = new Set<string>();
-          for (const aM of subMap.values()) for (const ls of aM.values()) for (const i of ls) catInsumos.add(i);
-          if (catInsumos.size === 0) continue;
+          const catCount = countLeafEntriesSub(subMap);
+          if (catCount === 0) continue;
 
           const cKey = `c::${gid}::${sid}::${cid}`;
           const cCollapsed = collapsedGroups.has(cKey);
-          rows.push({ kind: "header", level: 2, key: cKey, label: cat ? `${cat.code} ${cat.name}` : "(?)", insumoCount: catInsumos.size, collapsed: cCollapsed });
+          rows.push({ kind: "header", level: 2, key: cKey, label: cat ? `${cat.code} ${cat.name}` : "(?)", insumoCount: catCount, collapsed: cCollapsed });
           if (cCollapsed) continue;
 
           for (const subId of orderedSubIds) {
@@ -656,35 +719,45 @@ export default function PackageDetailPage({
               return an - bn;
             });
 
-            const subInsumos = new Set<string>();
-            for (const ls of artMap.values()) for (const i of ls) subInsumos.add(i);
-            if (subInsumos.size === 0) continue;
+            const subCount = countLeafEntriesArt(artMap);
+            if (subCount === 0) continue;
 
             const subKey = `sb::${gid}::${sid}::${cid}::${subId}`;
             const subCollapsed = collapsedGroups.has(subKey);
-            rows.push({ kind: "header", level: 3, key: subKey, label: sub ? `${sub.code} ${sub.name}` : "(?)", insumoCount: subInsumos.size, collapsed: subCollapsed });
+            rows.push({ kind: "header", level: 3, key: subKey, label: sub ? `${sub.code} ${sub.name}` : "(?)", insumoCount: subCount, collapsed: subCollapsed });
             if (subCollapsed) continue;
 
             for (const aid of orderedArtIds) {
-              const leafSet = artMap.get(aid)!;
-              if (leafSet.size === 0) continue;
+              const leafList = artMap.get(aid)!;
+              if (leafList.length === 0) continue;
               const art = artById.get(aid);
               const aKey = `a::${gid}::${sid}::${cid}::${subId}::${aid}`;
               const aCollapsed = collapsedGroups.has(aKey);
               rows.push({
                 kind: "header", level: 4, key: aKey,
                 label: art ? `#${art.number} ${art.description}` : "(?)",
-                insumoCount: leafSet.size,
+                insumoCount: leafList.length,
                 collapsed: aCollapsed,
               });
               if (aCollapsed) continue;
-              // Hojas: insumos. Orden por código.
-              const orderedInsumos = [...leafSet]
-                .map((iid) => insumoFilterPass.get(iid)!)
-                .filter(Boolean)
-                .sort((a, b) => a.code - b.code);
-              for (const i of orderedInsumos) {
-                rows.push({ kind: "insumo", insumo: i, key: `${aKey}::i::${i.id}` });
+              // Hojas: entries (qline, comp). Orden por código del insumo.
+              const orderedEntries = [...leafList].sort((a, b) => a.insumo.code - b.insumo.code);
+              for (const e of orderedEntries) {
+                const entryKey = `${e.qline_id}::${e.comp.id}`;
+                // Resolver assignment para esta entry específica
+                const granular = globalQlineCompToPkg.get(entryKey);
+                const legacy = globalCompToPkg.get(e.comp.id);
+                const assignedTo = granular ?? legacy ?? null;
+                rows.push({
+                  kind: "entry",
+                  key: `${aKey}::e::${entryKey}`,
+                  entryKey,
+                  qline_id: e.qline_id,
+                  comp_id: e.comp.id,
+                  insumo: e.insumo,
+                  quantity: e.quantity,
+                  assignedTo,
+                });
               }
             }
           }
@@ -692,7 +765,7 @@ export default function PackageDetailPage({
       }
     }
     return rows;
-  }, [viewMode, filtered, allComps, qLinesByArt, sectors, sectorGroups, allCategories, allSubcategories, allArticulos, collapsedGroups]);
+  }, [viewMode, filtered, allCompsFull, qLinesByArt, sectors, sectorGroups, allCategories, allSubcategories, allArticulos, collapsedGroups, globalCompToPkg, globalQlineCompToPkg]);
 
   /* ── Helpers para vista agrupada ── */
   function toggleGroup(key: string) {
@@ -719,23 +792,36 @@ export default function PackageDetailPage({
       return next;
     });
   }
-  /** Set de insumo IDs únicos visibles según el modo activo. En vista
-   *  agrupada el mismo insumo puede aparecer N veces, pero aún así es
-   *  un único id en el Set. Lo usamos para el select-all. */
-  const visibleInsumoIds = useMemo(() => {
+
+  /** Keys visibles según el modo:
+   *   - Lista plana: insumo_ids
+   *   - Agrupada: entryKeys (qline::comp) — cada hoja es independiente
+   *  Esto es lo que se usa para el "Seleccionar todos los visibles" del
+   *  header de la tabla. */
+  const visibleKeys = useMemo(() => {
     if (viewMode === "flat") return new Set(sorted.map((i) => i.id));
-    const ids = new Set<string>();
-    for (const r of groupedRows) if (r.kind === "insumo") ids.add(r.insumo.id);
-    return ids;
-  }, [viewMode, sorted, groupedRows]);
+    const keys = new Set<string>();
+    for (const r of groupedRows) {
+      if (r.kind === "entry") {
+        // Sólo seleccionables (no las que están en otro paquete)
+        const inOther = r.assignedTo && r.assignedTo.packageId !== packageId;
+        if (!inOther) keys.add(r.entryKey);
+      }
+    }
+    return keys;
+  }, [viewMode, sorted, groupedRows, packageId]);
 
   function toggleSelectAll() {
-    if (selected.size === visibleInsumoIds.size && visibleInsumoIds.size > 0) {
+    if (selected.size === visibleKeys.size && visibleKeys.size > 0) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(visibleInsumoIds));
+      setSelected(new Set(visibleKeys));
     }
   }
+
+  /** Resetear la selección al cambiar de viewMode — los identifiers son
+   *  distintos (insumo_id vs entryKey) y no tiene sentido transportarlos. */
+  useEffect(() => { setSelected(new Set()); }, [viewMode]);
 
   function handleSort(key: string) {
     return () => {
@@ -747,10 +833,70 @@ export default function PackageDetailPage({
     };
   }
 
-  /** Render de una fila de insumo (hoja). Se reutiliza en ambos modos.
-   *  rowKey distingue cada aparición (en agrupada, el mismo insumo
-   *  aparece varias veces — necesitamos keys únicas), pero el checkbox
-   *  state lee del Set `selected` por insumo.id. */
+  /** Render de una hoja del árbol agrupado: una entry específica
+   *  (qline, comp). El checkbox usa `entryKey` (qline::comp), así cada
+   *  aparición del mismo insumo en distintos artículos/sectores es
+   *  seleccionable INDEPENDIENTEMENTE. */
+  function renderEntryRow(row: Extract<GroupedRow, { kind: "entry" }>) {
+    const i = row.insumo;
+    const wasHere = row.assignedTo?.packageId === packageId;
+    const inOther = row.assignedTo && row.assignedTo.packageId !== packageId;
+    const checked = selected.has(row.entryKey);
+    const disabled = !!inOther;
+    return (
+      <tr
+        key={row.key}
+        style={{
+          borderBottom: "1px solid #F1F5F9",
+          background: checked ? "#EFF6FF" : (wasHere ? "#ECFDF5" : (inOther ? "#FFFBEB" : undefined)),
+          opacity: inOther ? 0.7 : 1,
+        }}
+      >
+        <td className="px-1 py-1 text-center">
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            onChange={() => toggleSelect(row.entryKey)}
+            className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722] disabled:cursor-not-allowed"
+            title={inOther ? `En "${row.assignedTo!.packageName}"` : undefined}
+          />
+        </td>
+        <td className="px-2 py-1 text-xs font-mono text-muted-foreground">{i.code}</td>
+        <td className="px-2 py-1 truncate" title={i.description}>{i.description}</td>
+        <td className="px-2 py-1 text-center text-xs text-muted-foreground">{i.unit}</td>
+        <td className="px-2 py-1 text-center text-[11px] text-muted-foreground capitalize">{i.type.replace(/_/g, " ")}</td>
+        <td className="px-2 py-1 text-right font-mono text-xs">
+          {i.pu_usd > 0 ? formatNumber(i.pu_usd, 2) : "—"}
+        </td>
+        <td className="px-2 py-1 text-right font-mono text-xs">{i.uses_count}</td>
+        <td className="px-2 py-1 text-right font-mono text-xs" title={`${formatNumber(row.quantity, 4)} ${i.unit} (esta línea)`}>
+          {row.quantity > 0 ? formatNumber(row.quantity, 2) : "—"}
+        </td>
+        <td className="px-2 py-1 text-xs truncate" title={i.category_labels.join(", ")}>
+          {i.category_labels.length === 0 ? "—" : i.category_labels.length === 1 ? i.category_labels[0] : `${i.category_labels.length} categorías`}
+        </td>
+        <td className="px-2 py-1 text-xs truncate" title={i.subcategory_labels.join(", ")}>
+          {i.subcategory_labels.length === 0 ? "—" : i.subcategory_labels.length === 1 ? i.subcategory_labels[0] : `${i.subcategory_labels.length} subcategorías`}
+        </td>
+        <td className="px-2 py-1">
+          {wasHere && <Badge className="text-[10px] bg-emerald-600 text-white">En este paquete</Badge>}
+          {inOther && row.assignedTo && (
+            <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
+              En "{row.assignedTo.packageName}"
+            </Badge>
+          )}
+          {!wasHere && !inOther && (
+            <span className="text-[10px] text-muted-foreground italic">Sin asignar</span>
+          )}
+        </td>
+      </tr>
+    );
+  }
+
+  /** Render de una fila de insumo (hoja) en vista plana. El checkbox
+   *  state lee del Set `selected` por insumo.id; click en la fila abre
+   *  el modal de detalle por composición. */
   function renderInsumoRow(i: AssignableInsumo, rowKey: string) {
     const isHere = i.assignment.kind === "all_here";
     const isOther = i.assignment.kind === "all_other";
@@ -1096,7 +1242,9 @@ export default function PackageDetailPage({
           {selected.size > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-[#0A0A0A] text-white shadow-md">
               <span className="text-sm font-medium">
-                {selected.size} insumo{selected.size === 1 ? "" : "s"} seleccionado{selected.size === 1 ? "" : "s"}
+                {viewMode === "grouped"
+                  ? `${selected.size} línea${selected.size === 1 ? "" : "s"} seleccionada${selected.size === 1 ? "" : "s"}`
+                  : `${selected.size} insumo${selected.size === 1 ? "" : "s"} seleccionado${selected.size === 1 ? "" : "s"}`}
               </span>
               <span className="h-4 w-px bg-white/20 mx-1" />
               <Button
@@ -1143,7 +1291,7 @@ export default function PackageDetailPage({
                   <th className="px-1 py-2 text-center bg-background">
                     <input
                       type="checkbox"
-                      checked={visibleInsumoIds.size > 0 && selected.size === visibleInsumoIds.size}
+                      checked={visibleKeys.size > 0 && selected.size === visibleKeys.size}
                       onChange={toggleSelectAll}
                       className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
                       title="Seleccionar/deseleccionar todos los visibles"
@@ -1207,13 +1355,14 @@ export default function PackageDetailPage({
                             {row.collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                             {headerStyles.icon}
                             <span>{row.label}</span>
-                            <span className="opacity-70 font-mono text-[10px]">({row.insumoCount} insumo{row.insumoCount === 1 ? "" : "s"})</span>
+                            <span className="opacity-70 font-mono text-[10px]">({row.insumoCount} línea{row.insumoCount === 1 ? "" : "s"})</span>
                           </button>
                         </td>
                       </tr>
                     );
                   }
-                  return renderInsumoRow(row.insumo, row.key);
+                  // row.kind === "entry": una hoja granular (qline + comp)
+                  return renderEntryRow(row);
                 })}
                 {(viewMode === "flat" ? sorted.length === 0 : groupedRows.length === 0) && (
                   <tr>
