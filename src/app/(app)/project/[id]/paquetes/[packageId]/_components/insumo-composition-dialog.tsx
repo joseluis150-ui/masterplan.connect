@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Package, PackagePlus, X, Lock } from "lucide-react";
+import { Loader2, Package, PackagePlus, Lock, Layers, ChevronDown, ChevronRight } from "lucide-react";
 import { formatNumber } from "@/lib/utils/formula";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toast } from "sonner";
@@ -15,20 +15,21 @@ import type {
   Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, ProcurementPackage,
 } from "@/lib/types/database";
 
-/** Composición de un insumo + el artículo donde aparece + dónde se usa
- *  ese artículo en el proyecto (sector/categoría/subcategoría) +
- *  cantidad total proyectada. Se computa en el componente padre y se
- *  pasa al modal vía prop. */
-export interface CompositionDetail {
+/** Una línea individual asignable: la combinación de (quantification_line +
+ *  articulo_composition) que da la granularidad pedida — el insumo en un
+ *  artículo específico EN una línea específica de cuantificación (con su
+ *  propio sector/categoría/subcategoría). */
+export interface QlineCompEntry {
+  qline_id: string;
   composition_id: string;
   articulo: Articulo | null;
-  /** Cantidad total del insumo necesaria a través de esta composición.
-   *  Suma sobre todas las quantification_lines del artículo:
-   *    qty_qline × qty_comp × (1 + waste/100) × (1 + margin/100). */
-  total_quantity: number;
-  /** Lugares donde aparece el artículo (cada qline da uno). */
-  used_in: { sector: Sector | null; category: EdtCategory | null; subcategory: EdtSubcategory | null; quantity: number }[];
-  /** Si null = no asignada; si es una entry, ya está en algún paquete. */
+  sector: Sector | null;
+  category: EdtCategory | null;
+  subcategory: EdtSubcategory | null;
+  /** Cantidad del insumo necesaria para ESTA línea de cuantificación:
+   *  qty_qline × qty_composition × (1+waste/100) × (1+margin/100). */
+  quantity: number;
+  /** Si null = no asignada; sino el paquete donde está. */
   assigned_to: { packageId: string; packageName: string } | null;
 }
 
@@ -36,90 +37,126 @@ interface Props {
   open: boolean;
   onClose: () => void;
   insumo: Insumo | null;
-  compositions: CompositionDetail[];
-  /** Paquete actual al que se está asignando. Usado para distinguir
-   *  composiciones "ya en este paquete" vs "en otro". */
+  /** Lista de todas las entries del insumo (1 por qline donde aparece). */
+  entries: QlineCompEntry[];
+  /** Paquete actual. */
   currentPackage: ProcurementPackage;
   supabase: SupabaseClient;
   projectId: string;
-  /** Se llama tras aplicar cambios para que el padre recargue datos. */
   onApplied: () => Promise<void>;
 }
 
 /**
- * Modal de detalle de un insumo en el tab "Asignar".
+ * Modal de detalle de un insumo — selección por LÍNEA DE CUANTIFICACIÓN.
  *
- * Lista cada composición del insumo (1 por artículo donde aparece) y
- * muestra todas las ubicaciones del artículo en cuantificación
- * (sector / categoría / subcategoría / cantidad parcial).
+ * Lista todas las entries (qline × composition) del insumo, AGRUPADAS POR
+ * SECTOR. Permite expandir/contraer cada sector, ver las líneas con su
+ * categoría/subcategoría/cantidad, y marcar individualmente o por sector
+ * entero ("Seleccionar todo el sector X").
  *
- * El usuario marca/desmarca cada composición independientemente:
- *   - Composiciones ya en este paquete → pre-marcadas (toggleables)
- *   - Composiciones en otro paquete → bloqueadas con badge (no se pueden
- *     mover sin antes quitarlas del otro paquete)
- *   - Composiciones sin asignar → checkbox vacío
- *
- * Al hacer "Aplicar":
- *   - Las que se marcaron y no estaban en este paquete → ASSIGN
- *   - Las que se desmarcaron y estaban en este paquete → REMOVE
- *   - Las bloqueadas se ignoran
+ * Líneas ya en este paquete → pre-marcadas. Líneas en otro paquete →
+ * disabled con badge. Líneas libres → checkbox vacío.
  */
 export function InsumoCompositionDialog({
-  open, onClose, insumo, compositions, currentPackage, supabase, projectId, onApplied,
+  open, onClose, insumo, entries, currentPackage, supabase, projectId, onApplied,
 }: Props) {
-  /** Estado de selección actual del usuario. Inicializado desde
-   *  `compositions` (las que están en este paquete arrancan marcadas). */
+  /** Key compuesta de cada entry: `qline::comp` */
+  const keyOf = (e: QlineCompEntry) => `${e.qline_id}::${e.composition_id}`;
+
+  /** State de selección: Set de keys (qline::comp) marcadas por el usuario. */
   const initialSelected = useMemo(() => {
     const s = new Set<string>();
-    for (const c of compositions) {
-      if (c.assigned_to?.packageId === currentPackage.id) s.add(c.composition_id);
+    for (const e of entries) {
+      if (e.assigned_to?.packageId === currentPackage.id) s.add(keyOf(e));
     }
     return s;
-  }, [compositions, currentPackage.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, currentPackage.id]);
 
   const [selected, setSelected] = useState<Set<string>>(initialSelected);
   const [applying, setApplying] = useState(false);
+  const [collapsedSectors, setCollapsedSectors] = useState<Set<string>>(new Set());
 
-  // Re-sync cuando cambian las compositions (ej. el padre cargó datos
-  // frescos). Sólo si el modal está abierto.
-  useMemo(() => {
+  // Re-sync cuando cambian las entries o se reabre el modal
+  useEffect(() => {
     if (open) setSelected(new Set(initialSelected));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, insumo?.id]);
 
   const isApproved = currentPackage.status === "aprobado";
 
-  /** Composiciones que el usuario puede tocar (no están bloqueadas en
-   *  otro paquete). Sirve para el "Seleccionar todo". */
-  const selectableComps = compositions.filter((c) =>
-    !c.assigned_to || c.assigned_to.packageId === currentPackage.id
-  );
-  const allSelectableSelected = selectableComps.length > 0 &&
-    selectableComps.every((c) => selected.has(c.composition_id));
+  /** Agrupar entries por sector. Las "sin sector" van al final. */
+  const grouped = useMemo(() => {
+    const m = new Map<string, { sector: Sector | null; entries: QlineCompEntry[] }>();
+    for (const e of entries) {
+      const key = e.sector?.id ?? "__no_sector__";
+      if (!m.has(key)) m.set(key, { sector: e.sector, entries: [] });
+      m.get(key)!.entries.push(e);
+    }
+    // Convertir a array, ordenar por sector.order si existe
+    return [...m.values()].sort((a, b) => {
+      if (!a.sector) return 1;
+      if (!b.sector) return -1;
+      return (a.sector.order ?? 0) - (b.sector.order ?? 0);
+    });
+  }, [entries]);
 
-  function toggleComp(id: string) {
+  /** Total seleccionable y total bloqueado por sector — para "Seleccionar todo". */
+  function sectorStats(sectorEntries: QlineCompEntry[]) {
+    const selectable = sectorEntries.filter((e) =>
+      !e.assigned_to || e.assigned_to.packageId === currentPackage.id
+    );
+    const allSelectableSelected = selectable.length > 0 &&
+      selectable.every((e) => selected.has(keyOf(e)));
+    return { selectable, allSelectableSelected };
+  }
+
+  /** Seleccionables y seleccionadas globales. */
+  const globalSelectable = entries.filter((e) =>
+    !e.assigned_to || e.assigned_to.packageId === currentPackage.id
+  );
+  const allGlobalSelected = globalSelectable.length > 0 &&
+    globalSelectable.every((e) => selected.has(keyOf(e)));
+
+  function toggleEntry(key: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
   }
 
-  function toggleAll() {
-    if (allSelectableSelected) {
-      // Deseleccionar todas las seleccionables
-      setSelected((prev) => {
-        const next = new Set(prev);
-        for (const c of selectableComps) next.delete(c.composition_id);
-        return next;
-      });
-    } else {
-      setSelected((prev) => {
-        const next = new Set(prev);
-        for (const c of selectableComps) next.add(c.composition_id);
-        return next;
-      });
-    }
+  function toggleSector(sectorEntries: QlineCompEntry[]) {
+    const { selectable, allSelectableSelected } = sectorStats(sectorEntries);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelectableSelected) {
+        for (const e of selectable) next.delete(keyOf(e));
+      } else {
+        for (const e of selectable) next.add(keyOf(e));
+      }
+      return next;
+    });
+  }
+
+  function toggleGlobalAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allGlobalSelected) {
+        for (const e of globalSelectable) next.delete(keyOf(e));
+      } else {
+        for (const e of globalSelectable) next.add(keyOf(e));
+      }
+      return next;
+    });
+  }
+
+  function toggleSectorCollapse(sectorKey: string) {
+    setCollapsedSectors((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectorKey)) next.delete(sectorKey); else next.add(sectorKey);
+      return next;
+    });
   }
 
   async function apply() {
@@ -127,16 +164,20 @@ export function InsumoCompositionDialog({
       toast.error("Paquete aprobado — no se puede modificar");
       return;
     }
-    // Calcular qué hay que asignar y qué hay que remover
-    const toAssign: string[] = [];
-    const toRemove: string[] = [];
-    for (const c of compositions) {
-      const wasHere = c.assigned_to?.packageId === currentPackage.id;
-      const wantsHere = selected.has(c.composition_id);
-      if (wantsHere && !wasHere && !c.assigned_to) toAssign.push(c.composition_id);
-      if (!wantsHere && wasHere) toRemove.push(c.composition_id);
-      // Composiciones en otro paquete (c.assigned_to && !wasHere) se
-      // ignoran — el checkbox debería estar disabled.
+    // Diff: qué hay que asignar / qué hay que remover
+    const toAssign: { qline_id: string; comp_id: string }[] = [];
+    const toRemove: { qline_id: string; comp_id: string }[] = [];
+    for (const e of entries) {
+      const k = keyOf(e);
+      const wasHere = e.assigned_to?.packageId === currentPackage.id;
+      const wantsHere = selected.has(k);
+      if (wantsHere && !wasHere && !e.assigned_to) {
+        toAssign.push({ qline_id: e.qline_id, comp_id: e.composition_id });
+      }
+      if (!wantsHere && wasHere) {
+        toRemove.push({ qline_id: e.qline_id, comp_id: e.composition_id });
+      }
+      // Las en otro paquete (assigned_to && !wasHere) se ignoran — están disabled
     }
 
     if (toAssign.length === 0 && toRemove.length === 0) {
@@ -148,25 +189,25 @@ export function InsumoCompositionDialog({
     setApplying(true);
     try {
       if (toAssign.length > 0) {
-        const { data, error } = await supabase.rpc("assign_compositions_to_package", {
+        const { data, error } = await supabase.rpc("assign_qline_compositions_to_package", {
           p_project_id: projectId,
-          p_composition_ids: toAssign,
+          p_pairs: toAssign,
           p_package_id: currentPackage.id,
         });
         if (error) throw error;
         const r = (data ?? {}) as { assigned: number; conflicts: number; already_in_package: number };
-        if (r.assigned > 0) toast.success(`${r.assigned} composición${r.assigned === 1 ? "" : "es"} asignada${r.assigned === 1 ? "" : "s"}`);
+        if (r.assigned > 0) toast.success(`${r.assigned} línea${r.assigned === 1 ? "" : "s"} asignada${r.assigned === 1 ? "" : "s"}`);
         if (r.conflicts > 0) toast.warning(`${r.conflicts} ya estaban en otro paquete`);
       }
       if (toRemove.length > 0) {
-        const { data, error } = await supabase.rpc("remove_compositions_from_package", {
+        const { data, error } = await supabase.rpc("remove_qline_compositions_from_package", {
           p_project_id: projectId,
-          p_composition_ids: toRemove,
+          p_pairs: toRemove,
           p_package_id: currentPackage.id,
         });
         if (error) throw error;
         const r = (data ?? {}) as { removed: number };
-        if (r.removed > 0) toast.success(`${r.removed} composición${r.removed === 1 ? "" : "es"} removida${r.removed === 1 ? "" : "s"}`);
+        if (r.removed > 0) toast.success(`${r.removed} línea${r.removed === 1 ? "" : "s"} removida${r.removed === 1 ? "" : "s"}`);
       }
       await onApplied();
       onClose();
@@ -180,7 +221,7 @@ export function InsumoCompositionDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !applying) onClose(); }}>
-      <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+      <DialogContent className="sm:max-w-4xl max-h-[88vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Package className="h-5 w-5 text-[#E87722]" />
@@ -188,118 +229,154 @@ export function InsumoCompositionDialog({
             <span>{insumo.description}</span>
           </DialogTitle>
           <DialogDescription>
-            Seleccioná en qué artículos asignar este insumo al paquete{" "}
-            <span className="font-semibold">"{currentPackage.name}"</span>. Las
-            composiciones bloqueadas (🔒) ya están en otro paquete del proyecto
-            y no se pueden mover desde acá — primero quitalas en el otro paquete.
+            Asigná línea por línea de cuantificación al paquete{" "}
+            <span className="font-semibold">"{currentPackage.name}"</span>.
+            Cada línea representa el insumo en un artículo dentro de un
+            sector/categoría/subcategoría específicos. Las líneas
+            bloqueadas (🔒) ya están en otro paquete.
           </DialogDescription>
         </DialogHeader>
 
-        {/* Toolbar */}
+        {/* Toolbar global */}
         <div className="flex items-center gap-2 px-1 py-2 border-y">
           <label className="flex items-center gap-1.5 text-xs cursor-pointer">
             <input
               type="checkbox"
-              checked={allSelectableSelected}
-              onChange={toggleAll}
-              disabled={selectableComps.length === 0 || isApproved}
+              checked={allGlobalSelected}
+              onChange={toggleGlobalAll}
+              disabled={globalSelectable.length === 0 || isApproved}
               className="h-3.5 w-3.5 rounded cursor-pointer accent-[#E87722]"
             />
             <span className="font-medium">Seleccionar todas las disponibles</span>
-            <span className="text-muted-foreground">({selectableComps.length})</span>
+            <span className="text-muted-foreground">({globalSelectable.length})</span>
           </label>
           <span className="ml-auto text-xs text-muted-foreground">
-            {compositions.length} uso{compositions.length === 1 ? "" : "s"} totales · Unidad: {insumo.unit}
+            {entries.length} línea{entries.length === 1 ? "" : "s"} totales · Unidad: {insumo.unit}
           </span>
         </div>
 
-        {/* Lista de composiciones */}
+        {/* Lista por sector */}
         <div className="overflow-auto flex-1 -mx-6 px-6">
-          {compositions.length === 0 ? (
+          {grouped.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">
-              Este insumo no se usa en ningún artículo cuantificado del proyecto.
+              Este insumo no se usa en ninguna línea de cuantificación del proyecto.
             </p>
           ) : (
-            <ul className="space-y-2 py-2">
-              {compositions.map((c) => {
-                const wasHere = c.assigned_to?.packageId === currentPackage.id;
-                const inOther = c.assigned_to && !wasHere;
-                const checked = selected.has(c.composition_id);
-                const disabled = isApproved || !!inOther;
+            <div className="space-y-3 py-2">
+              {grouped.map((group) => {
+                const sectorKey = group.sector?.id ?? "__no_sector__";
+                const collapsed = collapsedSectors.has(sectorKey);
+                const { selectable, allSelectableSelected } = sectorStats(group.entries);
+                const sectorAssignedHere = group.entries.filter((e) => e.assigned_to?.packageId === currentPackage.id).length;
+                const sectorAssignedOther = group.entries.filter((e) => e.assigned_to && e.assigned_to.packageId !== currentPackage.id).length;
+                const sectorTotalQty = group.entries.reduce((a, e) => a + e.quantity, 0);
+
                 return (
-                  <li
-                    key={c.composition_id}
-                    className={cn(
-                      "border rounded-md p-3 transition-colors",
-                      wasHere && "bg-emerald-50 border-emerald-200",
-                      inOther && "bg-amber-50 border-amber-200 opacity-75",
-                      !wasHere && !inOther && "hover:bg-muted/30",
-                      disabled && "cursor-not-allowed",
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={disabled}
-                        onChange={() => toggleComp(c.composition_id)}
-                        className="mt-1 h-4 w-4 rounded cursor-pointer accent-[#E87722] disabled:cursor-not-allowed"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-2 mb-1 flex-wrap">
-                          <span className="font-medium text-sm">
-                            {c.articulo ? `#${c.articulo.number} ${c.articulo.description}` : "(Artículo sin nombre)"}
-                          </span>
-                          {wasHere && (
-                            <Badge className="text-[10px] bg-emerald-600 text-white">
-                              <PackagePlus className="h-3 w-3 mr-0.5" /> En este paquete
-                            </Badge>
-                          )}
-                          {inOther && c.assigned_to && (
-                            <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
-                              <Lock className="h-3 w-3 mr-0.5" /> En "{c.assigned_to.packageName}"
-                            </Badge>
-                          )}
-                        </div>
-
-                        {/* Cantidad total de este uso */}
-                        <p className="text-[11px] text-muted-foreground font-mono">
-                          Cantidad total proyectada:{" "}
-                          <span className="font-semibold text-foreground">
-                            {formatNumber(c.total_quantity, 2)} {insumo.unit}
-                          </span>
-                        </p>
-
-                        {/* Lugares donde se usa el artículo */}
-                        {c.used_in.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-                              Aparece en {c.used_in.length} línea{c.used_in.length === 1 ? "" : "s"} de cuantificación:
-                            </p>
-                            <ul className="space-y-0.5">
-                              {c.used_in.map((u, idx) => (
-                                <li key={idx} className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5 flex-wrap">
-                                  <Badge variant="outline" className="text-[10px] font-mono">
-                                    {u.sector?.name ?? "(sin sector)"}
-                                  </Badge>
-                                  <span>·</span>
-                                  <span>{u.category ? `${u.category.code} ${u.category.name}` : "(sin cat.)"}</span>
-                                  <span>·</span>
-                                  <span>{u.subcategory ? `${u.subcategory.code} ${u.subcategory.name}` : "(sin subcat.)"}</span>
-                                  <span className="ml-1 font-mono text-muted-foreground/70">
-                                    qty: {formatNumber(u.quantity, 2)}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
+                  <div key={sectorKey} className="border rounded-md overflow-hidden">
+                    {/* Sector header — grayscale alto contraste estilo cuantificación */}
+                    <div
+                      className="flex items-center gap-2 px-3 py-2"
+                      style={{ background: "#262626", color: "#fff" }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleSectorCollapse(sectorKey)}
+                        className="inline-flex items-center gap-1.5 text-sm font-semibold hover:opacity-80"
+                      >
+                        {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                        <Layers className="h-3.5 w-3.5" />
+                        {group.sector?.name ?? "Sin sector"}
+                      </button>
+                      <span className="text-[10px] uppercase tracking-wider opacity-70 font-mono">
+                        {group.entries.length} línea{group.entries.length === 1 ? "" : "s"}
+                        {sectorAssignedHere > 0 && ` · ${sectorAssignedHere} aquí`}
+                        {sectorAssignedOther > 0 && ` · ${sectorAssignedOther} en otro`}
+                      </span>
+                      <span className="ml-auto text-[11px] font-mono opacity-90">
+                        Total: {formatNumber(sectorTotalQty, 2)} {insumo.unit}
+                      </span>
+                      {selectable.length > 0 && (
+                        <label className="inline-flex items-center gap-1 text-[11px] cursor-pointer bg-white/10 px-2 py-1 rounded ml-2">
+                          <input
+                            type="checkbox"
+                            checked={allSelectableSelected}
+                            onChange={() => toggleSector(group.entries)}
+                            disabled={isApproved}
+                            className="h-3 w-3 rounded cursor-pointer accent-[#E87722]"
+                          />
+                          <span>Sector entero</span>
+                        </label>
+                      )}
                     </div>
-                  </li>
+
+                    {!collapsed && (
+                      <ul className="divide-y">
+                        {group.entries.map((e) => {
+                          const k = keyOf(e);
+                          const wasHere = e.assigned_to?.packageId === currentPackage.id;
+                          const inOther = e.assigned_to && !wasHere;
+                          const checked = selected.has(k);
+                          const disabled = isApproved || !!inOther;
+                          return (
+                            <li
+                              key={k}
+                              className={cn(
+                                "px-3 py-2 transition-colors",
+                                wasHere && "bg-emerald-50",
+                                inOther && "bg-amber-50 opacity-75",
+                                !wasHere && !inOther && "hover:bg-muted/30",
+                                disabled && "cursor-not-allowed",
+                              )}
+                            >
+                              <div className="flex items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={disabled}
+                                  onChange={() => toggleEntry(k)}
+                                  className="mt-1 h-4 w-4 rounded cursor-pointer accent-[#E87722] disabled:cursor-not-allowed"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-baseline gap-2 flex-wrap">
+                                    <span className="font-medium text-sm">
+                                      {e.articulo ? `#${e.articulo.number} ${e.articulo.description}` : "(Artículo sin nombre)"}
+                                    </span>
+                                    {wasHere && (
+                                      <Badge className="text-[10px] bg-emerald-600 text-white">
+                                        <PackagePlus className="h-3 w-3 mr-0.5" /> Asignada
+                                      </Badge>
+                                    )}
+                                    {inOther && e.assigned_to && (
+                                      <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
+                                        <Lock className="h-3 w-3 mr-0.5" /> En "{e.assigned_to.packageName}"
+                                      </Badge>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                                    <Badge variant="outline" className="text-[10px]">
+                                      {e.category ? `${e.category.code} ${e.category.name}` : "(sin cat.)"}
+                                    </Badge>
+                                    <Badge variant="outline" className="text-[10px]">
+                                      {e.subcategory ? `${e.subcategory.code} ${e.subcategory.name}` : "(sin subcat.)"}
+                                    </Badge>
+                                    <span className="ml-auto font-mono">
+                                      <span className="font-semibold text-foreground">
+                                        {formatNumber(e.quantity, 2)} {insumo.unit}
+                                      </span>
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
                 );
               })}
-            </ul>
+            </div>
           )}
         </div>
 

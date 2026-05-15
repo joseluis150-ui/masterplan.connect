@@ -19,7 +19,7 @@ import type {
   ProcurementPackage, ProcurementLine, Insumo, Articulo,
   EdtCategory, EdtSubcategory, Sector, SectorGroup, QuantificationLine,
 } from "@/lib/types/database";
-import { InsumoCompositionDialog, type CompositionDetail } from "./_components/insumo-composition-dialog";
+import { InsumoCompositionDialog, type QlineCompEntry } from "./_components/insumo-composition-dialog";
 
 type TabKey = "insumos" | "asignar";
 
@@ -116,7 +116,7 @@ export default function PackageDetailPage({
   /** Mapa articulo_id → set de quantification_lines que usan ese
    *  articulo (con sector/categoría/subcategoría). Usado para construir
    *  los breadcrumbs en la jerarquía. */
-  const [qLinesByArt, setQLinesByArt] = useState<Map<string, { sector_id: string; category_id: string; subcategory_id: string; quantity: number }[]>>(new Map());
+  const [qLinesByArt, setQLinesByArt] = useState<Map<string, { qline_id: string; sector_id: string; category_id: string; subcategory_id: string; quantity: number }[]>>(new Map());
 
   // Filtros + selección tab "Asignar"
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -137,8 +137,11 @@ export default function PackageDetailPage({
   /** Insumo cuyo modal de detalle está abierto. Null = modal cerrado. */
   const [detailInsumoId, setDetailInsumoId] = useState<string | null>(null);
   /** Mapa global composition_id → paquete donde está asignada (id + name).
-   *  Lo necesita el modal de detalle para pintar bloqueos/badges. */
+   *  Sólo para asignaciones LEGACY sin qline_id. */
   const [globalCompToPkg, setGlobalCompToPkg] = useState<Map<string, { packageId: string; packageName: string }>>(new Map());
+  /** Mapa global (qline_id, comp_id) → paquete. Key = `${qline}::${comp}`.
+   *  Para las asignaciones nuevas a nivel quantification_line. */
+  const [globalQlineCompToPkg, setGlobalQlineCompToPkg] = useState<Map<string, { packageId: string; packageName: string }>>(new Map());
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -205,8 +208,8 @@ export default function PackageDetailPage({
             .in("articulo_id", artIds)
         : Promise.resolve({ data: [] as CompFull[] }),
       projPkgIdList.length > 0
-        ? supabase.from("procurement_lines").select("package_id, composition_id, insumo_id").in("package_id", projPkgIdList)
-        : Promise.resolve({ data: [] as { package_id: string; composition_id: string | null; insumo_id: string }[] }),
+        ? supabase.from("procurement_lines").select("package_id, composition_id, insumo_id, quantification_line_id").in("package_id", projPkgIdList)
+        : Promise.resolve({ data: [] as { package_id: string; composition_id: string | null; insumo_id: string; quantification_line_id: string | null }[] }),
     ]);
     const compsFull = (compsRes.data ?? []) as CompFull[];
     // Mantenemos el shape simple para el árbol agrupado (que no necesita
@@ -220,14 +223,15 @@ export default function PackageDetailPage({
     const quantifiedArtIds = new Set(qLines.filter((q) => q.articulo_id).map((q) => q.articulo_id!));
     const projPkgIds = new Set(projPkgs.map((p) => p.id));
 
-    // Map articulo_id → quantification_lines del articulo (sector/cat/sub/qty).
-    // Usado tanto por la vista jerárquica como por el cálculo de cantidad
-    // total del insumo.
-    const qByArt = new Map<string, { sector_id: string; category_id: string; subcategory_id: string; quantity: number }[]>();
+    // Map articulo_id → quantification_lines del articulo (qline_id + sector/cat/sub/qty).
+    // Usado tanto por la vista jerárquica como por el modal de detalle
+    // por línea de cuantificación.
+    const qByArt = new Map<string, { qline_id: string; sector_id: string; category_id: string; subcategory_id: string; quantity: number }[]>();
     for (const ql of qLines) {
       if (!ql.articulo_id) continue;
       if (!qByArt.has(ql.articulo_id)) qByArt.set(ql.articulo_id, []);
       qByArt.get(ql.articulo_id)!.push({
+        qline_id: ql.id,
         sector_id: ql.sector_id,
         category_id: ql.category_id,
         subcategory_id: ql.subcategory_id,
@@ -253,19 +257,26 @@ export default function PackageDetailPage({
       insumoToCompIds.get(c.insumo_id)!.add(c.id);
     }
 
-    // Asignaciones globales: composition_id → package_id
+    // Asignaciones globales:
+    //  - compToPkg: para entradas legacy SIN qline_id (asignación de toda la composición)
+    //  - qlineCompToPkg: para entradas NUEVAS con qline_id (granularidad qline)
     const compToPkg = new Map<string, string>();
     const compToPkgDetailed = new Map<string, { packageId: string; packageName: string }>();
-    for (const pl of (allPlRes.data ?? []) as { package_id: string; composition_id: string | null }[]) {
+    const qlineCompToPkg = new Map<string, { packageId: string; packageName: string }>();
+    for (const pl of (allPlRes.data ?? []) as { package_id: string; composition_id: string | null; quantification_line_id: string | null }[]) {
       if (!projPkgIds.has(pl.package_id) || !pl.composition_id) continue;
-      compToPkg.set(pl.composition_id, pl.package_id);
       const pkg2 = projPkgs.find((p) => p.id === pl.package_id);
-      compToPkgDetailed.set(pl.composition_id, {
-        packageId: pl.package_id,
-        packageName: pkg2?.name ?? "(?)",
-      });
+      const detail = { packageId: pl.package_id, packageName: pkg2?.name ?? "(?)" };
+      if (pl.quantification_line_id) {
+        qlineCompToPkg.set(`${pl.quantification_line_id}::${pl.composition_id}`, detail);
+      } else {
+        // Legacy: asignación de composición global (sin qline específica)
+        compToPkg.set(pl.composition_id, pl.package_id);
+        compToPkgDetailed.set(pl.composition_id, detail);
+      }
     }
     setGlobalCompToPkg(compToPkgDetailed);
+    setGlobalQlineCompToPkg(qlineCompToPkg);
 
     // Map: articulo_id → set de category_ids/subcategory_ids donde aparece
     // (vía quantification_lines)
@@ -308,14 +319,26 @@ export default function PackageDetailPage({
       const compsOfInsumo = insumoToCompIds.get(ins.id) ?? new Set();
       if (compsOfInsumo.size === 0) continue; // Insumo no se usa en el proyecto
 
-      // ¿Cuáles de esas composiciones están asignadas? ¿A qué paquete?
+      // Calcular asignación a nivel (qline, comp). Iteramos sobre cada
+      // par y vemos en qué paquete está. Esto soporta la granularidad:
+      // un mismo insumo puede tener qlines en distintos paquetes.
       const pkgIdsOfThisInsumo = new Set<string>();
-      let assignedCount = 0;
+      let totalEntries = 0;
+      let assignedEntries = 0;
       for (const cid of compsOfInsumo) {
-        const pkgId = compToPkg.get(cid);
-        if (pkgId) {
-          pkgIdsOfThisInsumo.add(pkgId);
-          assignedCount++;
+        const comp = compFullById.get(cid);
+        if (!comp) continue;
+        const qlines = qByArt.get(comp.articulo_id) ?? [];
+        for (const ql of qlines) {
+          totalEntries++;
+          // Primero buscar a nivel granular, sino legacy
+          const granularPkg = qlineCompToPkg.get(`${ql.qline_id}::${cid}`)?.packageId;
+          const legacyPkg = compToPkg.get(cid);
+          const pkgId = granularPkg ?? legacyPkg;
+          if (pkgId) {
+            pkgIdsOfThisInsumo.add(pkgId);
+            assignedEntries++;
+          }
         }
       }
       let assignment: AssignableInsumo["assignment"];
@@ -323,7 +346,7 @@ export default function PackageDetailPage({
         assignment = { kind: "none" };
       } else if (pkgIdsOfThisInsumo.size === 1) {
         const onlyPkgId = [...pkgIdsOfThisInsumo][0];
-        if (assignedCount === compsOfInsumo.size) {
+        if (assignedEntries === totalEntries) {
           if (onlyPkgId === packageId) {
             assignment = { kind: "all_here", packageId: onlyPkgId };
           } else {
@@ -797,66 +820,54 @@ export default function PackageDetailPage({
     );
   }
 
-  /** Construye las compositions detalladas para el modal del insumo activo.
-   *  Se calcula con useMemo para no recomputar en cada render. */
-  const detailCompositions = useMemo<CompositionDetail[]>(() => {
+  /** Construye las entries (qline × composition) para el modal del insumo
+   *  activo. Cada entry es una línea de cuantificación individual donde
+   *  aparece este insumo a través de un artículo. La granularidad permite
+   *  asignar la misma composición en distintas qlines a paquetes distintos. */
+  const detailEntries = useMemo<QlineCompEntry[]>(() => {
     if (!detailInsumoId) return [];
-    const result: CompositionDetail[] = [];
-    // Encontrar todas las composiciones del insumo
+    const result: QlineCompEntry[] = [];
     const compsOfInsumo = allCompsFull.filter((c) => c.insumo_id === detailInsumoId);
 
-    // Mapas de lookup
     const artById = new Map(allArticulos.map((a) => [a.id, a]));
     const secById = new Map(sectors.map((s) => [s.id, s]));
     const catById = new Map(allCategories.map((c) => [c.id, c]));
     const subById = new Map(allSubcategories.map((s) => [s.id, s]));
 
-    // Asignaciones globales: composition_id → { package_id, name }
-    const compToPkg = new Map<string, { packageId: string; packageName: string }>();
-    // Re-construimos desde allComps... pero necesitamos las procurement_lines
-    // para conocer el package_id. Las cargamos de assignableInsumos.assignment?
-    // Mejor: tomamos del estado allPlByCompId que ya tenemos en loadData...
-    // Como no lo guardamos como state, lo reconstruimos via assignableInsumos.
-    // Solución simple: para cada composición, miramos si la encontramos en
-    // alguno de los assignableInsumos.assignment con kind != none. Pero eso
-    // sería ambiguo. Mejor mantener compToPkg como state directo.
-    // PARCHE: leemos del state nuevo `globalCompToPkg`.
-    for (const [cid, info] of globalCompToPkg.entries()) compToPkg.set(cid, info);
-
     for (const comp of compsOfInsumo) {
       const qlines = qLinesByArt.get(comp.articulo_id) ?? [];
-      if (qlines.length === 0) continue; // El artículo no está cuantificado en el proyecto
+      if (qlines.length === 0) continue;
 
       const wasteFactor = 1 + Number(comp.waste_pct ?? 0) / 100;
       const marginFactor = 1 + Number(comp.margin_pct ?? 0) / 100;
       const compQty = Number(comp.quantity ?? 0);
 
-      let totalQ = 0;
-      const used_in: CompositionDetail["used_in"] = [];
       for (const ql of qlines) {
-        const partial = ql.quantity * compQty * wasteFactor * marginFactor;
-        totalQ += partial;
-        used_in.push({
+        // ¿Está asignada esta combinación específica (qline, comp)?
+        // Primero buscamos a nivel granular; si no, fallback a la
+        // asignación legacy de composición global.
+        const granularKey = `${ql.qline_id}::${comp.id}`;
+        const assigned = globalQlineCompToPkg.get(granularKey)
+          ?? globalCompToPkg.get(comp.id)
+          ?? null;
+
+        result.push({
+          qline_id: ql.qline_id,
+          composition_id: comp.id,
+          articulo: artById.get(comp.articulo_id) ?? null,
           sector: secById.get(ql.sector_id) ?? null,
           category: catById.get(ql.category_id) ?? null,
           subcategory: subById.get(ql.subcategory_id) ?? null,
-          quantity: partial,
+          quantity: ql.quantity * compQty * wasteFactor * marginFactor,
+          assigned_to: assigned,
         });
       }
-
-      result.push({
-        composition_id: comp.id,
-        articulo: artById.get(comp.articulo_id) ?? null,
-        total_quantity: totalQ,
-        used_in,
-        assigned_to: compToPkg.get(comp.id) ?? null,
-      });
     }
-    // Ordenar por código de artículo
+    // Orden por sector (ya lo hace el agrupador), luego por código de articulo
     result.sort((a, b) => (a.articulo?.number ?? 0) - (b.articulo?.number ?? 0));
     return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailInsumoId, allCompsFull, allArticulos, sectors, allCategories, allSubcategories, qLinesByArt]);
+  }, [detailInsumoId, allCompsFull, allArticulos, sectors, allCategories, allSubcategories, qLinesByArt, globalCompToPkg, globalQlineCompToPkg]);
 
   if (loading) {
     return <div className="p-6"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
@@ -1226,7 +1237,7 @@ export default function PackageDetailPage({
         open={detailInsumoId != null}
         onClose={() => setDetailInsumoId(null)}
         insumo={detailInsumoId ? (allInsumos.find((i) => i.id === detailInsumoId) ?? null) : null}
-        compositions={detailCompositions}
+        entries={detailEntries}
         currentPackage={pkg}
         supabase={supabase}
         projectId={projectId}
