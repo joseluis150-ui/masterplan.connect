@@ -40,7 +40,7 @@ import { formatNumber, evaluateFormula, convertCurrency } from "@/lib/utils/form
 import { SearchableSelect } from "@/components/shared/searchable-select";
 import { FormulaInput } from "@/components/shared/formula-input";
 import type { Articulo, ArticuloComposition, Insumo, Project } from "@/lib/types/database";
-import { Plus, Trash2, Puzzle, Search, Copy, ChevronDown, ChevronRight, Upload, Download, Pencil, X, Flag, FolderInput, Check } from "lucide-react";
+import { Plus, Trash2, Puzzle, Search, Copy, Upload, Download, Pencil, X, Flag, FolderInput, Check } from "lucide-react";
 import { parseArticuloExcel, downloadBlob } from "@/lib/utils/excel";
 import type { ArticuloImportResult } from "@/lib/utils/excel";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
@@ -88,7 +88,8 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   // Filtros, sort, búsqueda y expansiones: persistidos por proyecto en
   // localStorage. Al salir y volver a la pestaña, el estado se restaura.
   const [search, setSearch] = usePersistedState<string>(`articulos:search:${projectId}`, "");
-  const [expanded, setExpanded] = usePersistedState<Set<string>>(`articulos:expanded:${projectId}`, new Set(), SET_PERSIST_OPTS);
+  // (expanded/setExpanded eliminados — el detalle del artículo ahora vive
+  //  en el modal de edición que se abre con click en la fila.)
   const [filterUnit, setFilterUnit] = usePersistedState<Set<string>>(`articulos:filterUnit:${projectId}`, new Set(), SET_PERSIST_OPTS);
   /** Filtro multi-color por banderas. Set vacío = mostrar todo. Cuando
    *  hay colores, sólo se ven artículos cuyo flag_colors incluya AL
@@ -750,12 +751,6 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
     loadData();
   }
 
-  function toggleExpanded(id: string) {
-    const next = new Set(expanded);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    setExpanded(next);
-  }
-
   const typeLabel = (type: string) => DEFAULT_INSUMO_TYPES.find((t) => t.value === type)?.label || type;
   const isVenta = project?.project_type === "venta";
 
@@ -893,7 +888,8 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
           <div className="overflow-x-auto">
             <table className="brand-table w-full text-sm" style={{ tableLayout: "fixed" }}>
               <colgroup>
-                <col style={{ width: "28px" }} />
+                {/* Quitada la columna del chevron — ahora click en cualquier
+                    parte de la fila abre el modal de edición. */}
                 <col style={{ width: "28px" }} />
                 <col style={{ width: "50px" }} />
                 <col />
@@ -909,7 +905,6 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
               </colgroup>
               <thead>
                 <tr>
-                  <th className="px-1 py-2"></th>
                   <th className="px-1 py-2 text-center" title="Marcador de revisión">
                     <Flag className="h-3 w-3 mx-auto text-muted-foreground/50" />
                   </th>
@@ -949,15 +944,12 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
               <tbody>
                 {sorted.map((art) => (
                   <React.Fragment key={art.id}>
-                      {/* Main row */}
+                      {/* Main row — click abre modal de edición */}
                       <tr
                         className="cursor-pointer hover:bg-muted/50"
-                        style={{ borderBottom: expanded.has(art.id) ? "none" : "1px solid #F1F5F9" }}
-                        onClick={() => toggleExpanded(art.id)}
+                        style={{ borderBottom: "1px solid #F1F5F9" }}
+                        onClick={() => openEdit(art)}
                       >
-                        <td className="px-1 py-1.5 text-center">
-                          {expanded.has(art.id) ? <ChevronDown className="h-3.5 w-3.5 mx-auto text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 mx-auto text-muted-foreground" />}
-                        </td>
                         <td className="px-1 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
                           <FlagsPopover
                             colors={art.flag_colors ?? []}
@@ -996,118 +988,8 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                           </div>
                         </td>
                       </tr>
-                      {/* Expanded composition */}
-                      {expanded.has(art.id) && (
-                        <tr style={{ borderBottom: "1px solid #F1F5F9" }}>
-                          <td colSpan={isVenta ? 13 : 12} className="p-0">
-                            <div className="px-4 py-3" style={{ background: "#FAFAFA" }}>
-                              {art.compositions.length > 0 ? (
-                                <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
-                                  <colgroup>
-                                    <col style={{ width: "75px" }} />
-                                    <col />
-                                    <col style={{ width: "50px" }} />
-                                    <col style={{ width: "85px" }} />
-                                    <col style={{ width: "70px" }} />
-                                    <col style={{ width: "70px" }} />
-                                    <col style={{ width: "80px" }} />
-                                    <col style={{ width: "110px" }} />
-                                    <col style={{ width: "85px" }} />
-                                    <col style={{ width: "32px" }} />
-                                  </colgroup>
-                                  <thead>
-                                    <tr style={{ borderBottom: "1px solid #E5E5E5" }}>
-                                      <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tipo</th>
-                                      <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Insumo</th>
-                                      <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Und</th>
-                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Cantidad</th>
-                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Desp.%</th>
-                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Marg.%</th>
-                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">PU {moneyCurrency}</th>
-                                      {/* Cantidad total del insumo en el proyecto VIA ESTE ARTÍCULO:
-                                          qty_articulo_en_proyecto × qty_insumo_en_articulo × (1+waste) × (1+margin) */}
-                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" title="Cantidad total del insumo necesaria en el proyecto vía este artículo">Cant. total proy.</th>
-                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Total {moneyCurrency}</th>
-                                      <th className="px-1 py-1.5"></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {art.compositions.map((comp) => {
-                                      const qtyTotal = comp.quantity * (1 + comp.waste_pct / 100);
-                                      const lineTotal = qtyTotal * Number(comp.insumo.pu_usd || 0) * (1 + comp.margin_pct / 100);
-                                      // Cantidad total del insumo en el proyecto a través de este artículo
-                                      const insumoProjectQty = qtyTotal * (1 + comp.margin_pct / 100) * art.quant_total;
-                                      return (
-                                        <tr key={comp.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
-                                          <td className="px-2 py-1">
-                                            <Badge variant="secondary" className="text-[10px]">{typeLabel(comp.insumo.type)}</Badge>
-                                          </td>
-                                          <td className="px-2 py-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                                            <button
-                                              type="button"
-                                              onClick={() => openInsumoEdit(comp.insumo)}
-                                              className="text-left hover:text-[#E87722] hover:underline transition-colors cursor-pointer text-xs"
-                                              title={comp.insumo.description}
-                                            >
-                                              {comp.insumo.description}
-                                            </button>
-                                          </td>
-                                          <td className="px-2 py-1 text-center text-xs">{comp.insumo.unit}</td>
-                                          <td className="px-2 py-1 text-right">
-                                            <FormulaInput
-                                              value={comp.quantity}
-                                              onValueChange={(v) => updateComposition(comp.id, "quantity", v)}
-                                              className="h-6 w-full text-xs"
-                                            />
-                                          </td>
-                                          <td className="px-2 py-1 text-right">
-                                            <FormulaInput
-                                              value={comp.waste_pct}
-                                              onValueChange={(v) => updateComposition(comp.id, "waste_pct", v)}
-                                              className="h-6 w-full text-xs"
-                                              step="0.01"
-                                            />
-                                          </td>
-                                          <td className="px-2 py-1 text-right">
-                                            <FormulaInput
-                                              value={comp.margin_pct}
-                                              onValueChange={(v) => updateComposition(comp.id, "margin_pct", v)}
-                                              className="h-6 w-full text-xs"
-                                              step="0.01"
-                                            />
-                                          </td>
-                                          <td className="px-2 py-1 text-right font-mono text-xs">{fmtMoney(Number(comp.insumo.pu_usd || 0))}</td>
-                                          <td
-                                            className="px-2 py-1 text-right font-mono text-xs"
-                                            title={art.quant_total > 0
-                                              ? `${formatNumber(insumoProjectQty, 4)} ${comp.insumo.unit} = ${formatNumber(art.quant_total, 2)} × ${formatNumber(qtyTotal, 4)} × ${formatNumber(1 + comp.margin_pct / 100, 4)}`
-                                              : "Sin uso en cuantificación"}
-                                          >
-                                            {art.quant_total > 0
-                                              ? <>{formatNumber(insumoProjectQty, 2)} <span className="text-[10px] text-muted-foreground">{comp.insumo.unit}</span></>
-                                              : <span className="text-muted-foreground/50">—</span>}
-                                          </td>
-                                          <td className="px-2 py-1 text-right font-mono text-xs font-bold">{fmtMoney(lineTotal)}</td>
-                                          <td className="px-1 py-1">
-                                            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => deleteComposition(comp.id)}>
-                                              <Trash2 className="h-2.5 w-2.5 text-destructive" />
-                                            </Button>
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
-                              ) : (
-                                <p className="text-xs text-muted-foreground text-center py-3">Sin insumos asignados</p>
-                              )}
-                              <Button variant="outline" size="sm" className="mt-2 h-7 text-xs" onClick={() => openAddComp(art.id)}>
-                                <Plus className="h-3 w-3 mr-1" /> Agregar Insumo
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
+                      {/* (Las composiciones del artículo ahora se editan en
+                          el modal que se abre con click en la fila.) */}
                   </React.Fragment>
                 ))}
               </tbody>
@@ -1116,38 +998,168 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
         </div>
       )}
 
-      {/* Edit Articulo Dialog */}
+      {/* Edit Articulo Dialog — modal flotante que reemplaza al expandible
+          inline. Cuando se está editando un artículo existente, también
+          muestra la tabla de composiciones (insumos + cant + waste + margin)
+          editable, mismo set de columnas que el viejo expandible. */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{editingArticulo?.id ? "Editar" : "Nuevo"} Artículo</DialogTitle></DialogHeader>
-          {editingArticulo && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Descripción</Label>
-                <Input value={editingArticulo.description || ""} onChange={(e) => setEditingArticulo({ ...editingArticulo, description: e.target.value })} placeholder="Ej: Zapata 1.5x1.5x0.4m" required />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+        <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingArticulo?.id ? `Editar artículo #${(articulos.find((a) => a.id === editingArticulo.id))?.number ?? ""}` : "Nuevo artículo"}</DialogTitle>
+          </DialogHeader>
+          {editingArticulo && (() => {
+            const art = editingArticulo.id ? articulos.find((a) => a.id === editingArticulo.id) : null;
+            return (
+              <div className="space-y-4">
+                {/* Datos básicos */}
                 <div className="space-y-2">
-                  <Label>Unidad</Label>
-                  <Select value={editingArticulo.unit || "U"} onValueChange={(v) => v && setEditingArticulo({ ...editingArticulo, unit: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>{DEFAULT_UNITS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
-                  </Select>
+                  <Label>Descripción</Label>
+                  <Input value={editingArticulo.description || ""} onChange={(e) => setEditingArticulo({ ...editingArticulo, description: e.target.value })} placeholder="Ej: Zapata 1.5x1.5x0.4m" required />
                 </div>
-                {isVenta && (
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>% Ganancia</Label>
-                    <Input type="number" step="0.01" value={editingArticulo.profit_pct || 0} onChange={(e) => setEditingArticulo({ ...editingArticulo, profit_pct: Number(e.target.value) })} />
+                    <Label>Unidad</Label>
+                    <Select value={editingArticulo.unit || "U"} onValueChange={(v) => v && setEditingArticulo({ ...editingArticulo, unit: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>{DEFAULT_UNITS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  {isVenta && (
+                    <div className="space-y-2">
+                      <Label>% Ganancia</Label>
+                      <Input type="number" step="0.01" value={editingArticulo.profit_pct || 0} onChange={(e) => setEditingArticulo({ ...editingArticulo, profit_pct: Number(e.target.value) })} />
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Comentario</Label>
+                  <Input value={editingArticulo.comment || ""} onChange={(e) => setEditingArticulo({ ...editingArticulo, comment: e.target.value })} placeholder="Notas" />
+                </div>
+
+                <Button onClick={saveArticulo} disabled={!editingArticulo.description} className="bg-[#E87722] hover:bg-[#E87722]/90 text-white">
+                  {editingArticulo.id ? "Guardar cambios del artículo" : "Crear artículo"}
+                </Button>
+
+                {/* Sección Composiciones (sólo si ya existe el artículo).
+                    Para uno nuevo, primero hay que crearlo (Crear) y volver
+                    a abrirlo desde la lista para agregar insumos. */}
+                {art && (
+                  <div className="pt-3 border-t space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                        Composición ({art.compositions.length} insumo{art.compositions.length === 1 ? "" : "s"})
+                      </h3>
+                      <div className="text-xs text-muted-foreground font-mono">
+                        PU costo: <span className="font-bold text-foreground">{fmtMoney(art.pu_costo)}</span>
+                      </div>
+                    </div>
+                    {art.compositions.length > 0 ? (
+                      <div className="overflow-x-auto" style={{ background: "#FAFAFA" }}>
+                        <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+                          <colgroup>
+                            <col style={{ width: "75px" }} />
+                            <col />
+                            <col style={{ width: "50px" }} />
+                            <col style={{ width: "85px" }} />
+                            <col style={{ width: "70px" }} />
+                            <col style={{ width: "70px" }} />
+                            <col style={{ width: "80px" }} />
+                            <col style={{ width: "110px" }} />
+                            <col style={{ width: "85px" }} />
+                            <col style={{ width: "32px" }} />
+                          </colgroup>
+                          <thead>
+                            <tr style={{ borderBottom: "1px solid #E5E5E5" }}>
+                              <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tipo</th>
+                              <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Insumo</th>
+                              <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Und</th>
+                              <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Cantidad</th>
+                              <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Desp.%</th>
+                              <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Marg.%</th>
+                              <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">PU {moneyCurrency}</th>
+                              <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" title="Cantidad total del insumo necesaria en el proyecto vía este artículo">Cant. total proy.</th>
+                              <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Total {moneyCurrency}</th>
+                              <th className="px-1 py-1.5"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {art.compositions.map((comp) => {
+                              const qtyTotal = comp.quantity * (1 + comp.waste_pct / 100);
+                              const lineTotal = qtyTotal * Number(comp.insumo.pu_usd || 0) * (1 + comp.margin_pct / 100);
+                              const insumoProjectQty = qtyTotal * (1 + comp.margin_pct / 100) * art.quant_total;
+                              return (
+                                <tr key={comp.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                                  <td className="px-2 py-1">
+                                    <Badge variant="secondary" className="text-[10px]">{typeLabel(comp.insumo.type)}</Badge>
+                                  </td>
+                                  <td className="px-2 py-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => openInsumoEdit(comp.insumo)}
+                                      className="text-left hover:text-[#E87722] hover:underline transition-colors cursor-pointer text-xs"
+                                      title={comp.insumo.description}
+                                    >
+                                      {comp.insumo.description}
+                                    </button>
+                                  </td>
+                                  <td className="px-2 py-1 text-center text-xs">{comp.insumo.unit}</td>
+                                  <td className="px-2 py-1 text-right">
+                                    <FormulaInput
+                                      value={comp.quantity}
+                                      onValueChange={(v) => updateComposition(comp.id, "quantity", v)}
+                                      className="h-6 w-full text-xs"
+                                    />
+                                  </td>
+                                  <td className="px-2 py-1 text-right">
+                                    <FormulaInput
+                                      value={comp.waste_pct}
+                                      onValueChange={(v) => updateComposition(comp.id, "waste_pct", v)}
+                                      className="h-6 w-full text-xs"
+                                      step="0.01"
+                                    />
+                                  </td>
+                                  <td className="px-2 py-1 text-right">
+                                    <FormulaInput
+                                      value={comp.margin_pct}
+                                      onValueChange={(v) => updateComposition(comp.id, "margin_pct", v)}
+                                      className="h-6 w-full text-xs"
+                                      step="0.01"
+                                    />
+                                  </td>
+                                  <td className="px-2 py-1 text-right font-mono text-xs">{fmtMoney(Number(comp.insumo.pu_usd || 0))}</td>
+                                  <td
+                                    className="px-2 py-1 text-right font-mono text-xs"
+                                    title={art.quant_total > 0
+                                      ? `${formatNumber(insumoProjectQty, 4)} ${comp.insumo.unit} = ${formatNumber(art.quant_total, 2)} × ${formatNumber(qtyTotal, 4)} × ${formatNumber(1 + comp.margin_pct / 100, 4)}`
+                                      : "Sin uso en cuantificación"}
+                                  >
+                                    {art.quant_total > 0
+                                      ? <>{formatNumber(insumoProjectQty, 2)} <span className="text-[10px] text-muted-foreground">{comp.insumo.unit}</span></>
+                                      : <span className="text-muted-foreground/50">—</span>}
+                                  </td>
+                                  <td className="px-2 py-1 text-right font-mono text-xs font-bold">{fmtMoney(lineTotal)}</td>
+                                  <td className="px-1 py-1">
+                                    <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => deleteComposition(comp.id)}>
+                                      <Trash2 className="h-2.5 w-2.5 text-destructive" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground text-center py-4">Sin insumos asignados</p>
+                    )}
+                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openAddComp(art.id)}>
+                      <Plus className="h-3 w-3 mr-1" /> Agregar Insumo
+                    </Button>
                   </div>
                 )}
               </div>
-              <div className="space-y-2">
-                <Label>Comentario</Label>
-                <Input value={editingArticulo.comment || ""} onChange={(e) => setEditingArticulo({ ...editingArticulo, comment: e.target.value })} placeholder="Notas" />
-              </div>
-              <Button onClick={saveArticulo} className="w-full" disabled={!editingArticulo.description}>{editingArticulo.id ? "Actualizar" : "Crear"}</Button>
-            </div>
-          )}
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
