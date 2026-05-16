@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob } from "@/lib/utils/excel";
+import { parseCuantificacionExcel, generateCuantificacionTemplate, downloadBlob, exportCuantificacionToExcel, type CuantificacionExportRow } from "@/lib/utils/excel";
 import type { CuantificacionImportResult } from "@/lib/utils/excel";
 import type { Articulo, EdtCategory, EdtSubcategory, Sector, Insumo, Project, SectorGroup } from "@/lib/types/database";
 import { Plus, Trash2, Calculator, Upload, Download, Flag, X, Layers, ChevronDown, ChevronRight, MessageSquare, Undo2, Folder, Copy } from "lucide-react";
@@ -114,6 +114,9 @@ interface QuantLine {
   /** Banderas de marcado por color. Múltiples por línea, paleta acotada
    *  (ver FLAG_COLORS en flags-popover.tsx). Default array vacío. */
   flag_colors: string[];
+  /** ISO timestamp de creación (viene del select *). Lo usamos en
+   *  el export a Excel. */
+  created_at: string;
   // enriched
   articulo_desc: string;
   articulo_unit: string;
@@ -686,6 +689,59 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
     e.target.value = "";
   }
 
+  /** Exporta TODAS las líneas no eliminadas de cuantificación a un XLSX.
+   *  Incluye PU, total calculado, comentarios, banderas. El XLSX es
+   *  compatible para re-importación (primeras 10 columnas matchean el
+   *  template), con columnas extra a la derecha para análisis externo. */
+  function exportCuantificacion() {
+    if (lines.length === 0) {
+      toast.info("Sin líneas para exportar");
+      return;
+    }
+    const groupById = new Map(sectorGroups.map((g) => [g.id, g]));
+    const sectorById = new Map(sectors.map((s) => [s.id, s]));
+    const catById = new Map(categories.map((c) => [c.id, c]));
+    const subById = new Map(subcategories.map((s) => [s.id, s]));
+
+    const rows: CuantificacionExportRow[] = lines.map((l) => {
+      const sector = sectorById.get(l.sector_id);
+      const group = sector?.sector_group_id ? groupById.get(sector.sector_group_id) ?? null : null;
+      const cat = catById.get(l.category_id);
+      const sub = subById.get(l.subcategory_id);
+      const qty = Number(l.quantity ?? 0);
+      const total = qty * l.articulo_pu;
+      return {
+        line_number: l.line_number,
+        group_name: group?.name ?? null,
+        sector_name: sector?.name ?? "",
+        category_code: cat?.code ?? "",
+        category_name: cat?.name ?? "",
+        subcategory_code: sub?.code ?? "",
+        subcategory_name: sub?.name ?? "",
+        articulo_number: l.articulo_id ? (articulos.find((a) => a.id === l.articulo_id)?.number ?? null) : null,
+        articulo_description: l.articulo_desc,
+        articulo_unit: l.articulo_unit,
+        quantity: l.quantity,
+        quantity_formula: l.quantity_formula,
+        pu_usd: l.articulo_pu,
+        total_usd: total,
+        comment: l.comment,
+        flag_colors: Array.isArray(l.flag_colors) ? l.flag_colors : [],
+        needs_review: !!l.needs_review,
+        created_at: l.created_at,
+      };
+    });
+
+    // Ordenar por line_number ascendente para tener un orden estable
+    rows.sort((a, b) => a.line_number - b.line_number);
+
+    const data = exportCuantificacionToExcel(rows);
+    const projectName = project?.name ? project.name.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 40) : "proyecto";
+    const date = new Date().toISOString().slice(0, 10);
+    downloadBlob(data, `cuantificacion_${projectName}_${date}.xlsx`);
+    toast.success(`${rows.length} línea${rows.length === 1 ? "" : "s"} exportada${rows.length === 1 ? "" : "s"}`);
+  }
+
   async function executeCuantImport() {
     if (!importResult) return;
     setImporting(true);
@@ -853,6 +909,11 @@ export default function CuantificacionPage({ params }: { params: Promise<{ id: s
           <Button variant="outline" size="sm" onClick={() => document.getElementById("cuant-file-input")?.click()}>
             <Upload className="h-4 w-4 mr-1" /> Importar Excel
           </Button>
+          {lines.length > 0 && (
+            <Button variant="outline" size="sm" onClick={exportCuantificacion} title="Descargar todas las líneas de cuantificación a Excel">
+              <Download className="h-4 w-4 mr-1" /> Exportar Excel
+            </Button>
+          )}
           <input id="cuant-file-input" type="file" accept=".xlsx,.xls" onChange={handleFileUpload} className="hidden" />
           {/* Las acciones bulk (eliminar, duplicar, ...) viven en la
               barra contextual que aparece arriba de la tabla cuando

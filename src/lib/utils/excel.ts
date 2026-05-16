@@ -474,3 +474,92 @@ export function downloadBlob(data: ArrayBuffer, filename: string) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+// ─── EXPORT CUANTIFICACIÓN ──────────────────────────────────────────
+
+/** Fila enriquecida que el exportador espera. La página de cuantificación
+ *  ya tiene esta info hidratada en memoria, así que sólo hace falta
+ *  mapearla. */
+export interface CuantificacionExportRow {
+  line_number: number;
+  group_name: string | null;        // Grupo de sector (puede ser null)
+  sector_name: string;
+  category_code: string;
+  category_name: string;
+  subcategory_code: string;
+  subcategory_name: string;
+  articulo_number: number | null;   // null si no tiene articulo asignado
+  articulo_description: string;     // vacío si no tiene
+  articulo_unit: string;
+  quantity: number | null;
+  quantity_formula: string | null;
+  pu_usd: number;                   // PU planificado del articulo
+  total_usd: number;                // quantity × pu_usd (0 si cualquier falta)
+  comment: string | null;
+  flag_colors: string[];            // ej. ["amber", "red"]
+  needs_review: boolean;
+  created_at: string;               // ISO
+}
+
+/**
+ * Genera un XLSX con todas las líneas de cuantificación + columnas
+ * calculadas (PU, total). Compatible para reimportar (las primeras 10
+ * columnas matchean el template), pero agrega columnas extra a la
+ * derecha con info derivada útil para análisis.
+ */
+export function exportCuantificacionToExcel(rows: CuantificacionExportRow[]): ArrayBuffer {
+  const wb = XLSX.utils.book_new();
+  const header = [
+    "No.Art", "Descripción", "Unidad", "Cantidad", "Fórmula",
+    "Código Categoría", "Categoría", "Código Sub Categoría", "Sub Categoría",
+    "Grupo Sector", "Sector",
+    "PU USD", "Total USD",
+    "Comentario", "Banderas", "Necesita revisión", "Creado",
+  ];
+  const data: (string | number | null)[][] = [header];
+  for (const r of rows) {
+    data.push([
+      r.articulo_number,
+      r.articulo_description || "",
+      r.articulo_unit || "",
+      r.quantity,
+      r.quantity_formula || "",
+      r.category_code,
+      r.category_name,
+      r.subcategory_code,
+      r.subcategory_name,
+      r.group_name ?? "",
+      r.sector_name,
+      r.pu_usd || 0,
+      r.total_usd || 0,
+      r.comment || "",
+      r.flag_colors.join(", "),
+      r.needs_review ? "Sí" : "",
+      r.created_at ? r.created_at.slice(0, 10) : "",
+    ]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws["!cols"] = [
+    { wch: 8 },   // No.Art
+    { wch: 45 },  // Descripción
+    { wch: 10 },  // Unidad
+    { wch: 12 },  // Cantidad
+    { wch: 18 },  // Fórmula
+    { wch: 15 },  // Código Categoría
+    { wch: 20 },  // Categoría
+    { wch: 18 },  // Código Sub Categoría
+    { wch: 22 },  // Sub Categoría
+    { wch: 18 },  // Grupo Sector
+    { wch: 18 },  // Sector
+    { wch: 12 },  // PU USD
+    { wch: 14 },  // Total USD
+    { wch: 30 },  // Comentario
+    { wch: 16 },  // Banderas
+    { wch: 14 },  // Necesita revisión
+    { wch: 12 },  // Creado
+  ];
+  // Freeze the header row
+  ws["!freeze"] = { xSplit: 0, ySplit: 1 } as never;
+  XLSX.utils.book_append_sheet(wb, ws, "Cuantificación");
+  return XLSX.write(wb, { bookType: "xlsx", type: "array" });
+}
