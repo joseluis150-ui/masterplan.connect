@@ -30,6 +30,7 @@ type SortConfig = { key: string; dir: SortDirection };
 import { toast } from "sonner";
 import { ArticuloCompositionDialog } from "./_components/articulo-composition-dialog";
 import { NewLineDialog } from "./_components/new-line-dialog";
+import { usePersistedState, SET_PERSIST_OPTS } from "@/lib/hooks/use-persisted-state";
 
 // Batch colors for import tracking — brand-aligned palette (Ash + Amber + allowed accents)
 const BATCH_COLORS = [
@@ -37,66 +38,8 @@ const BATCH_COLORS = [
   "#737373", "#166534", "#991B1B", "#FACC15", "#BFBFBF",
 ];
 
-/**
- * Hook genérico que envuelve useState con persistencia automática en
- * localStorage. Misma API que useState, sólo agrega `key` (única por
- * proyecto) y opcionalmente `toJSON`/`fromJSON` para tipos no-JSON-nativos
- * como `Set`. Si window no existe (SSR) o el JSON está corrupto, cae al
- * `defaultValue`.
- *
- * Uso:
- *   const [open, setOpen] = usePersistedState("foo:open:" + id, false);
- *   const [tags, setTags] = usePersistedState<Set<string>>("foo:tags:" + id, new Set(), {
- *     toJSON: (s) => Array.from(s),
- *     fromJSON: (raw) => new Set(Array.isArray(raw) ? raw as string[] : []),
- *   });
- */
-function usePersistedState<T>(
-  key: string,
-  defaultValue: T,
-  options?: {
-    toJSON?: (v: T) => unknown;
-    fromJSON?: (raw: unknown) => T;
-  }
-): [T, React.Dispatch<React.SetStateAction<T>>] {
-  const toJSON = options?.toJSON ?? ((v: T) => v);
-  const fromJSON = options?.fromJSON ?? ((raw: unknown) => raw as T);
-
-  const [value, _setValue] = useState<T>(() => {
-    if (typeof window === "undefined") return defaultValue;
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (raw === null) return defaultValue;
-      return fromJSON(JSON.parse(raw));
-    } catch {
-      return defaultValue;
-    }
-  });
-
-  const setValue: React.Dispatch<React.SetStateAction<T>> = (action) => {
-    _setValue((prev) => {
-      const next = typeof action === "function"
-        ? (action as (p: T) => T)(prev)
-        : action;
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(key, JSON.stringify(toJSON(next)));
-        } catch {
-          // localStorage lleno o bloqueado — silencioso
-        }
-      }
-      return next;
-    });
-  };
-
-  return [value, setValue];
-}
-
-// Helpers de serialización para Sets (re-usable en el componente).
-const SET_PERSIST_OPTS = {
-  toJSON: (s: Set<string>) => Array.from(s),
-  fromJSON: (raw: unknown) => new Set<string>(Array.isArray(raw) ? raw as string[] : []),
-};
+// Hook usePersistedState + SET_PERSIST_OPTS movidos a @/lib/hooks/use-persisted-state
+// (compartidos con artículos y futuros módulos).
 
 interface QuantLine {
   id: string;

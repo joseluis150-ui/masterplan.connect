@@ -47,29 +47,10 @@ import { ColumnFilter, type SortDirection } from "@/components/shared/column-fil
 import { FlagsPopover, FLAG_COLORS } from "@/components/shared/flags-popover";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { usePersistedState, SET_PERSIST_OPTS, SORT_PERSIST_OPTS } from "@/lib/hooks/use-persisted-state";
 
 type SortConfig = { key: string; dir: SortDirection };
 import { toast } from "sonner";
-
-/** Hook simple de persistencia en localStorage para un boolean. Mismo
- *  patrón que en avance-tab y cuantificacion. */
-function usePersistedBool(key: string, defaultValue: boolean): [boolean, (v: boolean) => void] {
-  const [v, _setV] = useState<boolean>(() => {
-    if (typeof window === "undefined") return defaultValue;
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (raw === null) return defaultValue;
-      return raw === "true";
-    } catch { return defaultValue; }
-  });
-  const setV = (next: boolean) => {
-    _setV(next);
-    if (typeof window !== "undefined") {
-      try { window.localStorage.setItem(key, next ? "true" : "false"); } catch {}
-    }
-  };
-  return [v, setV];
-}
 
 interface ArticuloWithComps extends Articulo {
   compositions: (ArticuloComposition & { insumo: Insumo })[];
@@ -104,14 +85,16 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   const [insumos, setInsumos] = useState<Insumo[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [filterUnit, setFilterUnit] = useState<Set<string>>(new Set());
+  // Filtros, sort, búsqueda y expansiones: persistidos por proyecto en
+  // localStorage. Al salir y volver a la pestaña, el estado se restaura.
+  const [search, setSearch] = usePersistedState<string>(`articulos:search:${projectId}`, "");
+  const [expanded, setExpanded] = usePersistedState<Set<string>>(`articulos:expanded:${projectId}`, new Set(), SET_PERSIST_OPTS);
+  const [filterUnit, setFilterUnit] = usePersistedState<Set<string>>(`articulos:filterUnit:${projectId}`, new Set(), SET_PERSIST_OPTS);
   /** Filtro multi-color por banderas. Set vacío = mostrar todo. Cuando
    *  hay colores, sólo se ven artículos cuyo flag_colors incluya AL
    *  MENOS uno de los colores seleccionados (semántica OR). */
-  const [filterFlagColors, setFilterFlagColors] = useState<Set<string>>(new Set());
-  const [sort, setSort] = useState<SortConfig>({ key: "", dir: null });
+  const [filterFlagColors, setFilterFlagColors] = usePersistedState<Set<string>>(`articulos:filterFlagColors:${projectId}`, new Set(), SET_PERSIST_OPTS);
+  const [sort, setSort] = usePersistedState<SortConfig>(`articulos:sort:${projectId}`, { key: "", dir: null }, SORT_PERSIST_OPTS);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingArticulo, setEditingArticulo] = useState<Partial<Articulo> | null>(null);
   const [addCompDialogOpen, setAddCompDialogOpen] = useState(false);
@@ -779,7 +762,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   // Toggle USD ↔ moneda local — persistido por proyecto, mismo patrón que
   // Cuantificación. En moneda local SIEMPRE 0 decimales (PYG son montos
   // grandes; los decimales son ruido).
-  const [showLocal, setShowLocal] = usePersistedBool(`articulos:showLocal:${projectId}`, false);
+  const [showLocal, setShowLocal] = usePersistedState<boolean>(`articulos:showLocal:${projectId}`, false);
   const tcRate = Number(project?.exchange_rate || 0);
   const fmtMoney = (val: number, decimals = 2) => showLocal && tcRate > 0
     ? formatNumber(convertCurrency(val, tcRate, "usd_to_local"), 0)
