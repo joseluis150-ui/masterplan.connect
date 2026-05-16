@@ -101,6 +101,21 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   const [addCompDialogOpen, setAddCompDialogOpen] = useState(false);
   const [compArticuloId, setCompArticuloId] = useState<string | null>(null);
   const [newComp, setNewComp] = useState({ insumo_id: "", quantity: 1, waste_pct: 0, margin_pct: 0 });
+  /** Sub-dialog "Crear nuevo insumo" — se abre desde el dialog "Agregar
+   *  Insumo" para no obligar al usuario a salir e ir al módulo Insumos.
+   *  Al guardar, refresca la lista y auto-selecciona el nuevo insumo. */
+  const [newInsumoDialogOpen, setNewInsumoDialogOpen] = useState(false);
+  const [newInsumoDraft, setNewInsumoDraft] = useState({
+    description: "",
+    type: "material",
+    unit: "U",
+    family: "",
+    comment: "",
+  });
+  /** Precio del nuevo insumo en formato string (acepta fórmulas). */
+  const [newInsumoPriceInput, setNewInsumoPriceInput] = useState("0");
+  const [newInsumoCurrencyMode, setNewInsumoCurrencyMode] = useState<"USD" | "LOCAL">("USD");
+  const [savingNewInsumo, setSavingNewInsumo] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importResult, setImportResult] = useState<ArticuloImportResult | null>(null);
   const [importing, setImporting] = useState(false);
@@ -310,6 +325,71 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
     setAddCompDialogOpen(false);
     toast.success("Insumo agregado al artículo");
     loadData();
+  }
+
+  /** Abre el sub-dialog "Crear nuevo insumo" desde el dialog "Agregar
+   *  Insumo al Artículo". Pre-puebla la descripción con lo que el
+   *  usuario haya estado buscando (si hubiese una forma de leerlo) —
+   *  por ahora arranca vacío. */
+  function openCreateInsumo() {
+    setNewInsumoDraft({ description: "", type: "material", unit: "U", family: "", comment: "" });
+    setNewInsumoPriceInput("0");
+    setNewInsumoCurrencyMode("USD");
+    setNewInsumoDialogOpen(true);
+  }
+
+  /** Crea un insumo nuevo desde el dialog de Agregar Insumo. Tras
+   *  insertarlo, refresca la lista local y lo auto-selecciona en
+   *  newComp.insumo_id para que el usuario sólo tenga que setear
+   *  cantidad y guardar. */
+  async function createInsumoFromArticulo() {
+    if (!newInsumoDraft.description.trim() || !project) {
+      toast.error("La descripción es obligatoria");
+      return;
+    }
+    setSavingNewInsumo(true);
+    try {
+      const tc = Number(project.exchange_rate);
+      const evaluated = evaluateFormula(newInsumoPriceInput);
+      let pu_usd: number | null = null;
+      let pu_local: number | null = null;
+      if (evaluated != null) {
+        if (newInsumoCurrencyMode === "USD") {
+          pu_usd = evaluated;
+          pu_local = convertCurrency(evaluated, tc, "usd_to_local");
+        } else {
+          pu_local = evaluated;
+          pu_usd = convertCurrency(evaluated, tc, "local_to_usd");
+        }
+      }
+      const record = {
+        project_id: projectId,
+        description: newInsumoDraft.description.trim(),
+        type: newInsumoDraft.type,
+        unit: newInsumoDraft.unit || "U",
+        family: newInsumoDraft.family.trim() || null,
+        comment: newInsumoDraft.comment.trim() || null,
+        pu_usd,
+        pu_local,
+        tc_used: tc,
+        currency_input: newInsumoCurrencyMode,
+      };
+      const { data, error } = await supabase.from("insumos").insert(record).select().single();
+      if (error || !data) {
+        toast.error(`Error al crear insumo: ${error?.message ?? "desconocido"}`);
+        setSavingNewInsumo(false);
+        return;
+      }
+      // Refrescar lista de insumos en el state local + auto-seleccionar
+      const created = data as Insumo;
+      setInsumos((prev) => [...prev, created].sort((a, b) => a.description.localeCompare(b.description)));
+      setNewComp({ ...newComp, insumo_id: created.id });
+      setNewInsumoDialogOpen(false);
+      toast.success(`Insumo "${created.description}" creado`);
+    } catch (e) {
+      toast.error(`Error: ${(e as Error).message}`);
+    }
+    setSavingNewInsumo(false);
   }
 
   async function updateComposition(compId: string, field: string, value: number) {
@@ -1169,7 +1249,20 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
           <DialogHeader><DialogTitle>Agregar Insumo al Artículo</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Insumo</Label>
+              <div className="flex items-center justify-between">
+                <Label>Insumo</Label>
+                {/* Atajo: crear un insumo nuevo sin salir del dialog.
+                    Tras crear, se auto-selecciona en el SearchableSelect. */}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs text-[#E87722] hover:text-[#E87722] hover:bg-[#E87722]/10"
+                  onClick={openCreateInsumo}
+                >
+                  <Plus className="h-3 w-3 mr-1" /> Crear nuevo insumo
+                </Button>
+              </div>
               <SearchableSelect
                 options={insumos.map((i) => ({
                   value: i.id,
@@ -1214,6 +1307,125 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
               </div>
             </div>
             <Button onClick={addComposition} className="w-full" disabled={!newComp.insumo_id}>Agregar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sub-dialog: Crear Insumo desde Agregar Insumo. Form simple con
+          descripción + tipo + unidad + familia (opcional) + precio. Al
+          guardar, refresca la lista local y auto-selecciona el nuevo
+          insumo en el dialog padre. */}
+      <Dialog open={newInsumoDialogOpen} onOpenChange={(o) => { if (!o && !savingNewInsumo) setNewInsumoDialogOpen(false); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5 text-[#E87722]" />
+              Crear nuevo insumo
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Descripción *</Label>
+              <Input
+                value={newInsumoDraft.description}
+                onChange={(e) => setNewInsumoDraft({ ...newInsumoDraft, description: e.target.value })}
+                placeholder="Ej: Cemento Portland 50kg"
+                autoFocus
+                disabled={savingNewInsumo}
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label>Tipo</Label>
+                <Select value={newInsumoDraft.type} onValueChange={(v) => v && setNewInsumoDraft({ ...newInsumoDraft, type: v })}>
+                  <SelectTrigger disabled={savingNewInsumo}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {DEFAULT_INSUMO_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Unidad</Label>
+                <Select value={newInsumoDraft.unit} onValueChange={(v) => v && setNewInsumoDraft({ ...newInsumoDraft, unit: v })}>
+                  <SelectTrigger disabled={savingNewInsumo}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {DEFAULT_UNITS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Familia</Label>
+                <Input
+                  value={newInsumoDraft.family}
+                  onChange={(e) => setNewInsumoDraft({ ...newInsumoDraft, family: e.target.value })}
+                  placeholder="Opcional"
+                  disabled={savingNewInsumo}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Precio unitario</Label>
+                <div className="inline-flex rounded-md border bg-background overflow-hidden text-xs">
+                  {(["USD", "LOCAL"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setNewInsumoCurrencyMode(m)}
+                      disabled={savingNewInsumo}
+                      className={cn(
+                        "px-2 py-1 transition-colors",
+                        newInsumoCurrencyMode === m ? "bg-neutral-900 text-white" : "text-muted-foreground hover:bg-muted"
+                      )}
+                    >
+                      {m === "USD" ? "USD" : (project?.local_currency || "LOCAL")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <Input
+                value={newInsumoPriceInput}
+                onChange={(e) => setNewInsumoPriceInput(e.target.value)}
+                placeholder="Ej: 12.50 o 50000/12"
+                disabled={savingNewInsumo}
+                className="font-mono"
+              />
+              {newInsumoPriceInput && evaluateFormula(newInsumoPriceInput) != null && (
+                <p className="text-[11px] text-muted-foreground font-mono">
+                  = {formatNumber(evaluateFormula(newInsumoPriceInput)!)}{" "}
+                  {newInsumoCurrencyMode === "USD" ? "USD" : (project?.local_currency || "LOCAL")}
+                  {project && (
+                    <>
+                      {" "}· TC {Number(project.exchange_rate)} →{" "}
+                      {newInsumoCurrencyMode === "USD"
+                        ? `${formatNumber(convertCurrency(evaluateFormula(newInsumoPriceInput)!, Number(project.exchange_rate), "usd_to_local"), 0)} ${project.local_currency}`
+                        : `${formatNumber(convertCurrency(evaluateFormula(newInsumoPriceInput)!, Number(project.exchange_rate), "local_to_usd"))} USD`}
+                    </>
+                  )}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Comentario</Label>
+              <Input
+                value={newInsumoDraft.comment}
+                onChange={(e) => setNewInsumoDraft({ ...newInsumoDraft, comment: e.target.value })}
+                placeholder="Notas opcionales"
+                disabled={savingNewInsumo}
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setNewInsumoDialogOpen(false)} disabled={savingNewInsumo}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={createInsumoFromArticulo}
+                disabled={savingNewInsumo || !newInsumoDraft.description.trim()}
+                className="bg-[#E87722] hover:bg-[#E87722]/90 text-white"
+              >
+                {savingNewInsumo ? "Creando..." : "Crear y seleccionar"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
