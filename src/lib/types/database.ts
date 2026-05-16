@@ -176,6 +176,10 @@ export interface Articulo {
   profit_pct: number;
   comment: string | null;
   needs_review: boolean;
+  /** Banderas de marcado por color para agrupaciones de revisión.
+   *  Misma paleta que quantification_lines: amber/red/blue/green/violet.
+   *  Default `[]`. Backfilleado con `["amber"]` si needs_review era true. */
+  flag_colors: string[];
   created_by: string | null;
   created_at: string;
   updated_at: string;

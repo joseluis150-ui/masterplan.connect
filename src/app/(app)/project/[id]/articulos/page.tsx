@@ -44,6 +44,9 @@ import { Plus, Trash2, Puzzle, Search, Copy, ChevronDown, ChevronRight, Upload, 
 import { parseArticuloExcel, downloadBlob } from "@/lib/utils/excel";
 import type { ArticuloImportResult } from "@/lib/utils/excel";
 import { ColumnFilter, type SortDirection } from "@/components/shared/column-filter";
+import { FlagsPopover, FLAG_COLORS } from "@/components/shared/flags-popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 
 type SortConfig = { key: string; dir: SortDirection };
 import { toast } from "sonner";
@@ -104,7 +107,10 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [filterUnit, setFilterUnit] = useState<Set<string>>(new Set());
-  const [filterReview, setFilterReview] = useState<string>("all");
+  /** Filtro multi-color por banderas. Set vacío = mostrar todo. Cuando
+   *  hay colores, sólo se ven artículos cuyo flag_colors incluya AL
+   *  MENOS uno de los colores seleccionados (semántica OR). */
+  const [filterFlagColors, setFilterFlagColors] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<SortConfig>({ key: "", dir: null });
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingArticulo, setEditingArticulo] = useState<Partial<Articulo> | null>(null);
@@ -177,7 +183,14 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
       const totals = calcArticuloTotals(comps, Number(art.profit_pct));
       const quant_total = quantByArticulo.get(art.id) || 0;
       const quant_amount_usd = quant_total * totals.pu_costo;
-      return { ...art, compositions: comps, ...totals, quant_total, quant_amount_usd };
+      return {
+        ...art,
+        // Aseguramos que flag_colors sea siempre array (Postgres puede
+        // devolver null para text[] si la columna estaba nullable en
+        // el pasado).
+        flag_colors: Array.isArray(art.flag_colors) ? art.flag_colors : [],
+        compositions: comps, ...totals, quant_total, quant_amount_usd,
+      };
     });
 
     setArticulos(arts);
@@ -189,14 +202,21 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   useEffect(() => { loadData(); }, [loadData]);
 
   const uniqueUnits = Array.from(new Set(articulos.map((a) => a.unit)));
-  const hasColumnFilter = filterUnit.size > 0 || filterReview !== "all";
-  const reviewCount = articulos.filter((a) => a.needs_review).length;
+  const hasColumnFilter = filterUnit.size > 0 || filterFlagColors.size > 0;
+  // Total de artículos con al menos una bandera (cualquier color)
+  const flaggedCount = articulos.filter((a) => (a.flag_colors ?? []).length > 0).length;
+  // Conteo por color — usado para mostrar al lado del nombre en el popover
+  const flagCountByColor: Record<string, number> = {};
+  for (const c of FLAG_COLORS) flagCountByColor[c.id] = 0;
+  for (const a of articulos) for (const c of (a.flag_colors ?? [])) {
+    if (flagCountByColor[c] !== undefined) flagCountByColor[c]++;
+  }
 
   const filtered = articulos.filter((a) => {
     const matchSearch = !search || a.description.toLowerCase().includes(search.toLowerCase());
     const matchUnit = filterUnit.size === 0 || filterUnit.has(a.unit);
-    const matchReview = filterReview === "all" || (filterReview === "review" ? a.needs_review : !a.needs_review);
-    return matchSearch && matchUnit && matchReview;
+    const matchFlags = filterFlagColors.size === 0 || (a.flag_colors ?? []).some((c) => filterFlagColors.has(c));
+    return matchSearch && matchUnit && matchFlags;
   });
 
   const sorted = [...filtered].sort((a, b) => {
@@ -221,11 +241,20 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
     return (dir: SortDirection) => setSort(dir ? { key, dir } : { key: "", dir: null });
   }
 
-  async function toggleArticuloReview(art: ArticuloWithComps) {
-    const newVal = !art.needs_review;
-    await supabase.from("articulos").update({ needs_review: newVal }).eq("id", art.id);
-    setArticulos((prev) => prev.map((a) => a.id === art.id ? { ...a, needs_review: newVal } : a));
-    toast.success(newVal ? "Marcado para revisión" : "Revisión completada");
+  /** Toggle de una bandera de color en un artículo. Si ya está, la
+   *  remueve. Si no, la agrega. `needs_review` queda derivado: TRUE
+   *  cuando hay al menos una bandera (para back-compat con vistas que
+   *  todavía lean ese campo). */
+  async function toggleArticuloFlag(art: ArticuloWithComps, color: string) {
+    const current = Array.isArray(art.flag_colors) ? art.flag_colors : [];
+    const next = current.includes(color) ? current.filter((c) => c !== color) : [...current, color];
+    await supabase
+      .from("articulos")
+      .update({ flag_colors: next, needs_review: next.length > 0 })
+      .eq("id", art.id);
+    setArticulos((prev) => prev.map((a) =>
+      a.id === art.id ? { ...a, flag_colors: next, needs_review: next.length > 0 } : a
+    ));
   }
 
   function openNew() {
@@ -784,18 +813,79 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar artículos..." className="pl-9" />
         </div>
         <span className="text-sm text-muted-foreground">{filtered.length} artículos</span>
-        {reviewCount > 0 && (
-          <Button
-            variant={filterReview === "review" ? "default" : "outline"}
-            size="sm"
-            className={filterReview === "review" ? "text-xs bg-amber-500 hover:bg-amber-600 text-white" : "text-xs text-amber-600 border-amber-300 hover:bg-amber-50"}
-            onClick={() => setFilterReview(filterReview === "review" ? "all" : "review")}
-          >
-            <Flag className="h-3 w-3 mr-1" /> {reviewCount} por revisar
-          </Button>
+        {flaggedCount > 0 && (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  variant={filterFlagColors.size > 0 ? "default" : "outline"}
+                  size="sm"
+                  className={filterFlagColors.size > 0
+                    ? "text-xs bg-amber-500 hover:bg-amber-600 text-white"
+                    : "text-xs text-amber-600 border-amber-300 hover:bg-amber-50"}
+                  title="Filtrar por banderas de color"
+                />
+              }
+            >
+              {filterFlagColors.size > 0 ? (
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-flex items-center -space-x-0.5">
+                    {FLAG_COLORS.filter((c) => filterFlagColors.has(c.id)).slice(0, 3).map((c) => (
+                      <Flag key={c.id} className={cn("h-3 w-3", c.cls, c.fillCls)} />
+                    ))}
+                  </span>
+                  <span>{filtered.length}</span>
+                </span>
+              ) : (
+                <>
+                  <Flag className="h-3 w-3 mr-1" /> {flaggedCount} con bandera
+                </>
+              )}
+            </PopoverTrigger>
+            <PopoverContent className="w-[230px] p-1" align="start">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground px-2 py-1.5 border-b mb-1">
+                Filtrar por color
+              </p>
+              {FLAG_COLORS.map((c) => {
+                const count = flagCountByColor[c.id] || 0;
+                if (count === 0) return null;
+                const isActive = filterFlagColors.has(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      const next = new Set(filterFlagColors);
+                      if (isActive) next.delete(c.id); else next.add(c.id);
+                      setFilterFlagColors(next);
+                    }}
+                    className={cn(
+                      "w-full text-left flex items-center gap-2 px-2 py-1.5 text-xs rounded transition-colors",
+                      isActive ? "bg-muted" : "hover:bg-muted/50"
+                    )}
+                  >
+                    <Flag className={cn("h-3.5 w-3.5", c.cls, c.fillCls)} />
+                    <span className="flex-1">{c.label}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground">{count}</span>
+                    {isActive && <span className="text-[10px] text-emerald-600">✓</span>}
+                  </button>
+                );
+              })}
+              {filterFlagColors.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFilterFlagColors(new Set())}
+                  className="w-full text-left flex items-center gap-2 px-2 py-1.5 text-xs rounded transition-colors hover:bg-muted/50 border-t mt-1 pt-1.5"
+                >
+                  <X className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="flex-1">Limpiar filtro</span>
+                </button>
+              )}
+            </PopoverContent>
+          </Popover>
         )}
         {hasColumnFilter && (
-          <Button variant="ghost" size="sm" className="text-xs text-destructive hover:text-destructive" onClick={() => { setFilterUnit(new Set()); setFilterReview("all"); }}>
+          <Button variant="ghost" size="sm" className="text-xs text-destructive hover:text-destructive" onClick={() => { setFilterUnit(new Set()); setFilterFlagColors(new Set()); }}>
             <X className="h-3 w-3 mr-1" /> Limpiar filtros
           </Button>
         )}
@@ -886,20 +976,10 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                           {expanded.has(art.id) ? <ChevronDown className="h-3.5 w-3.5 mx-auto text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 mx-auto text-muted-foreground" />}
                         </td>
                         <td className="px-1 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => toggleArticuloReview(art)}
-                            className="cursor-pointer hover:scale-110 transition-transform"
-                            title={art.needs_review ? "Quitar marca de revisión" : "Marcar para revisión"}
-                          >
-                            <Flag
-                              className={`h-3.5 w-3.5 mx-auto transition-colors ${
-                                art.needs_review
-                                  ? "text-amber-500 fill-amber-500"
-                                  : "text-gray-200 hover:text-amber-300"
-                              }`}
-                            />
-                          </button>
+                          <FlagsPopover
+                            colors={art.flag_colors ?? []}
+                            onToggle={(c) => toggleArticuloFlag(art, c)}
+                          />
                         </td>
                         <td className="px-2 py-1.5 font-mono text-xs font-bold" style={{ color: "#E87722" }}>{art.number}</td>
                         <td className="px-2 py-1.5 font-medium leading-tight whitespace-normal break-words" title={art.description}>
