@@ -100,7 +100,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   const [editingArticulo, setEditingArticulo] = useState<Partial<Articulo> | null>(null);
   const [addCompDialogOpen, setAddCompDialogOpen] = useState(false);
   const [compArticuloId, setCompArticuloId] = useState<string | null>(null);
-  const [newComp, setNewComp] = useState({ insumo_id: "", quantity: "1", waste_pct: "0", margin_pct: "0" });
+  const [newComp, setNewComp] = useState({ insumo_id: "", quantity: 1, waste_pct: 0, margin_pct: 0 });
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importResult, setImportResult] = useState<ArticuloImportResult | null>(null);
   const [importing, setImporting] = useState(false);
@@ -294,7 +294,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
 
   function openAddComp(articuloId: string) {
     setCompArticuloId(articuloId);
-    setNewComp({ insumo_id: "", quantity: "1", waste_pct: "0", margin_pct: "0" });
+    setNewComp({ insumo_id: "", quantity: 1, waste_pct: 0, margin_pct: 0 });
     setAddCompDialogOpen(true);
   }
 
@@ -1185,9 +1185,33 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
               />
             </div>
             <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-2"><Label>Cantidad</Label><Input type="number" step="any" value={newComp.quantity} onChange={(e) => setNewComp({ ...newComp, quantity: e.target.value })} /></div>
-              <div className="space-y-2"><Label>% Desperdicio</Label><Input type="number" step="0.01" value={newComp.waste_pct} onChange={(e) => setNewComp({ ...newComp, waste_pct: e.target.value })} /></div>
-              <div className="space-y-2"><Label>% Margen</Label><Input type="number" step="0.01" value={newComp.margin_pct} onChange={(e) => setNewComp({ ...newComp, margin_pct: e.target.value })} /></div>
+              {/* Permitimos operaciones aritméticas (ej. "7/50" → 0.14) en
+                  los 3 campos via FormulaInput. Evalúa al hacer blur o
+                  Enter; preview en vivo mientras se tipea. */}
+              <div className="space-y-2">
+                <Label>Cantidad</Label>
+                <FormulaInput
+                  value={newComp.quantity}
+                  onValueChange={(v) => setNewComp({ ...newComp, quantity: v })}
+                />
+                <p className="text-[10px] text-muted-foreground">Acepta operaciones — ej: <code>7/50</code></p>
+              </div>
+              <div className="space-y-2">
+                <Label>% Desperdicio</Label>
+                <FormulaInput
+                  value={newComp.waste_pct}
+                  onValueChange={(v) => setNewComp({ ...newComp, waste_pct: v })}
+                  step="0.01"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>% Margen</Label>
+                <FormulaInput
+                  value={newComp.margin_pct}
+                  onValueChange={(v) => setNewComp({ ...newComp, margin_pct: v })}
+                  step="0.01"
+                />
+              </div>
             </div>
             <Button onClick={addComposition} className="w-full" disabled={!newComp.insumo_id}>Agregar</Button>
           </div>
