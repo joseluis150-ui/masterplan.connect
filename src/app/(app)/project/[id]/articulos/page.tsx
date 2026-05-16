@@ -1028,6 +1028,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                                     <col style={{ width: "70px" }} />
                                     <col style={{ width: "70px" }} />
                                     <col style={{ width: "80px" }} />
+                                    <col style={{ width: "110px" }} />
                                     <col style={{ width: "85px" }} />
                                     <col style={{ width: "32px" }} />
                                   </colgroup>
@@ -1040,6 +1041,9 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                                       <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Desp.%</th>
                                       <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Marg.%</th>
                                       <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">PU {moneyCurrency}</th>
+                                      {/* Cantidad total del insumo en el proyecto VIA ESTE ARTÍCULO:
+                                          qty_articulo_en_proyecto × qty_insumo_en_articulo × (1+waste) × (1+margin) */}
+                                      <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" title="Cantidad total del insumo necesaria en el proyecto vía este artículo">Cant. total proy.</th>
                                       <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Total {moneyCurrency}</th>
                                       <th className="px-1 py-1.5"></th>
                                     </tr>
@@ -1048,6 +1052,8 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                                     {art.compositions.map((comp) => {
                                       const qtyTotal = comp.quantity * (1 + comp.waste_pct / 100);
                                       const lineTotal = qtyTotal * Number(comp.insumo.pu_usd || 0) * (1 + comp.margin_pct / 100);
+                                      // Cantidad total del insumo en el proyecto a través de este artículo
+                                      const insumoProjectQty = qtyTotal * (1 + comp.margin_pct / 100) * art.quant_total;
                                       return (
                                         <tr key={comp.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
                                           <td className="px-2 py-1">
@@ -1088,6 +1094,16 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                                             />
                                           </td>
                                           <td className="px-2 py-1 text-right font-mono text-xs">{fmtMoney(Number(comp.insumo.pu_usd || 0))}</td>
+                                          <td
+                                            className="px-2 py-1 text-right font-mono text-xs"
+                                            title={art.quant_total > 0
+                                              ? `${formatNumber(insumoProjectQty, 4)} ${comp.insumo.unit} = ${formatNumber(art.quant_total, 2)} × ${formatNumber(qtyTotal, 4)} × ${formatNumber(1 + comp.margin_pct / 100, 4)}`
+                                              : "Sin uso en cuantificación"}
+                                          >
+                                            {art.quant_total > 0
+                                              ? <>{formatNumber(insumoProjectQty, 2)} <span className="text-[10px] text-muted-foreground">{comp.insumo.unit}</span></>
+                                              : <span className="text-muted-foreground/50">—</span>}
+                                          </td>
                                           <td className="px-2 py-1 text-right font-mono text-xs font-bold">{fmtMoney(lineTotal)}</td>
                                           <td className="px-1 py-1">
                                             <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => deleteComposition(comp.id)}>
