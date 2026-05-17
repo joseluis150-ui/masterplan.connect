@@ -1232,6 +1232,21 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                     ) : (
                       <p className="text-xs text-muted-foreground text-center py-4">Sin insumos asignados</p>
                     )}
+
+                    {/* Subtotales por tipo + total costo + total venta (si
+                        aplica). Cards a la derecha alineadas. */}
+                    {art.compositions.length > 0 && (
+                      <div className="flex flex-wrap items-stretch justify-end gap-2 pt-1">
+                        <SubtotalCard label="Material" value={art.pu_mat} currency={moneyCurrency} fmt={fmtMoney} accent={false} />
+                        <SubtotalCard label="Mano de Obra" value={art.pu_mo} currency={moneyCurrency} fmt={fmtMoney} accent={false} />
+                        <SubtotalCard label="Otros (Serv./Global)" value={art.pu_glo} currency={moneyCurrency} fmt={fmtMoney} accent={false} />
+                        <SubtotalCard label="PU costo" value={art.pu_costo} currency={moneyCurrency} fmt={fmtMoney} accent />
+                        {isVenta && (
+                          <SubtotalCard label="PU venta" value={art.pu_venta} currency={moneyCurrency} fmt={fmtMoney} accent venta />
+                        )}
+                      </div>
+                    )}
+
                     <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openAddComp(art.id)}>
                       <Plus className="h-3 w-3 mr-1" /> Agregar Insumo
                     </Button>
@@ -1796,6 +1811,49 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * Card mini de subtotal usado en el modal de edición de artículo,
+ * después de la tabla de composiciones. Muestra label arriba + valor
+ * grande abajo con la moneda. Variantes:
+ *  - normal: fondo neutro, valor en gris oscuro
+ *  - accent: fondo Ink Black, valor blanco (para el total costo)
+ *  - venta: variante verde (para total venta cuando isVenta) */
+function SubtotalCard({
+  label, value, currency, fmt, accent, venta,
+}: {
+  label: string;
+  value: number;
+  currency: string;
+  fmt: (v: number, decimals?: number) => string;
+  accent?: boolean;
+  venta?: boolean;
+}) {
+  const isVenta = !!venta;
+  const isAccent = !!accent;
+  const bg = isVenta ? "#065F46" : (isAccent ? "#0A0A0A" : "#F5F5F5");
+  const valColor = isVenta || isAccent ? "#FFFFFF" : "#0A0A0A";
+  const labelColor = isVenta || isAccent ? "rgba(255,255,255,0.7)" : "#737373";
+  return (
+    <div
+      className="rounded-md px-3 py-2 min-w-[120px] text-right"
+      style={{ background: bg, border: isVenta || isAccent ? "none" : "1px solid #E5E5E5" }}
+    >
+      <p
+        className="text-[10px] uppercase tracking-wider font-mono leading-tight"
+        style={{ color: labelColor }}
+      >
+        {label}
+      </p>
+      <p
+        className="text-sm font-mono font-bold tabular-nums mt-0.5"
+        style={{ color: valColor }}
+      >
+        {fmt(value)} <span className="text-[10px] opacity-70">{currency}</span>
+      </p>
     </div>
   );
 }
