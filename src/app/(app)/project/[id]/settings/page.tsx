@@ -20,8 +20,9 @@ import type { Project, Sector, SectorType, ExchangeRateVersion, SectorGroup } fr
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MembersSection } from "./_components/members-section";
-import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon, ChevronUp, ChevronDown, Copy, Loader2, TrendingUp } from "lucide-react";
+import { Plus, Trash2, GripVertical, ShoppingCart, Upload, Image as ImageIcon, ChevronUp, ChevronDown, Copy, Loader2, TrendingUp, AlertTriangle, Package } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useIsSuperAdmin } from "@/lib/permissions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { setNumberLocale } from "@/lib/utils/number-format";
@@ -41,6 +42,12 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
   const [duplicatingSector, setDuplicatingSector] = useState<Sector | null>(null);
   const [duplicateName, setDuplicateName] = useState<string>("");
   const [duplicating, setDuplicating] = useState(false);
+  /** Dialog "Eliminar todos los paquetes" (zona peligrosa, super_admin).
+   *  Requiere confirmación escribiendo el nombre del proyecto. */
+  const [deletePkgsDialogOpen, setDeletePkgsDialogOpen] = useState(false);
+  const [deletePkgsConfirmText, setDeletePkgsConfirmText] = useState("");
+  const [deletingPackages, setDeletingPackages] = useState(false);
+  const isSuperAdmin = useIsSuperAdmin();
   const supabase = createClient();
   const router = useRouter();
 
@@ -237,6 +244,39 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
     if (refreshed) setSectors(refreshed);
     toast.success(`Sector duplicado como "${newName}" — ID: ${data}`);
     return true;
+  }
+
+  /** Acción destructiva (super_admin only): elimina TODOS los paquetes
+   *  de procurement del proyecto + sus líneas en cascada. Útil para
+   *  proyectos clonados que heredaron paquetes obsoletos / aprobados.
+   *  Las purchase_requests asociadas quedan con package_id = NULL
+   *  (no se borran). */
+  async function deleteAllPackages() {
+    if (!project) return;
+    setDeletingPackages(true);
+    try {
+      const { data, error } = await supabase.rpc("delete_all_procurement_packages", {
+        p_project_id: projectId,
+      });
+      if (error) {
+        toast.error(`Error: ${error.message}`);
+        setDeletingPackages(false);
+        return;
+      }
+      const r = (data ?? {}) as { packages_deleted: number; lines_deleted: number; requests_unlinked: number };
+      toast.success(
+        `Eliminados ${r.packages_deleted} paquete${r.packages_deleted === 1 ? "" : "s"} y ${r.lines_deleted} línea${r.lines_deleted === 1 ? "" : "s"} de procurement` +
+        (r.requests_unlinked > 0
+          ? `. ${r.requests_unlinked} solicitud${r.requests_unlinked === 1 ? "" : "es"} de compra quedaron sin paquete asociado.`
+          : ""),
+        { duration: 8000 }
+      );
+      setDeletePkgsDialogOpen(false);
+      setDeletePkgsConfirmText("");
+    } catch (e) {
+      toast.error(`Error: ${(e as Error).message}`);
+    }
+    setDeletingPackages(false);
   }
 
   /** Reordena sectores moviendo `sectorId` arriba o abajo. Hace swap del
@@ -835,6 +875,48 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
       {/* Miembros y permisos */}
       <MembersSection projectId={projectId} />
 
+      {/* Zona peligrosa — sólo super admin de la app (app_admins). Acciones
+          destructivas que no son comunes. Pensada para proyectos clonados
+          que arrastran datos obsoletos. */}
+      {isSuperAdmin && (
+        <Card className="border-destructive/40">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              Zona peligrosa
+            </CardTitle>
+            <CardDescription>
+              Acciones destructivas sólo para super administradores. No se pueden deshacer.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-start justify-between gap-3 p-4 border border-destructive/30 rounded-lg bg-destructive/5">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="h-10 w-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
+                  <Package className="h-5 w-5 text-destructive" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">Eliminar todos los paquetes de procurement</p>
+                  <p className="text-xs text-muted-foreground">
+                    Borra todos los paquetes del proyecto (incluso los aprobados) y sus líneas.
+                    Las solicitudes de compra asociadas quedan sin paquete vinculado (no se borran).
+                    Útil al duplicar un proyecto que trae paquetes obsoletos.
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive border-destructive/40 hover:bg-destructive hover:text-white shrink-0"
+                onClick={() => { setDeletePkgsConfirmText(""); setDeletePkgsDialogOpen(true); }}
+              >
+                <Trash2 className="h-4 w-4 mr-1" /> Eliminar todos
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Dialog de duplicar sector — confirmación con edición del nombre.
           La RPC clone_sector copia: el sector mismo, sus quantification_lines
           (con cantidades, fórmulas, comentarios, banderas) y sus schedule_weeks.
@@ -890,6 +972,70 @@ export default function SettingsPage({ params }: { params: Promise<{ id: string 
               {duplicating
                 ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Duplicando...</>
                 : <><Copy className="h-4 w-4 mr-2" /> Duplicar sector</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: confirmación de eliminar todos los paquetes. Requiere
+          escribir el nombre del proyecto para evitar accidentes. */}
+      <Dialog
+        open={deletePkgsDialogOpen}
+        onOpenChange={(o) => { if (!o && !deletingPackages) { setDeletePkgsDialogOpen(false); setDeletePkgsConfirmText(""); } }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+              Eliminar todos los paquetes
+            </DialogTitle>
+            <DialogDescription className="space-y-2 pt-2">
+              <span className="block">
+                Vas a <strong className="text-destructive">eliminar permanentemente</strong> todos
+                los paquetes de procurement del proyecto{" "}
+                <strong>{project?.name}</strong>, incluso los aprobados.
+              </span>
+              <span className="block">
+                Las solicitudes de compra (SC) asociadas <strong>no se borran</strong> —
+                quedan sin paquete vinculado. Los artículos, insumos, cuantificación y
+                cronograma no se ven afectados.
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                Esta acción no se puede deshacer.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 py-2">
+            <Label className="text-xs">
+              Para confirmar, escribí el nombre del proyecto:
+              <span className="font-mono ml-1 text-foreground">{project?.name}</span>
+            </Label>
+            <Input
+              value={deletePkgsConfirmText}
+              onChange={(e) => setDeletePkgsConfirmText(e.target.value)}
+              placeholder={project?.name ?? ""}
+              disabled={deletingPackages}
+              autoFocus
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => { setDeletePkgsDialogOpen(false); setDeletePkgsConfirmText(""); }}
+              disabled={deletingPackages}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={deleteAllPackages}
+              disabled={deletingPackages || !project || deletePkgsConfirmText.trim() !== project.name}
+            >
+              {deletingPackages
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Eliminando...</>
+                : <><Trash2 className="h-4 w-4 mr-2" /> Eliminar todos los paquetes</>}
             </Button>
           </DialogFooter>
         </DialogContent>
