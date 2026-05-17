@@ -832,6 +832,18 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
   }
 
   const typeLabel = (type: string) => DEFAULT_INSUMO_TYPES.find((t) => t.value === type)?.label || type;
+  /** Abreviatura corta del tipo de insumo (3-4 chars). Usado en
+   *  celdas estrechas donde el label completo se traslapa. El
+   *  `title` del badge sigue mostrando el label completo. */
+  const typeShort = (type: string): string => {
+    switch (type) {
+      case "material":     return "MAT";
+      case "mano_de_obra": return "MO";
+      case "servicio":     return "SERV";
+      case "global":       return "GLO";
+      default:             return type.slice(0, 4).toUpperCase();
+    }
+  };
   const isVenta = project?.project_type === "venta";
 
   // Toggle USD ↔ moneda local — persistido por proyecto, mismo patrón que
@@ -1137,7 +1149,10 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                       <div className="overflow-x-auto" style={{ background: "#FAFAFA" }}>
                         <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
                           <colgroup>
-                            <col style={{ width: "75px" }} />
+                            {/* Columna Tipo ensanchada a 64px para que el
+                                badge MAT / MO / SERV / GLO no se traslape
+                                con la celda de Insumo. */}
+                            <col style={{ width: "64px" }} />
                             <col />
                             <col style={{ width: "50px" }} />
                             <col style={{ width: "85px" }} />
@@ -1150,7 +1165,7 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                           </colgroup>
                           <thead>
                             <tr style={{ borderBottom: "1px solid #E5E5E5" }}>
-                              <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tipo</th>
+                              <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tipo</th>
                               <th className="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Insumo</th>
                               <th className="px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Und</th>
                               <th className="px-2 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Cantidad</th>
@@ -1169,8 +1184,16 @@ export default function ArticulosPage({ params }: { params: Promise<{ id: string
                               const insumoProjectQty = qtyTotal * (1 + comp.margin_pct / 100) * art.quant_total;
                               return (
                                 <tr key={comp.id} style={{ borderBottom: "1px solid #F1F5F9" }}>
-                                  <td className="px-2 py-1">
-                                    <Badge variant="secondary" className="text-[10px]">{typeLabel(comp.insumo.type)}</Badge>
+                                  <td className="px-1 py-1 text-center">
+                                    {/* Badge corto centrado (MAT/MO/SERV/GLO);
+                                        nombre completo en title al hacer hover. */}
+                                    <Badge
+                                      variant="secondary"
+                                      className="text-[10px] font-mono px-1.5"
+                                      title={typeLabel(comp.insumo.type)}
+                                    >
+                                      {typeShort(comp.insumo.type)}
+                                    </Badge>
                                   </td>
                                   <td className="px-2 py-1 overflow-hidden text-ellipsis whitespace-nowrap">
                                     <button
